@@ -1,12 +1,18 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use crate::app::{App, AppScreen, CatMode, Mode};
+use crate::app::{App, AppScreen, CatMode, MenuState, Mode};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, .. }) = event else { return };
 
-    // Alt-Q always quits regardless of screen
+    // Alt-Q always quits regardless of screen/mode
     if modifiers.contains(KeyModifiers::ALT) && code == KeyCode::Char('q') {
         app.quit = true;
+        return;
+    }
+
+    // Menu takes priority over all other input
+    if !matches!(app.menu, MenuState::Closed) {
+        handle_menu(app, code);
         return;
     }
 
@@ -40,6 +46,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2) | KeyCode::Enter => app.begin_edit(),
         KeyCode::F(9)   => app.toggle_catmgr(),
+        KeyCode::F(10)  => app.open_menu(),
         KeyCode::Char(ch) if modifiers.is_empty() => app.begin_create(ch),
         _ => {}
     }
@@ -75,7 +82,19 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(7)   => app.cat_promote(),
         KeyCode::F(8)   => app.cat_demote(),
         KeyCode::F(9)   => app.toggle_catmgr(),
+        KeyCode::F(10)  => app.open_menu(),
         KeyCode::Delete => app.cat_delete(),
+        _ => {}
+    }
+}
+
+fn handle_menu(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Left       => app.menu_left(),
+        KeyCode::Right      => app.menu_right(),
+        KeyCode::Enter      => app.menu_enter(),
+        KeyCode::Esc        => app.menu_esc(),
+        KeyCode::Char(ch)   => app.menu_char(ch),
         _ => {}
     }
 }

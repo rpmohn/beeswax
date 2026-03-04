@@ -5,9 +5,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use crate::app::{App, CatMode, FlatCat, flatten_cats};
+use crate::app::{App, CatMode, FlatCat, MenuState, flatten_cats};
 use crate::model::CategoryKind;
-use super::cursor_split;
+use super::{cursor_split, menu};
 
 const FKEY_BAR: &str =
     "F2=Edit  F5=Note  F6=Props  F7=Prm  F8=Dem  F9=ToView  F10=Menu";
@@ -46,13 +46,17 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(area);
 
-    // ── Title bar (2 lines) ───────────────────────────────────────────────────
-    let title = Paragraph::new(vec![
-        Line::from(Span::raw(format!(" BEESWAX 0.1{:>68}", "2026-03-04"))),
-        Line::from(Span::raw(" Category Manager")),
-    ])
-    .style(Style::default().add_modifier(Modifier::REVERSED));
-    frame.render_widget(title, chunks[0]);
+    // ── Title bar / Menu bar (2 lines) ───────────────────────────────────────
+    if matches!(app.menu, MenuState::Closed) {
+        let title = Paragraph::new(vec![
+            Line::from(Span::raw(format!(" BEESWAX 0.1{:>68}", "2026-03-04"))),
+            Line::from(Span::raw(" Category Manager")),
+        ])
+        .style(Style::default().add_modifier(Modifier::REVERSED));
+        frame.render_widget(title, chunks[0]);
+    } else {
+        menu::render_bar(frame, chunks[0], app);
+    }
 
     // ── Body ─────────────────────────────────────────────────────────────────
     let body_block = Block::default().borders(Borders::NONE);

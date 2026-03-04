@@ -1,3 +1,4 @@
+use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
 use crate::model::{Category, CategoryKind, Item, Section, View};
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -35,6 +36,15 @@ pub struct CatMgrState {
     pub mode:   CatMode,
 }
 
+// ── Menu state ────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum MenuState {
+    Closed,
+    Top { cursor: usize },
+    Sub { top: usize, cursor: usize },
+}
+
 /// One entry in the depth-first flattened category list used for display/navigation.
 pub struct FlatCat {
     pub depth: usize,
@@ -55,6 +65,8 @@ pub struct App {
     // CatMgr
     pub categories:  Vec<Category>,
     pub cat_state:   CatMgrState,
+    // Menu
+    pub menu:        MenuState,
     // Misc
     pub quit:        bool,
     next_id:         usize,
@@ -168,6 +180,7 @@ impl App {
             mode:       Mode::Normal,
             categories: vec![main_cat],
             cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal },
+            menu:       MenuState::Closed,
             quit:       false,
             next_id:    7,
         }
@@ -188,6 +201,108 @@ impl App {
             AppScreen::View   => AppScreen::CatMgr,
             AppScreen::CatMgr => AppScreen::View,
         };
+    }
+
+    // ── Menu ──────────────────────────────────────────────────────────────────
+
+    pub fn open_menu(&mut self) {
+        // Cancel any in-progress edit before opening the menu
+        self.mode          = Mode::Normal;
+        self.cat_state.mode = CatMode::Normal;
+        self.menu = MenuState::Top { cursor: 0 };
+    }
+
+    fn current_menu_items(&self) -> &'static [crate::menu::TopItem] {
+        match self.screen {
+            AppScreen::View   => VIEW_MENU,
+            AppScreen::CatMgr => CATMGR_MENU,
+        }
+    }
+
+    fn apply_menu_action(&mut self, action: MenuAction) {
+        match action {
+            MenuAction::Quit         => { self.quit = true; }
+            MenuAction::ReturnToView => {
+                if matches!(self.screen, AppScreen::CatMgr) { self.toggle_catmgr(); }
+            }
+            MenuAction::Noop => {}
+        }
+        self.menu = MenuState::Closed;
+    }
+
+    pub fn menu_left(&mut self) {
+        let new_menu = match self.menu {
+            MenuState::Top { cursor } => {
+                MenuState::Top { cursor: cursor.saturating_sub(1) }
+            }
+            MenuState::Sub { top, cursor } => {
+                MenuState::Sub { top, cursor: cursor.saturating_sub(1) }
+            }
+            MenuState::Closed => MenuState::Closed,
+        };
+        self.menu = new_menu;
+    }
+
+    pub fn menu_right(&mut self) {
+        let items = self.current_menu_items();
+        let new_menu = match self.menu {
+            MenuState::Top { cursor } => {
+                let max = items.len().saturating_sub(1);
+                MenuState::Top { cursor: (cursor + 1).min(max) }
+            }
+            MenuState::Sub { top, cursor } => {
+                let max = items[top].sub.len().saturating_sub(1);
+                MenuState::Sub { top, cursor: (cursor + 1).min(max) }
+            }
+            MenuState::Closed => MenuState::Closed,
+        };
+        self.menu = new_menu;
+    }
+
+    pub fn menu_enter(&mut self) {
+        match self.menu {
+            MenuState::Top { cursor } => {
+                self.menu = MenuState::Sub { top: cursor, cursor: 0 };
+            }
+            MenuState::Sub { top, cursor } => {
+                let action = self.current_menu_items()[top].sub[cursor].action;
+                self.apply_menu_action(action);
+            }
+            MenuState::Closed => {}
+        }
+    }
+
+    pub fn menu_esc(&mut self) {
+        self.menu = match self.menu {
+            MenuState::Sub { top, .. } => MenuState::Top { cursor: top },
+            MenuState::Top { .. }      => MenuState::Closed,
+            MenuState::Closed          => MenuState::Closed,
+        };
+    }
+
+    pub fn menu_char(&mut self, ch: char) {
+        let ch_up = ch.to_ascii_uppercase();
+        match self.menu {
+            MenuState::Top { .. } => {
+                let pos = self.current_menu_items().iter().position(|t| {
+                    t.label.chars().next().map(|c| c.to_ascii_uppercase()) == Some(ch_up)
+                });
+                if let Some(i) = pos {
+                    self.menu = MenuState::Sub { top: i, cursor: 0 };
+                }
+            }
+            MenuState::Sub { top, .. } => {
+                let items = self.current_menu_items();
+                let pos = items[top].sub.iter().position(|s| {
+                    s.label.chars().next().map(|c| c.to_ascii_uppercase()) == Some(ch_up)
+                });
+                if let Some(i) = pos {
+                    let action = items[top].sub[i].action;
+                    self.apply_menu_action(action);
+                }
+            }
+            MenuState::Closed => {}
+        }
     }
 
     // ── View navigation ───────────────────────────────────────────────────────

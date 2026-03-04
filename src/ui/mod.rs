@@ -1,5 +1,6 @@
 pub mod catmgr;
 pub mod input;
+pub mod menu;
 pub mod render;
 pub mod view;
 
