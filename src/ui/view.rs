@@ -11,8 +11,8 @@ use super::cursor_split;
 const FKEY_BAR: &str =
     "F1=Help  F2=Edit  F5=Note  F6=Props  F7=Mark  F8=VwMgr  F9=CatMgr  F10=Menu";
 
-const SECTION_PREFIX: &str = "  ";
-const ITEM_PREFIX:    &str = "   \u{2022} ";
+const SECTION_PREFIX: &str = " ";
+const ITEM_PREFIX:    &str = "    \u{2022} ";
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -20,22 +20,19 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // title bar
+            Constraint::Length(2),  // title bar
             Constraint::Min(0),     // body
             Constraint::Length(1),  // fkey bar
         ])
         .split(area);
 
-    // ── Title bar ────────────────────────────────────────────────────────
-    let title = Line::from(Span::raw(format!(
-        " BEESWAX 0.1          View: {:<30}  {}",
-        app.view.name,
-        "2026-03-03"
-    )));
-    frame.render_widget(
-        Paragraph::new(title).style(Style::default().add_modifier(Modifier::REVERSED)),
-        chunks[0],
-    );
+    // ── Title bar (2 lines) ───────────────────────────────────────────────
+    let title = Paragraph::new(vec![
+        Line::from(Span::raw(format!(" BEESWAX 0.1{:>68}", "2026-03-04"))),
+        Line::from(Span::raw(format!(" View: {}", app.view.name))),
+    ])
+    .style(Style::default().add_modifier(Modifier::REVERSED));
+    frame.render_widget(title, chunks[0]);
 
     // ── Body ─────────────────────────────────────────────────────────────
     let body_block = Block::default().borders(Borders::NONE);

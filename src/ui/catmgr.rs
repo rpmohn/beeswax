@@ -40,21 +40,19 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // title bar
+            Constraint::Length(2),  // title bar
             Constraint::Min(0),     // body
             Constraint::Length(1),  // fkey bar
         ])
         .split(area);
 
-    // ── Title bar ────────────────────────────────────────────────────────────
-    let title = Line::from(Span::raw(format!(
-        " BEESWAX 0.1          Category Manager{:>22}",
-        "2026-03-03"
-    )));
-    frame.render_widget(
-        Paragraph::new(title).style(Style::default().add_modifier(Modifier::REVERSED)),
-        chunks[0],
-    );
+    // ── Title bar (2 lines) ───────────────────────────────────────────────────
+    let title = Paragraph::new(vec![
+        Line::from(Span::raw(format!(" BEESWAX 0.1{:>68}", "2026-03-04"))),
+        Line::from(Span::raw(" Category Manager")),
+    ])
+    .style(Style::default().add_modifier(Modifier::REVERSED));
+    frame.render_widget(title, chunks[0]);
 
     // ── Body ─────────────────────────────────────────────────────────────────
     let body_block = Block::default().borders(Borders::NONE);
