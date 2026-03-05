@@ -565,8 +565,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         let start = cal_first_dow(cal_year, cal_month) as usize;
         let mname = CAL_MONTH_NAMES[(cal_month as usize).saturating_sub(1)];
 
-        // Box: 24 wide (22 inner), 11 tall (9 inner)
-        let cal_rect = centered_rect(24, 11, area);
+        // Box: 24 wide (22 inner), 12 tall (10 inner)
+        let cal_rect = centered_rect(24, 12, area);
         frame.render_widget(Clear, cal_rect);
         let block = Block::default().borders(Borders::ALL).title(" Calendar ");
         frame.render_widget(block.clone(), cal_rect);
@@ -615,6 +615,14 @@ pub fn render(frame: &mut Frame, app: &App) {
             format!(" Time: {:02}:{:02}:{:02}", cal_hour, cal_min, cal_sec)
         )));
 
+        // Year hint (< / > keys; Ctrl+PgUp/Dn may be intercepted by terminal)
+        let left_hint  = "< Prev Yr";
+        let right_hint = "Next Yr >";
+        let gap = iw.saturating_sub(left_hint.chars().count() + right_hint.chars().count());
+        cal_lines.push(Line::from(Span::raw(format!(
+            "{}{}{}", left_hint, " ".repeat(gap), right_hint
+        ))));
+
         frame.render_widget(Paragraph::new(cal_lines), inner);
     }
 
@@ -657,6 +665,43 @@ pub fn render(frame: &mut Frame, app: &App) {
             time_line,
             Line::from(""),
             help_line,
+        ]), inner);
+    }
+
+    // ── Remove-column confirmation modal ──────────────────────────────────────
+    if let ColMode::ConfirmRemove { yes } = &app.col_mode {
+        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let dlg_rect = centered_rect(38, 7, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Remove Column ");
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+        let iw = inner.width as usize;
+
+        let msg = "Remove this column from the view?";
+        let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
+        let msg_line = Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg)));
+
+        let yes_label = " Yes ";
+        let no_label  = " No  ";
+        let yes_style = if *yes { rev } else { Style::default() };
+        let no_style  = if !yes { rev } else { Style::default() };
+        let gap = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
+        let lpad = gap / 2;
+        let btn_line = Line::from(vec![
+            Span::raw(" ".repeat(lpad)),
+            Span::styled(yes_label, yes_style),
+            Span::raw("  "),
+            Span::styled(no_label, no_style),
+        ]);
+
+        frame.render_widget(Paragraph::new(vec![
+            Line::from(""),
+            msg_line,
+            Line::from(""),
+            btn_line,
+            Line::from(""),
         ]), inner);
     }
 }

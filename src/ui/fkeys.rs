@@ -61,7 +61,7 @@ static MENU_FKEYS: FKeyLabels = FKeyLabels {
 pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
     let def = if !matches!(app.menu, MenuState::Closed) {
         &MENU_FKEYS
-    } else if matches!(app.col_mode, ColMode::QuickAdd { .. }) {
+    } else if matches!(app.col_mode, ColMode::QuickAdd { .. } | ColMode::ConfirmRemove { .. }) {
         &MENU_FKEYS   // just F1 Help, rest blank — same as menu blank bar
     } else if matches!(app.col_mode, ColMode::Calendar { .. }) {
         &CALENDAR_FKEYS

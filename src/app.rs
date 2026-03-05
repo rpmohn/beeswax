@@ -120,6 +120,8 @@ pub enum ColMode {
         orig_min:  u32,
         orig_sec:  u32,
     },
+    /// "Remove this column from the view?" confirmation dialog.
+    ConfirmRemove { yes: bool },
 }
 
 // ── Menu state ────────────────────────────────────────────────────────────────
@@ -424,10 +426,20 @@ pub fn format_date_value(stored: &str, fmt: &DateFmt) -> String {
             }
         }
     };
-    match fmt.display {
+    let body = match fmt.display {
         DateDisplay::Date     => date_str,
         DateDisplay::Time     => time_str,
         DateDisplay::DateTime => format!("{} {}", date_str, time_str),
+    };
+    if fmt.show_dow && !matches!(fmt.display, DateDisplay::Time) {
+        // Tomohiko Sakamoto: 0=Sun,1=Mon,...,6=Sat
+        static DOW: [&str; 7] = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+        let t = [0i32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+        let y = if month < 3 { year - 1 } else { year } as i32;
+        let dow = ((y + y/4 - y/100 + y/400 + t[(month as usize)-1] + day as i32) % 7) as usize;
+        format!("{} {}", DOW[dow], body)
+    } else {
+        body
     }
 }
 
@@ -991,6 +1003,29 @@ impl App {
         }
         let new_len = self.view.columns.len();
         self.col_cursor = if new_len == 0 { 0 } else { self.col_cursor.min(new_len) };
+    }
+
+    pub fn col_open_confirm_remove(&mut self) {
+        if self.col_cursor == 0 || self.view.columns.is_empty() { return; }
+        if !matches!(self.cursor, CursorPos::SectionHead(_)) { return; }
+        self.col_mode = ColMode::ConfirmRemove { yes: true };
+    }
+
+    pub fn col_confirm_remove_toggle(&mut self) {
+        if let ColMode::ConfirmRemove { yes } = &mut self.col_mode {
+            *yes = !*yes;
+        }
+    }
+
+    pub fn col_confirm_remove_confirm(&mut self) {
+        if let ColMode::ConfirmRemove { yes } = self.col_mode {
+            self.col_mode = ColMode::Normal;
+            if yes { self.col_delete(); }
+        }
+    }
+
+    pub fn col_confirm_remove_cancel(&mut self) {
+        self.col_mode = ColMode::Normal;
     }
 
     pub fn col_begin_move(&mut self) {

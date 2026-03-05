@@ -59,6 +59,12 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // Remove-column confirmation takes priority
+    if matches!(app.col_mode, ColMode::ConfirmRemove { .. }) {
+        handle_col_confirm_remove(app, code);
+        return;
+    }
+
     // Quick-add category picker takes priority
     if matches!(app.col_mode, ColMode::QuickAdd { .. }) {
         handle_col_quick_add(app, code);
@@ -130,6 +136,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(2) | KeyCode::Enter => app.begin_edit(),
         KeyCode::F(3)   => app.col_open_calendar(),
         KeyCode::F(6)   => app.col_open_props(),
+        KeyCode::Delete => app.col_open_confirm_remove(),
         KeyCode::F(9)   => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Char(ch) if modifiers.is_empty() => app.begin_char_input(ch),
@@ -280,8 +287,13 @@ fn handle_col_calendar(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Left      => app.col_calendar_left(),
         KeyCode::Right if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
         KeyCode::Right     => app.col_calendar_right(),
+        KeyCode::PageUp   if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_prev(),
+        KeyCode::PageDown if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
         KeyCode::PageUp    => app.col_calendar_pgup(),
         KeyCode::PageDown  => app.col_calendar_pgdn(),
+        // < / > as reliable year nav (Ctrl+PgUp/Dn often intercepted by terminal)
+        KeyCode::Char('<') => app.col_calendar_year_prev(),
+        KeyCode::Char('>') => app.col_calendar_year_next(),
         KeyCode::Enter     => app.col_calendar_confirm(),
         KeyCode::Esc       => app.col_calendar_cancel(),
         KeyCode::F(6)      => app.col_open_set_time(),
@@ -299,6 +311,22 @@ fn handle_col_set_time(app: &mut App, code: KeyCode) {
         KeyCode::Right     => app.col_set_time_right(),
         KeyCode::Backspace => app.col_set_time_backspace(),
         KeyCode::Char(ch)  => app.col_set_time_input_char(ch),
+        _ => {}
+    }
+}
+
+// ── Remove-column confirmation handler ───────────────────────────────────────
+
+fn handle_col_confirm_remove(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter                 => app.col_confirm_remove_confirm(),
+        KeyCode::Esc                   => app.col_confirm_remove_cancel(),
+        KeyCode::Left | KeyCode::Right => app.col_confirm_remove_toggle(),
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            if let crate::app::ColMode::ConfirmRemove { yes } = &mut app.col_mode { *yes = true; }
+            app.col_confirm_remove_confirm();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => app.col_confirm_remove_cancel(),
         _ => {}
     }
 }
