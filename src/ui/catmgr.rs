@@ -7,10 +7,7 @@ use ratatui::{
 };
 use crate::app::{App, CatMode, FlatCat, MenuState, flatten_cats};
 use crate::model::CategoryKind;
-use super::{cursor_split, menu};
-
-const FKEY_BAR: &str =
-    "F2=Edit  F5=Note  F6=Props  F7=Prm  F8=Dem  F9=ToView  F10=Menu";
+use super::{cursor_split, fkeys, menu};
 
 /// Spaces before the indicator column at a given depth.
 fn base_indent(depth: usize) -> String {
@@ -42,7 +39,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(2),  // title bar
             Constraint::Min(0),     // body
-            Constraint::Length(1),  // fkey bar
+            Constraint::Length(2),  // fkey bar
         ])
         .split(area);
 
@@ -162,8 +159,5 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(lines), body_inner);
 
     // ── F-key bar ─────────────────────────────────────────────────────────────
-    frame.render_widget(
-        Paragraph::new(FKEY_BAR).style(Style::default().add_modifier(Modifier::REVERSED)),
-        chunks[2],
-    );
+    fkeys::render_fkey_bar(frame, chunks[2], app);
 }

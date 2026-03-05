@@ -1,4 +1,5 @@
 pub mod catmgr;
+pub mod fkeys;
 pub mod input;
 pub mod menu;
 pub mod render;
