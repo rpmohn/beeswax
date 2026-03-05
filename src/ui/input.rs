@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, CatMode, ColMode, ColFormField, ColPos, FKeyMod, MenuState, Mode};
+use crate::app::{App, AppScreen, CatMode, ColMode, ColFormField, ColPos, FKeyMod, MenuState, Mode, SectionInsert, SectionMode};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -44,6 +44,18 @@ pub fn handle_event(app: &mut App, event: Event) {
     // Menu takes priority over all other input
     if !matches!(app.menu, MenuState::Closed) {
         handle_menu(app, code);
+        return;
+    }
+
+    // Section Add choices picker takes priority
+    if matches!(app.sec_mode, SectionMode::Choices { .. }) {
+        handle_sec_choices(app, code);
+        return;
+    }
+
+    // Section Add form takes priority
+    if matches!(app.sec_mode, SectionMode::Add { .. }) {
+        handle_sec_form(app, code);
         return;
     }
 
@@ -123,6 +135,8 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         match code {
             KeyCode::Char('r') => app.col_quick_add(ColPos::Right),
             KeyCode::Char('l') => app.col_quick_add(ColPos::Left),
+            KeyCode::Char('d') => app.sec_open_add(SectionInsert::Below),
+            KeyCode::Char('u') => app.sec_open_add(SectionInsert::Above),
             _ => {}
         }
         return;
@@ -327,6 +341,31 @@ fn handle_col_confirm_remove(app: &mut App, code: KeyCode) {
             app.col_confirm_remove_confirm();
         }
         KeyCode::Char('n') | KeyCode::Char('N') => app.col_confirm_remove_cancel(),
+        _ => {}
+    }
+}
+
+// ── Section Add form handler ───────────────────────────────────────────────────
+
+fn handle_sec_form(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter => app.sec_form_confirm(),
+        KeyCode::Esc   => app.sec_form_cancel(),
+        KeyCode::Up    => app.sec_form_field_prev(),
+        KeyCode::Down  => app.sec_form_field_next(),
+        KeyCode::Left  => app.sec_form_left(),
+        KeyCode::Right => app.sec_form_right(),
+        KeyCode::F(3)  => app.sec_open_choices(),
+        _ => {}
+    }
+}
+
+fn handle_sec_choices(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up    => app.sec_choices_up(),
+        KeyCode::Down  => app.sec_choices_down(),
+        KeyCode::Enter => app.sec_choices_confirm(),
+        KeyCode::Esc   => app.sec_choices_cancel(),
         _ => {}
     }
 }

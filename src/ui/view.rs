@@ -6,7 +6,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 use crate::app::{App, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos, MenuState, Mode,
-                 PropsField, TimeField, flatten_cats, format_date_value};
+                 PropsField, SectionFormField, SectionInsert, SectionMode, TimeField,
+                 flatten_cats, format_date_value};
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
 use super::{cursor_split, fkeys, menu};
 
@@ -237,6 +238,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                     lines.push(Line::from(spans));
                 }
             }
+        }
+
+        // Blank line between sections
+        if s_idx + 1 < app.view.sections.len() {
+            lines.push(Line::from(""));
         }
     }
 
@@ -703,6 +709,102 @@ pub fn render(frame: &mut Frame, app: &App) {
             btn_line,
             Line::from(""),
         ]), inner);
+    }
+
+    // ── Section Add modal ─────────────────────────────────────────────────────
+    let sec_add_state = match &app.sec_mode {
+        SectionMode::Add { cat_idx, insert, active_field } =>
+            Some((*cat_idx, *insert, *active_field, None::<usize>)),
+        SectionMode::Choices { cat_idx, insert, active_field, picker_cursor } =>
+            Some((*cat_idx, *insert, *active_field, Some(*picker_cursor))),
+        SectionMode::Normal => None,
+    };
+    if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
+        let cats       = flatten_cats(&app.categories);
+        let rev        = Style::default().add_modifier(Modifier::REVERSED);
+        let dlg_rect   = centered_rect(52, 11, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default().borders(Borders::ALL).title(" Section Add ");
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+        let iw = inner.width as usize;
+
+        // Category field
+        let cat_name: String = cat_idx
+            .and_then(|i| cats.get(i))
+            .map(|e| e.name.clone())
+            .unwrap_or_default();
+        let label_w = "  Category:  ".chars().count();
+        let field_w = iw.saturating_sub(label_w + 2);
+        let cat_disp: String = cat_name.chars().take(field_w).collect();
+        let cat_padded = format!("{:<width$}", cat_disp, width = field_w);
+        let cat_style = if active_field == SectionFormField::Category { rev } else { Style::default() };
+        let cat_line = Line::from(vec![
+            Span::raw("  Category:  "),
+            Span::styled(cat_padded, cat_style),
+        ]);
+
+        // Insert field
+        let ins_str = match insert {
+            SectionInsert::Below => "Below",
+            SectionInsert::Above => "Above",
+        };
+        let ins_style = if active_field == SectionFormField::Insert { rev } else { Style::default() };
+        let ins_line = Line::from(vec![
+            Span::raw("  Insert:    "),
+            Span::styled(format!("{:<8}", ins_str), ins_style),
+            Span::raw("  (Left/Right to toggle)"),
+        ]);
+
+        // Columns: informational
+        let col_names: Vec<&str> = app.view.columns.iter().map(|c| c.name.as_str()).collect();
+        let cols_str = if col_names.is_empty() {
+            "(none)".to_string()
+        } else {
+            col_names.join("  ")
+        };
+        let cols_line = Line::from(Span::raw(format!("  Columns:   {}", cols_str)));
+
+        // Help line
+        let help = "  F3 Choose category   Enter confirm   Esc cancel  ";
+        let help_line = Line::from(Span::raw(help));
+
+        let lines = vec![
+            Line::from(""),
+            cat_line,
+            Line::from(""),
+            ins_line,
+            Line::from(""),
+            cols_line,
+            Line::from(""),
+            help_line,
+            Line::from(""),
+        ];
+
+        frame.render_widget(Paragraph::new(lines.clone()), inner);
+
+        // Choices picker overlay
+        if let Some(picker_cur) = picker_cursor {
+            let picker_h = (cats.len().min(10) + 2) as u16;
+            let picker_rect = centered_rect(40, picker_h, area);
+            frame.render_widget(Clear, picker_rect);
+            let pb = Block::default().borders(Borders::ALL).title(" Choose Category ");
+            frame.render_widget(pb.clone(), picker_rect);
+            let pi = pb.inner(picker_rect);
+            let visible = pi.height as usize;
+            let start = if picker_cur >= visible { picker_cur - visible + 1 } else { 0 };
+            let pick_lines: Vec<Line<'static>> = cats.iter().enumerate()
+                .skip(start).take(visible)
+                .map(|(i, e)| {
+                    let indent = "  ".repeat(e.depth);
+                    let label  = format!("{}{}", indent, e.name);
+                    let style  = if i == picker_cur { rev } else { Style::default() };
+                    Line::from(Span::styled(label, style))
+                })
+                .collect();
+            frame.render_widget(Paragraph::new(pick_lines), pi);
+        }
+
     }
 }
 

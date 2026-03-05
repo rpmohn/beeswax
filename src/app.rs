@@ -124,6 +124,29 @@ pub enum ColMode {
     ConfirmRemove { yes: bool },
 }
 
+// ── Section Add state ─────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SectionInsert { Below, Above }
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SectionFormField { Category, Insert }
+
+pub enum SectionMode {
+    Normal,
+    Add {
+        cat_idx:      Option<usize>,
+        insert:       SectionInsert,
+        active_field: SectionFormField,
+    },
+    Choices {
+        cat_idx:       Option<usize>,
+        insert:        SectionInsert,
+        active_field:  SectionFormField,
+        picker_cursor: usize,
+    },
+}
+
 // ── Menu state ────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
@@ -157,6 +180,8 @@ pub struct App {
     // Column
     pub col_cursor:  usize,
     pub col_mode:    ColMode,
+    // Section
+    pub sec_mode:    SectionMode,
     // Menu
     pub menu:        MenuState,
     // F-key bar
@@ -514,6 +539,7 @@ impl App {
             cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal },
             col_cursor: 0,
             col_mode:   ColMode::Normal,
+            sec_mode:   SectionMode::Normal,
             menu:       MenuState::Closed,
             fkey_mod:   FKeyMod::Normal,
             quit:       false,
@@ -565,6 +591,7 @@ impl App {
             MenuAction::ColumnWidth      => self.col_open_form(false, ColFormField::Width),
             MenuAction::ColumnRemove     => self.col_delete(),
             MenuAction::ColumnMove       => self.col_begin_move(),
+            MenuAction::SectionAdd       => self.sec_open_add(SectionInsert::Below),
             MenuAction::Noop => {}
         }
         self.menu = MenuState::Closed;
@@ -1546,6 +1573,125 @@ impl App {
             c if c < n  => c + 1,          // within left or within right
             _           => self.col_cursor, // already rightmost
         };
+    }
+
+    // ── Section Add ──────────────────────────────────────────────────────────
+
+    pub fn sec_open_add(&mut self, insert: SectionInsert) {
+        self.sec_mode = SectionMode::Add {
+            cat_idx:      None,
+            insert,
+            active_field: SectionFormField::Category,
+        };
+    }
+
+    pub fn sec_form_confirm(&mut self) {
+        let (cat_idx, insert) = match &self.sec_mode {
+            SectionMode::Add { cat_idx, insert, .. } => (*cat_idx, *insert),
+            _ => return,
+        };
+        self.sec_mode = SectionMode::Normal;
+        let cats = flatten_cats(&self.categories);
+        let Some(entry) = cat_idx.and_then(|i| cats.get(i)) else { return; };
+        let name = entry.name.clone();
+        let id = self.alloc_id();
+        let cur_sec = match self.cursor {
+            CursorPos::SectionHead(s)      => s,
+            CursorPos::Item { section, .. } => section,
+        };
+        let insert_idx = match insert {
+            SectionInsert::Below => cur_sec + 1,
+            SectionInsert::Above => cur_sec,
+        };
+        self.view.sections.insert(insert_idx, Section { id, name, items: vec![] });
+        self.cursor = CursorPos::SectionHead(insert_idx);
+    }
+
+    pub fn sec_form_cancel(&mut self) {
+        self.sec_mode = SectionMode::Normal;
+    }
+
+    pub fn sec_form_field_next(&mut self) {
+        if let SectionMode::Add { active_field, .. } = &mut self.sec_mode {
+            *active_field = match active_field {
+                SectionFormField::Category => SectionFormField::Insert,
+                SectionFormField::Insert   => SectionFormField::Category,
+            };
+        }
+    }
+
+    pub fn sec_form_field_prev(&mut self) {
+        self.sec_form_field_next(); // only 2 fields, same as next
+    }
+
+    pub fn sec_form_toggle_insert(&mut self) {
+        if let SectionMode::Add { insert, .. } = &mut self.sec_mode {
+            *insert = match insert {
+                SectionInsert::Below => SectionInsert::Above,
+                SectionInsert::Above => SectionInsert::Below,
+            };
+        }
+    }
+
+    pub fn sec_form_left(&mut self) {
+        if let SectionMode::Add { active_field: SectionFormField::Insert, .. } = &self.sec_mode {
+            self.sec_form_toggle_insert();
+        }
+    }
+
+    pub fn sec_form_right(&mut self) {
+        if let SectionMode::Add { active_field: SectionFormField::Insert, .. } = &self.sec_mode {
+            self.sec_form_toggle_insert();
+        }
+    }
+
+    pub fn sec_open_choices(&mut self) {
+        if let SectionMode::Add { cat_idx, insert, active_field } = &self.sec_mode {
+            if *active_field == SectionFormField::Category {
+                let cursor = cat_idx.unwrap_or(0);
+                self.sec_mode = SectionMode::Choices {
+                    cat_idx:       *cat_idx,
+                    insert:        *insert,
+                    active_field:  SectionFormField::Category,
+                    picker_cursor: cursor,
+                };
+            }
+        }
+    }
+
+    pub fn sec_choices_up(&mut self) {
+        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        }
+    }
+
+    pub fn sec_choices_down(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+            if *picker_cursor + 1 < len { *picker_cursor += 1; }
+        }
+    }
+
+    pub fn sec_choices_confirm(&mut self) {
+        if let SectionMode::Choices { cat_idx: _, insert, active_field, picker_cursor } = &self.sec_mode {
+            let insert       = *insert;
+            let active_field = *active_field;
+            let picked       = *picker_cursor;
+            self.sec_mode = SectionMode::Add {
+                cat_idx:      Some(picked),
+                insert,
+                active_field,
+            };
+        }
+    }
+
+    pub fn sec_choices_cancel(&mut self) {
+        if let SectionMode::Choices { cat_idx, insert, active_field, .. } = &self.sec_mode {
+            let cat_idx      = *cat_idx;
+            let insert       = *insert;
+            let active_field = *active_field;
+            self.sec_mode = SectionMode::Add { cat_idx, insert, active_field };
+        }
     }
 
     // ── CatMgr navigation ────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ pub enum MenuAction {
     ColumnProperties,
     ColumnMove,
     ColumnWidth,
+    SectionAdd,
 }
 
 pub struct SubSubItem {
@@ -64,13 +65,17 @@ static COLUMN_SUB: &[SubSubItem] = &[
     SubSubItem { label: "Width",      description: "Change the width of the current column",    action: MenuAction::ColumnWidth },
 ];
 
+static SECTION_SUB: &[SubSubItem] = &[
+    SubSubItem { label: "Add",    description: "Add a new section to the view",    action: MenuAction::SectionAdd },
+];
+
 static VIEW_SUB: &[SubItem] = &[
     SubItem { label: "Properties",  description: "View or change view properties",          action: MenuAction::Noop, children: None },
     SubItem { label: "Add",         description: "Add a new view",                          action: MenuAction::Noop, children: None },
     SubItem { label: "Browse",      description: "Browse and select among all views",       action: MenuAction::Noop, children: None },
     SubItem { label: "Discard",     description: "Discard the current view",                action: MenuAction::Noop, children: None },
     SubItem { label: "Column",      description: "Edit view column definitions",            action: MenuAction::Noop, children: Some(COLUMN_SUB) },
-    SubItem { label: "Section",     description: "Edit view section definitions",           action: MenuAction::Noop, children: None },
+    SubItem { label: "Section",     description: "Edit view section definitions",           action: MenuAction::Noop, children: Some(SECTION_SUB) },
 ];
 
 static PRINT_SUB: &[SubItem] = &[
