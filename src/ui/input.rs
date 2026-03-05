@@ -1,8 +1,39 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use crate::app::{App, AppScreen, CatMode, MenuState, Mode};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
+use crate::app::{App, AppScreen, CatMode, ColMode, ColFormField, FKeyMod, MenuState, Mode};
 
 pub fn handle_event(app: &mut App, event: Event) {
-    let Event::Key(KeyEvent { code, modifiers, .. }) = event else { return };
+    let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
+
+    // ── Modifier-only key events (requires enhanced keyboard protocol) ────────
+    if let KeyCode::Modifier(mk) = code {
+        match kind {
+            KeyEventKind::Press | KeyEventKind::Repeat => {
+                app.fkey_mod = match mk {
+                    ModifierKeyCode::LeftShift  | ModifierKeyCode::RightShift   => FKeyMod::Shift,
+                    ModifierKeyCode::LeftControl | ModifierKeyCode::RightControl => FKeyMod::Ctrl,
+                    ModifierKeyCode::LeftAlt    | ModifierKeyCode::RightAlt     => FKeyMod::Alt,
+                    _ => app.fkey_mod,
+                };
+            }
+            KeyEventKind::Release => {
+                let released = match mk {
+                    ModifierKeyCode::LeftShift  | ModifierKeyCode::RightShift   => Some(FKeyMod::Shift),
+                    ModifierKeyCode::LeftControl | ModifierKeyCode::RightControl => Some(FKeyMod::Ctrl),
+                    ModifierKeyCode::LeftAlt    | ModifierKeyCode::RightAlt     => Some(FKeyMod::Alt),
+                    _ => None,
+                };
+                if released == Some(app.fkey_mod) {
+                    app.fkey_mod = FKeyMod::Normal;
+                }
+            }
+        }
+        return;
+    }
+
+    // Ignore key releases for regular keys
+    if !matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return;
+    }
 
     // Alt-Q always quits regardless of screen/mode
     if modifiers.contains(KeyModifiers::ALT) && code == KeyCode::Char('q') {
@@ -13,6 +44,30 @@ pub fn handle_event(app: &mut App, event: Event) {
     // Menu takes priority over all other input
     if !matches!(app.menu, MenuState::Closed) {
         handle_menu(app, code);
+        return;
+    }
+
+    // Column Properties modal takes priority
+    if matches!(app.col_mode, ColMode::Props { .. }) {
+        handle_col_props(app, code);
+        return;
+    }
+
+    // Choices picker takes priority over form
+    if matches!(app.col_mode, ColMode::Choices { .. }) {
+        handle_col_choices(app, code);
+        return;
+    }
+
+    // Column form modal takes priority over view input
+    if matches!(app.col_mode, ColMode::Form { .. }) {
+        handle_col_form(app, code);
+        return;
+    }
+
+    // Column move mode
+    if matches!(app.col_mode, ColMode::Move) {
+        handle_col_move(app, code);
         return;
     }
 
@@ -41,10 +96,13 @@ pub fn handle_event(app: &mut App, event: Event) {
 
 fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
-        KeyCode::Up     => app.cursor_up(),
-        KeyCode::Down   => app.cursor_down(),
+        KeyCode::Up    => app.cursor_up(),
+        KeyCode::Down  => app.cursor_down(),
+        KeyCode::Left  => app.cursor_col_left(),
+        KeyCode::Right => app.cursor_col_right(),
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2) | KeyCode::Enter => app.begin_edit(),
+        KeyCode::F(6)   => app.col_open_props(),
         KeyCode::F(9)   => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Char(ch) if modifiers.is_empty() => app.begin_create(ch),
@@ -57,6 +115,7 @@ fn handle_view_input(app: &mut App, code: KeyCode) {
         KeyCode::Enter     => app.confirm(),
         KeyCode::Esc       => app.cancel(),
         KeyCode::Backspace => app.input_backspace(),
+        KeyCode::Delete    => app.input_delete(),
         KeyCode::Left      => app.edit_cursor_left(),
         KeyCode::Right     => app.edit_cursor_right(),
         KeyCode::Char(ch)  => app.input_char(ch),
@@ -107,6 +166,67 @@ fn handle_catmgr_input(app: &mut App, code: KeyCode) {
         KeyCode::Left      => app.cat_edit_cursor_left(),
         KeyCode::Right     => app.cat_edit_cursor_right(),
         KeyCode::Char(ch)  => app.cat_input_char(ch),
+        _ => {}
+    }
+}
+
+// ── Column form handler ───────────────────────────────────────────────────────
+
+fn handle_col_form(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter     => app.col_form_confirm(),
+        KeyCode::Esc       => app.col_form_cancel(),
+        KeyCode::Up        => app.col_form_field_prev(),
+        KeyCode::Down      => app.col_form_field_next(),
+        KeyCode::Left      => app.col_form_cursor_left(),
+        KeyCode::Right     => app.col_form_cursor_right(),
+        KeyCode::Backspace => app.col_form_backspace(),
+        KeyCode::Char(ch)  => app.col_form_input_char(ch),
+        KeyCode::F(3)      => {
+            if matches!(&app.col_mode,
+                ColMode::Form { active_field: ColFormField::Head, .. } |
+                ColMode::Form { active_field: ColFormField::Position, .. })
+            {
+                app.col_open_choices();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_col_choices(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up    => app.col_choices_up(),
+        KeyCode::Down  => app.col_choices_down(),
+        KeyCode::Enter => app.col_choices_confirm(),
+        KeyCode::Esc   => app.col_choices_cancel(),
+        _ => {}
+    }
+}
+
+// ── Column Properties handler ─────────────────────────────────────────────────
+
+fn handle_col_props(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter     => app.col_props_confirm(),
+        KeyCode::Esc       => app.col_props_cancel(),
+        KeyCode::Up        => app.col_props_field_prev(),
+        KeyCode::Down      => app.col_props_field_next(),
+        KeyCode::Left      => app.col_props_left(),
+        KeyCode::Right     => app.col_props_right(),
+        KeyCode::Backspace => app.col_props_backspace(),
+        KeyCode::Char(ch)  => app.col_props_input_char(ch),
+        _ => {}
+    }
+}
+
+// ── Column move handler ───────────────────────────────────────────────────────
+
+fn handle_col_move(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Left         => app.col_move_left(),
+        KeyCode::Right        => app.col_move_right(),
+        KeyCode::Enter | KeyCode::Esc => { app.col_mode = ColMode::Normal; }
         _ => {}
     }
 }

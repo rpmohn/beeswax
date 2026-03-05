@@ -1,5 +1,11 @@
 use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
-use crate::model::{Category, CategoryKind, Item, Section, View};
+use crate::model::{Category, CategoryKind, Column, DateFmt, DateDisplay, Clock, DateFmtCode, Item, Section, View};
+use std::collections::HashMap;
+
+// ── F-key modifier state ──────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum FKeyMod { Normal, Shift, Ctrl, Alt }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -18,7 +24,7 @@ pub enum CursorPos {
 
 pub enum Mode {
     Normal,
-    Edit   { original: String, buffer: String, cursor: usize },
+    Edit   { original: String, buffer: String, cursor: usize, col: usize },
     Create { buffer: String, cursor: usize },
 }
 
@@ -36,13 +42,64 @@ pub struct CatMgrState {
     pub mode:   CatMode,
 }
 
+// ── Column state ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ColFormField { Head, Width, Position }
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum PropsField {
+    Head, Width,
+    DateDisplay, ShowDow, Clock, DateFmtCode, ShowAmPm, DateSep, TimeSep,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ColPos { Right, Left }
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ChoicesKind { Category, Position }
+
+pub enum ColMode {
+    Normal,
+    Form {
+        is_add:       bool,
+        head_cat_idx: Option<usize>,  // None = blank; Some = index into flatten_cats
+        width_buf:    String,
+        width_cur:    usize,
+        position:     ColPos,
+        active_field: ColFormField,
+    },
+    /// F3 Choices picker overlaid on the form.
+    Choices {
+        is_add:        bool,
+        head_cat_idx:  Option<usize>,
+        width_buf:     String,
+        width_cur:     usize,
+        position:      ColPos,
+        active_field:  ColFormField,
+        picker_cursor: usize,
+        kind:          ChoicesKind,
+    },
+    Move,
+    Props {
+        head_buf:     String,
+        head_cur:     usize,
+        width_buf:    String,
+        width_cur:    usize,
+        date_fmt:     Option<DateFmt>,
+        active_field: PropsField,
+        is_date:      bool,
+    },
+}
+
 // ── Menu state ────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum MenuState {
     Closed,
-    Top { cursor: usize },
-    Sub { top: usize, cursor: usize },
+    Top    { cursor: usize },
+    Sub    { top: usize, cursor: usize },
+    SubSub { top: usize, sub: usize, cursor: usize },
 }
 
 /// One entry in the depth-first flattened category list used for display/navigation.
@@ -65,8 +122,13 @@ pub struct App {
     // CatMgr
     pub categories:  Vec<Category>,
     pub cat_state:   CatMgrState,
+    // Column
+    pub col_cursor:  usize,
+    pub col_mode:    ColMode,
     // Menu
     pub menu:        MenuState,
+    // F-key bar
+    pub fkey_mod:    FKeyMod,
     // Misc
     pub quit:        bool,
     next_id:         usize,
@@ -139,6 +201,104 @@ fn rename_cat(cats: &mut Vec<Category>, path: &[usize], name: String) {
     }
 }
 
+// ── Datetime helpers ──────────────────────────────────────────────────────────
+
+fn now_datetime_string() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days   = (secs / 86400) as i64;
+    let rem    = secs % 86400;
+    let hour   = (rem / 3600) as u32;
+    let minute = ((rem % 3600) / 60) as u32;
+    let second = (rem % 60) as u32;
+    let (year, month, day) = civil_from_days(days);
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, hour, minute, second)
+}
+
+/// Convert days-since-Unix-epoch to (year, month, day).
+/// Algorithm: https://howardhinnant.github.io/date_algorithms.html
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z   = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y   = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp  = (5 * doy + 2) / 153;
+    let d   = doy - (153 * mp + 2) / 5 + 1;
+    let m   = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y   = if m <= 2 { y + 1 } else { y };
+    (y as i32, m as u32, d as u32)
+}
+
+/// Parse `YYYY-MM-DD HH:MM:SS`, `YYYY-MM-DD HH:MM`, or `YYYY-MM-DD`.
+/// Returns `(year, month, day, hour, min, sec)` or `None` if invalid.
+pub fn parse_datetime(s: &str) -> Option<(i32, u32, u32, u32, u32, u32)> {
+    let s = s.trim();
+    let parts: Vec<&str> = s.splitn(2, ' ').collect();
+    let date_nums: Vec<&str> = parts[0].split('-').collect();
+    if date_nums.len() != 3 { return None; }
+    let year  = date_nums[0].parse::<i32>().ok()?;
+    let month = date_nums[1].parse::<u32>().ok()?;
+    let day   = date_nums[2].parse::<u32>().ok()?;
+    if !(1..=12).contains(&month) { return None; }
+    if !(1..=31).contains(&day)   { return None; }
+    let (hour, min, sec) = if parts.len() == 2 {
+        let tnums: Vec<&str> = parts[1].split(':').collect();
+        let h = tnums.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+        let m = tnums.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+        let s = tnums.get(2).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+        if h > 23 || m > 59 || s > 59 { return None; }
+        (h, m, s)
+    } else {
+        (0, 0, 0)
+    };
+    Some((year, month, day, hour, min, sec))
+}
+
+/// Format a stored `YYYY-MM-DD HH:MM:SS` string according to a `DateFmt`.
+/// Returns `stored.to_string()` if the value cannot be parsed.
+pub fn format_date_value(stored: &str, fmt: &DateFmt) -> String {
+    let Some((year, month, day, hour, min, _sec)) = parse_datetime(stored) else {
+        return stored.to_string();
+    };
+    let ds = fmt.date_sep;
+    let ts = fmt.time_sep;
+    let date_str = match fmt.code {
+        DateFmtCode::MMDDYY   => format!("{:02}{}{:02}{}{:02}", month, ds, day,   ds, year % 100),
+        DateFmtCode::DDMMYY   => format!("{:02}{}{:02}{}{:02}", day,   ds, month, ds, year % 100),
+        DateFmtCode::YYYYMMDD => format!("{:04}{}{:02}{}{:02}", year,  ds, month, ds, day),
+    };
+    let time_str = match fmt.clock {
+        Clock::Hr24 => format!("{:02}{}{:02}", hour, ts, min),
+        Clock::Hr12 => {
+            let h12  = if hour == 0 { 12 } else if hour > 12 { hour - 12 } else { hour };
+            let ampm = if hour < 12 { "am" } else { "pm" };
+            if fmt.show_ampm {
+                format!("{}{}{:02}{}", h12, ts, min, ampm)
+            } else {
+                format!("{}{}{:02}", h12, ts, min)
+            }
+        }
+    };
+    match fmt.display {
+        DateDisplay::Date     => date_str,
+        DateDisplay::Time     => time_str,
+        DateDisplay::DateTime => format!("{} {}", date_str, time_str),
+    }
+}
+
+fn cycle_date_sep_next(c: char) -> char {
+    match c { '/' => '-', '-' => '.', '.' => ' ', _ => '/' }
+}
+
+fn cycle_date_sep_prev(c: char) -> char {
+    match c { '/' => ' ', '-' => '/', '.' => '-', ' ' => '.', _ => '/' }
+}
+
 // ── App impl ──────────────────────────────────────────────────────────────────
 
 impl App {
@@ -149,9 +309,11 @@ impl App {
             items: Vec::new(),
         };
         let view = View {
-            id:       1,
-            name:     "Initial View".to_string(),
-            sections: vec![section],
+            id:         1,
+            name:       "Initial View".to_string(),
+            sections:   vec![section],
+            columns:    Vec::new(),
+            left_count: 0,
         };
 
         fn date(id: usize, name: &str) -> Category {
@@ -180,7 +342,10 @@ impl App {
             mode:       Mode::Normal,
             categories: vec![main_cat],
             cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal },
+            col_cursor: 0,
+            col_mode:   ColMode::Normal,
             menu:       MenuState::Closed,
+            fkey_mod:   FKeyMod::Normal,
             quit:       false,
             next_id:    7,
         }
@@ -225,18 +390,31 @@ impl App {
             MenuAction::ReturnToView => {
                 if matches!(self.screen, AppScreen::CatMgr) { self.toggle_catmgr(); }
             }
+            MenuAction::ColumnAdd        => self.col_open_form(true,  ColFormField::Head),
+            MenuAction::ColumnProperties => self.col_open_form(false, ColFormField::Head),
+            MenuAction::ColumnWidth      => self.col_open_form(false, ColFormField::Width),
+            MenuAction::ColumnRemove     => self.col_delete(),
+            MenuAction::ColumnMove       => self.col_begin_move(),
             MenuAction::Noop => {}
         }
         self.menu = MenuState::Closed;
     }
 
     pub fn menu_left(&mut self) {
+        let items = self.current_menu_items();
         let new_menu = match self.menu {
             MenuState::Top { cursor } => {
-                MenuState::Top { cursor: cursor.saturating_sub(1) }
+                let max = items.len().saturating_sub(1);
+                MenuState::Top { cursor: if cursor == 0 { max } else { cursor - 1 } }
             }
             MenuState::Sub { top, cursor } => {
-                MenuState::Sub { top, cursor: cursor.saturating_sub(1) }
+                let max = items[top].sub.len().saturating_sub(1);
+                MenuState::Sub { top, cursor: if cursor == 0 { max } else { cursor - 1 } }
+            }
+            MenuState::SubSub { top, sub, cursor } => {
+                let children = items[top].sub[sub].children.unwrap_or(&[]);
+                let max = children.len().saturating_sub(1);
+                MenuState::SubSub { top, sub, cursor: if cursor == 0 { max } else { cursor - 1 } }
             }
             MenuState::Closed => MenuState::Closed,
         };
@@ -248,11 +426,16 @@ impl App {
         let new_menu = match self.menu {
             MenuState::Top { cursor } => {
                 let max = items.len().saturating_sub(1);
-                MenuState::Top { cursor: (cursor + 1).min(max) }
+                MenuState::Top { cursor: if cursor >= max { 0 } else { cursor + 1 } }
             }
             MenuState::Sub { top, cursor } => {
                 let max = items[top].sub.len().saturating_sub(1);
-                MenuState::Sub { top, cursor: (cursor + 1).min(max) }
+                MenuState::Sub { top, cursor: if cursor >= max { 0 } else { cursor + 1 } }
+            }
+            MenuState::SubSub { top, sub, cursor } => {
+                let children = items[top].sub[sub].children.unwrap_or(&[]);
+                let max = children.len().saturating_sub(1);
+                MenuState::SubSub { top, sub, cursor: if cursor >= max { 0 } else { cursor + 1 } }
             }
             MenuState::Closed => MenuState::Closed,
         };
@@ -265,8 +448,21 @@ impl App {
                 self.menu = MenuState::Sub { top: cursor, cursor: 0 };
             }
             MenuState::Sub { top, cursor } => {
-                let action = self.current_menu_items()[top].sub[cursor].action;
-                self.apply_menu_action(action);
+                let item = &self.current_menu_items()[top].sub[cursor];
+                if item.children.is_some() {
+                    self.menu = MenuState::SubSub { top, sub: cursor, cursor: 0 };
+                } else {
+                    let action = item.action;
+                    self.apply_menu_action(action);
+                }
+            }
+            MenuState::SubSub { top, sub, cursor } => {
+                let items = self.current_menu_items();
+                let children = items[top].sub[sub].children.unwrap_or(&[]);
+                if cursor < children.len() {
+                    let action = children[cursor].action;
+                    self.apply_menu_action(action);
+                }
             }
             MenuState::Closed => {}
         }
@@ -274,9 +470,10 @@ impl App {
 
     pub fn menu_esc(&mut self) {
         self.menu = match self.menu {
-            MenuState::Sub { top, .. } => MenuState::Top { cursor: top },
-            MenuState::Top { .. }      => MenuState::Closed,
-            MenuState::Closed          => MenuState::Closed,
+            MenuState::SubSub { top, sub, .. } => MenuState::Sub { top, cursor: sub },
+            MenuState::Sub { top, .. }         => MenuState::Top { cursor: top },
+            MenuState::Top { .. }              => MenuState::Closed,
+            MenuState::Closed                  => MenuState::Closed,
         };
     }
 
@@ -297,7 +494,23 @@ impl App {
                     s.label.chars().next().map(|c| c.to_ascii_uppercase()) == Some(ch_up)
                 });
                 if let Some(i) = pos {
-                    let action = items[top].sub[i].action;
+                    let item = &items[top].sub[i];
+                    if item.children.is_some() {
+                        self.menu = MenuState::SubSub { top, sub: i, cursor: 0 };
+                    } else {
+                        let action = item.action;
+                        self.apply_menu_action(action);
+                    }
+                }
+            }
+            MenuState::SubSub { top, sub, .. } => {
+                let items = self.current_menu_items();
+                let children = items[top].sub[sub].children.unwrap_or(&[]);
+                let pos = children.iter().position(|s| {
+                    s.label.chars().next().map(|c| c.to_ascii_uppercase()) == Some(ch_up)
+                });
+                if let Some(i) = pos {
+                    let action = children[i].action;
                     self.apply_menu_action(action);
                 }
             }
@@ -390,13 +603,32 @@ impl App {
 
     pub fn begin_edit(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
-        let original = match &self.cursor {
-            CursorPos::SectionHead(s)         => self.view.sections[*s].name.clone(),
-            CursorPos::Item { section, item } => {
-                self.view.sections[*section].items[*item].text.clone()
+        let col = self.col_cursor;
+        let (original, can_edit) = if col == 0 {
+            let orig = match &self.cursor {
+                CursorPos::SectionHead(s)         => self.view.sections[*s].name.clone(),
+                CursorPos::Item { section, item } => self.view.sections[*section].items[*item].text.clone(),
+            };
+            (orig, true)
+        } else {
+            if col - 1 >= self.view.columns.len() {
+                return;
+            }
+            match &self.cursor {
+                CursorPos::SectionHead(_) => {
+                    // Edit the column display name
+                    (self.view.columns[col - 1].name.clone(), true)
+                }
+                CursorPos::Item { section, item } => {
+                    let cat_id = self.view.columns[col - 1].cat_id;
+                    let val = self.view.sections[*section].items[*item]
+                        .values.get(&cat_id).cloned().unwrap_or_default();
+                    (val, true)
+                }
             }
         };
-        self.mode = Mode::Edit { original: original.clone(), buffer: original, cursor: 0 };
+        if !can_edit { return; }
+        self.mode = Mode::Edit { original: original.clone(), buffer: original, cursor: 0, col };
     }
 
     // ── View input ────────────────────────────────────────────────────────────
@@ -425,7 +657,35 @@ impl App {
         }
     }
 
+    pub fn input_delete(&mut self) {
+        let (buffer, cursor) = match &mut self.mode {
+            Mode::Edit   { buffer, cursor, .. } => (buffer, cursor),
+            Mode::Create { buffer, cursor }     => (buffer, cursor),
+            Mode::Normal => return,
+        };
+        let len = buffer.chars().count();
+        if *cursor < len {
+            let byte_pos = char_to_byte(buffer, *cursor);
+            buffer.remove(byte_pos);
+        }
+    }
+
     pub fn confirm(&mut self) {
+        // Date validation: peek at mode before consuming it
+        if let Mode::Edit { ref buffer, col, .. } = self.mode {
+            if col > 0 {
+                let col_idx = col - 1;
+                if col_idx < self.view.columns.len()
+                    && self.view.columns[col_idx].date_fmt.is_some()
+                    && matches!(self.cursor, CursorPos::Item { .. })
+                {
+                    let trimmed = buffer.trim();
+                    if !trimmed.is_empty() && parse_datetime(trimmed).is_none() {
+                        return; // Stay in edit mode — invalid date
+                    }
+                }
+            }
+        }
         match std::mem::replace(&mut self.mode, Mode::Normal) {
             Mode::Create { buffer, .. } => {
                 let text = buffer.trim().to_string();
@@ -436,18 +696,59 @@ impl App {
                     CursorPos::Item { section, item } => (*section, Some(*item)),
                 };
                 let pos = insert_after.map(|i| i + 1).unwrap_or(0);
-                self.view.sections[sec_idx].items.insert(pos, Item { id, text });
+                // Auto-stamp the Entry category with the creation datetime.
+                let mut values = HashMap::new();
+                let flat = flatten_cats(&self.categories);
+                if let Some(entry) = flat.iter().find(|c| c.name == "Entry") {
+                    values.insert(entry.id, now_datetime_string());
+                }
+                self.view.sections[sec_idx].items.insert(pos, Item { id, text, values });
                 self.cursor = CursorPos::Item { section: sec_idx, item: pos };
             }
-            Mode::Edit { buffer, .. } => {
+            Mode::Edit { buffer, col, .. } => {
                 let text = buffer.trim().to_string();
-                if text.is_empty() { return; }
-                match &self.cursor {
-                    CursorPos::SectionHead(s) => {
-                        self.view.sections[*s].name = text;
+                if col == 0 {
+                    if text.is_empty() { return; }
+                    match &self.cursor {
+                        CursorPos::SectionHead(s) => { self.view.sections[*s].name = text; }
+                        CursorPos::Item { section, item } => {
+                            self.view.sections[*section].items[*item].text = text;
+                        }
                     }
-                    CursorPos::Item { section, item } => {
-                        self.view.sections[*section].items[*item].text = text;
+                } else if col - 1 < self.view.columns.len() {
+                    match &self.cursor {
+                        CursorPos::SectionHead(_) => {
+                            if !text.is_empty() {
+                                let cat_id = self.view.columns[col - 1].cat_id;
+                                self.view.columns[col - 1].name = text.clone();
+                                let flat = flatten_cats(&self.categories);
+                                if let Some(e) = flat.iter().find(|c| c.id == cat_id) {
+                                    let path = e.path.clone();
+                                    rename_cat(&mut self.categories, &path, text);
+                                }
+                            }
+                        }
+                        CursorPos::Item { section, item } => {
+                            let col_idx = col - 1;
+                            let cat_id  = self.view.columns[col_idx].cat_id;
+                            let is_date = self.view.columns[col_idx].date_fmt.is_some();
+                            let (s, i)  = (*section, *item);
+                            // Normalize date values to YYYY-MM-DD HH:MM:SS
+                            let final_text = if is_date && !text.is_empty() {
+                                if let Some((y, mo, d, h, mi, sec)) = parse_datetime(&text) {
+                                    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, mo, d, h, mi, sec)
+                                } else {
+                                    text.clone()
+                                }
+                            } else {
+                                text.clone()
+                            };
+                            if final_text.is_empty() {
+                                self.view.sections[s].items[i].values.remove(&cat_id);
+                            } else {
+                                self.view.sections[s].items[i].values.insert(cat_id, final_text);
+                            }
+                        }
                     }
                 }
             }
@@ -457,6 +758,511 @@ impl App {
 
     pub fn cancel(&mut self) {
         self.mode = Mode::Normal;
+    }
+
+    // ── Column management ─────────────────────────────────────────────────────
+
+    pub fn col_open_form(&mut self, is_add: bool, focus: ColFormField) {
+        let flat = flatten_cats(&self.categories);
+        // col_cursor: 0 = items column, 1..n = added columns 0..n-1
+        let cur_idx = if self.col_cursor > 0 && !self.view.columns.is_empty() {
+            Some((self.col_cursor - 1).min(self.view.columns.len() - 1))
+        } else {
+            None
+        };
+        // Add: head starts blank. Properties/Width: pre-fill from current column.
+        let head_cat_idx = if is_add || cur_idx.is_none() {
+            None
+        } else {
+            let col_name = &self.view.columns[cur_idx.unwrap()].name;
+            flat.iter().position(|c| &c.name == col_name)
+        };
+        let width_buf = if is_add || cur_idx.is_none() {
+            "12".to_string()
+        } else {
+            self.view.columns[cur_idx.unwrap()].width.to_string()
+        };
+        let width_cur = width_buf.chars().count();
+        self.col_mode = ColMode::Form {
+            is_add,
+            head_cat_idx,
+            width_cur,
+            width_buf,
+            position:     ColPos::Right,
+            active_field: focus,
+        };
+    }
+
+    pub fn col_delete(&mut self) {
+        if self.view.columns.is_empty() || self.col_cursor == 0 { return; }
+        let idx = (self.col_cursor - 1).min(self.view.columns.len() - 1);
+        self.view.columns.remove(idx);
+        if idx < self.view.left_count {
+            self.view.left_count -= 1;
+        }
+        let new_len = self.view.columns.len();
+        self.col_cursor = if new_len == 0 { 0 } else { self.col_cursor.min(new_len) };
+    }
+
+    pub fn col_begin_move(&mut self) {
+        if self.col_cursor > 0 && !self.view.columns.is_empty() {
+            self.col_mode = ColMode::Move;
+        }
+    }
+
+    pub fn col_form_confirm(&mut self) {
+        // Column head may not be blank.
+        if matches!(&self.col_mode, ColMode::Form { head_cat_idx: None, .. }) { return; }
+
+        let old_mode = std::mem::replace(&mut self.col_mode, ColMode::Normal);
+        if let ColMode::Form { is_add, head_cat_idx, width_buf, position, .. } = old_mode {
+            let flat   = flatten_cats(&self.categories);
+            let flat_e = head_cat_idx.and_then(|i| flat.get(i));
+            let name   = flat_e.map(|c| c.name.clone()).unwrap_or_default();
+            let cat_id = flat_e.map(|c| c.id).unwrap_or(0);
+            let width  = width_buf.trim().parse::<usize>().unwrap_or(12).max(1);
+            let kind = flat_e.map(|c| c.kind).unwrap_or(CategoryKind::Standard);
+            if is_add {
+                let id = self.alloc_id();
+                let lc = self.view.left_count;
+                let (pos, new_lc) = if self.view.columns.is_empty() {
+                    let is_left = self.col_cursor == 0 && position == ColPos::Left;
+                    (0, if is_left { 1 } else { 0 })
+                } else if self.col_cursor == 0 {
+                    match position {
+                        ColPos::Left  => (lc, lc + 1),
+                        ColPos::Right => (lc, lc),
+                    }
+                } else {
+                    let cur = (self.col_cursor - 1).min(self.view.columns.len() - 1);
+                    let in_left = cur < lc;
+                    let p = match position { ColPos::Right => cur + 1, ColPos::Left => cur };
+                    (p, if in_left { lc + 1 } else { lc })
+                };
+                self.view.left_count = new_lc;
+                let date_fmt = if kind == CategoryKind::Date { Some(DateFmt::default()) } else { None };
+                self.view.columns.insert(pos, Column { id, name, cat_id, width, date_fmt });
+                self.col_cursor = pos + 1;  // +1: 0=items column, 1..n=added columns
+            } else if !self.view.columns.is_empty() && self.col_cursor > 0 {
+                let idx = (self.col_cursor - 1).min(self.view.columns.len() - 1);
+                self.view.columns[idx].name   = name;
+                self.view.columns[idx].cat_id = cat_id;
+                self.view.columns[idx].width  = width;
+                // Preserve or update date_fmt based on new kind
+                if kind == CategoryKind::Date && self.view.columns[idx].date_fmt.is_none() {
+                    self.view.columns[idx].date_fmt = Some(DateFmt::default());
+                } else if kind != CategoryKind::Date {
+                    self.view.columns[idx].date_fmt = None;
+                }
+            }
+        }
+    }
+
+    pub fn col_form_cancel(&mut self) {
+        self.col_mode = ColMode::Normal;
+    }
+
+    pub fn col_form_field_next(&mut self) {
+        if let ColMode::Form { active_field, is_add, .. } = &mut self.col_mode {
+            *active_field = match active_field {
+                ColFormField::Head     => ColFormField::Width,
+                ColFormField::Width    => if *is_add { ColFormField::Position } else { ColFormField::Head },
+                ColFormField::Position => ColFormField::Head,
+            };
+        }
+    }
+
+    pub fn col_form_field_prev(&mut self) {
+        if let ColMode::Form { active_field, is_add, .. } = &mut self.col_mode {
+            *active_field = match active_field {
+                ColFormField::Head     => if *is_add { ColFormField::Position } else { ColFormField::Width },
+                ColFormField::Width    => ColFormField::Head,
+                ColFormField::Position => ColFormField::Width,
+            };
+        }
+    }
+
+    pub fn col_form_input_char(&mut self, ch: char) {
+        // Head field is a category picker (read-only); only Width accepts typed input.
+        if let ColMode::Form { active_field: ColFormField::Width, width_buf, width_cur, .. } = &mut self.col_mode {
+            if ch.is_ascii_digit() {
+                let byte = char_to_byte(width_buf, *width_cur);
+                width_buf.insert(byte, ch);
+                *width_cur += 1;
+            }
+        }
+    }
+
+    pub fn col_form_backspace(&mut self) {
+        // Backspace only applies to the Width field.
+        if let ColMode::Form { active_field: ColFormField::Width, width_buf, width_cur, .. } = &mut self.col_mode {
+            if *width_cur > 0 {
+                *width_cur -= 1;
+                let byte = char_to_byte(width_buf, *width_cur);
+                width_buf.remove(byte);
+            }
+        }
+    }
+
+    pub fn col_form_cursor_left(&mut self) {
+        if let ColMode::Form { active_field: ColFormField::Width, width_cur, .. } = &mut self.col_mode {
+            if *width_cur > 0 { *width_cur -= 1; }
+        }
+    }
+
+    pub fn col_form_cursor_right(&mut self) {
+        if let ColMode::Form { active_field: ColFormField::Width, width_buf, width_cur, .. } = &mut self.col_mode {
+            let len = width_buf.chars().count();
+            if *width_cur < len { *width_cur += 1; }
+        }
+    }
+
+    pub fn col_open_choices(&mut self) {
+        let active = match &self.col_mode {
+            ColMode::Form { active_field, .. } => *active_field,
+            _ => return,
+        };
+        if !matches!(active, ColFormField::Head | ColFormField::Position) { return; }
+
+        let old = std::mem::replace(&mut self.col_mode, ColMode::Normal);
+        if let ColMode::Form { is_add, head_cat_idx, width_buf, width_cur, position, active_field } = old {
+            let (kind, picker_cursor) = match active_field {
+                ColFormField::Head => {
+                    let flat = flatten_cats(&self.categories);
+                    let cur  = head_cat_idx.unwrap_or(0).min(flat.len().saturating_sub(1));
+                    (ChoicesKind::Category, cur)
+                }
+                ColFormField::Position => {
+                    let cur = match position { ColPos::Right => 0, ColPos::Left => 1 };
+                    (ChoicesKind::Position, cur)
+                }
+                ColFormField::Width => unreachable!(),
+            };
+            self.col_mode = ColMode::Choices {
+                is_add, head_cat_idx, width_buf, width_cur, position, active_field,
+                picker_cursor, kind,
+            };
+        }
+    }
+
+    pub fn col_choices_up(&mut self) {
+        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        }
+    }
+
+    pub fn col_choices_down(&mut self) {
+        let list_len = match &self.col_mode {
+            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
+            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
+            _ => return,
+        };
+        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+            if *picker_cursor + 1 < list_len { *picker_cursor += 1; }
+        }
+    }
+
+    pub fn col_choices_confirm(&mut self) {
+        let old = std::mem::replace(&mut self.col_mode, ColMode::Normal);
+        if let ColMode::Choices { is_add, head_cat_idx, picker_cursor, width_buf, width_cur,
+                                  position, active_field, kind } = old {
+            let (new_head, new_pos) = match kind {
+                ChoicesKind::Category => (Some(picker_cursor), position),
+                ChoicesKind::Position => {
+                    let p = if picker_cursor == 0 { ColPos::Right } else { ColPos::Left };
+                    (head_cat_idx, p)
+                }
+            };
+            self.col_mode = ColMode::Form {
+                is_add, head_cat_idx: new_head, width_buf, width_cur,
+                position: new_pos, active_field,
+            };
+        }
+    }
+
+    pub fn col_choices_cancel(&mut self) {
+        let old = std::mem::replace(&mut self.col_mode, ColMode::Normal);
+        if let ColMode::Choices { is_add, head_cat_idx, width_buf, width_cur, position, active_field, .. } = old {
+            self.col_mode = ColMode::Form { is_add, head_cat_idx, width_buf, width_cur, position, active_field };
+        }
+    }
+
+    pub fn col_move_left(&mut self) {
+        if self.col_cursor <= 1 { return; }  // already leftmost
+        let lc = self.view.left_count;
+        // Crossing main boundary: first right col → last left col
+        if self.col_cursor == lc + 1 {
+            self.view.left_count += 1;
+            return; // col_cursor unchanged; column is now classified as left
+        }
+        self.view.columns.swap(self.col_cursor - 1, self.col_cursor - 2);
+        self.col_cursor -= 1;
+    }
+
+    pub fn col_move_right(&mut self) {
+        if self.col_cursor == 0 || self.col_cursor >= self.view.columns.len() { return; }
+        let lc = self.view.left_count;
+        // Crossing main boundary: last left col → first right col
+        if self.col_cursor == lc && lc > 0 {
+            self.view.left_count -= 1;
+            return; // col_cursor unchanged; column is now classified as right
+        }
+        self.view.columns.swap(self.col_cursor - 1, self.col_cursor);
+        self.col_cursor += 1;
+    }
+
+    // ── Column Properties modal ───────────────────────────────────────────────
+
+    pub fn col_open_props(&mut self) {
+        if self.col_cursor == 0 || self.view.columns.is_empty() { return; }
+        let idx = (self.col_cursor - 1).min(self.view.columns.len() - 1);
+        let col = &self.view.columns[idx];
+        let head_buf  = col.name.clone();
+        let head_cur  = head_buf.chars().count();
+        let width_buf = col.width.to_string();
+        let width_cur = width_buf.chars().count();
+        let is_date   = col.date_fmt.is_some();
+        let date_fmt  = col.date_fmt.clone();
+        self.col_mode = ColMode::Props {
+            head_buf, head_cur, width_buf, width_cur,
+            date_fmt, active_field: PropsField::Head, is_date,
+        };
+    }
+
+    pub fn col_props_confirm(&mut self) {
+        let old = std::mem::replace(&mut self.col_mode, ColMode::Normal);
+        if let ColMode::Props { head_buf, width_buf, date_fmt, .. } = old {
+            if self.view.columns.is_empty() || self.col_cursor == 0 { return; }
+            let idx  = (self.col_cursor - 1).min(self.view.columns.len() - 1);
+            let name = head_buf.trim().to_string();
+            if !name.is_empty() {
+                let cat_id = self.view.columns[idx].cat_id;
+                self.view.columns[idx].name = name.clone();
+                let flat = flatten_cats(&self.categories);
+                if let Some(e) = flat.iter().find(|c| c.id == cat_id) {
+                    let path = e.path.clone();
+                    rename_cat(&mut self.categories, &path, name);
+                }
+            }
+            let width = width_buf.trim().parse::<usize>().unwrap_or(12).max(1);
+            self.view.columns[idx].width    = width;
+            self.view.columns[idx].date_fmt = date_fmt;
+        }
+    }
+
+    pub fn col_props_cancel(&mut self) {
+        self.col_mode = ColMode::Normal;
+    }
+
+    pub fn col_props_field_next(&mut self) {
+        if let ColMode::Props { ref mut active_field, is_date, .. } = self.col_mode {
+            *active_field = match active_field {
+                PropsField::Head        => PropsField::Width,
+                PropsField::Width       => if is_date { PropsField::DateDisplay } else { PropsField::Head },
+                PropsField::DateDisplay => PropsField::ShowDow,
+                PropsField::ShowDow     => PropsField::Clock,
+                PropsField::Clock       => PropsField::DateFmtCode,
+                PropsField::DateFmtCode => PropsField::ShowAmPm,
+                PropsField::ShowAmPm    => PropsField::DateSep,
+                PropsField::DateSep     => PropsField::TimeSep,
+                PropsField::TimeSep     => PropsField::Head,
+            };
+        }
+    }
+
+    pub fn col_props_field_prev(&mut self) {
+        if let ColMode::Props { ref mut active_field, is_date, .. } = self.col_mode {
+            *active_field = match active_field {
+                PropsField::Head        => if is_date { PropsField::TimeSep } else { PropsField::Width },
+                PropsField::Width       => PropsField::Head,
+                PropsField::DateDisplay => PropsField::Width,
+                PropsField::ShowDow     => PropsField::DateDisplay,
+                PropsField::Clock       => PropsField::ShowDow,
+                PropsField::DateFmtCode => PropsField::Clock,
+                PropsField::ShowAmPm    => PropsField::DateFmtCode,
+                PropsField::DateSep     => PropsField::ShowAmPm,
+                PropsField::TimeSep     => PropsField::DateSep,
+            };
+        }
+    }
+
+    pub fn col_props_input_char(&mut self, ch: char) {
+        if let ColMode::Props { ref active_field, ref mut head_buf, ref mut head_cur,
+                                ref mut width_buf, ref mut width_cur, .. } = self.col_mode {
+            match active_field {
+                PropsField::Head => {
+                    let byte = char_to_byte(head_buf, *head_cur);
+                    head_buf.insert(byte, ch);
+                    *head_cur += 1;
+                }
+                PropsField::Width => {
+                    if ch.is_ascii_digit() {
+                        let byte = char_to_byte(width_buf, *width_cur);
+                        width_buf.insert(byte, ch);
+                        *width_cur += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn col_props_backspace(&mut self) {
+        if let ColMode::Props { ref active_field, ref mut head_buf, ref mut head_cur,
+                                ref mut width_buf, ref mut width_cur, .. } = self.col_mode {
+            match active_field {
+                PropsField::Head => {
+                    if *head_cur > 0 {
+                        *head_cur -= 1;
+                        let byte = char_to_byte(head_buf, *head_cur);
+                        head_buf.remove(byte);
+                    }
+                }
+                PropsField::Width => {
+                    if *width_cur > 0 {
+                        *width_cur -= 1;
+                        let byte = char_to_byte(width_buf, *width_cur);
+                        width_buf.remove(byte);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn col_props_left(&mut self) {
+        if let ColMode::Props { ref active_field, ref mut head_cur, ref mut width_cur,
+                                ref mut date_fmt, .. } = self.col_mode {
+            match active_field {
+                PropsField::Head  => { if *head_cur > 0 { *head_cur -= 1; } }
+                PropsField::Width => { if *width_cur > 0 { *width_cur -= 1; } }
+                PropsField::DateDisplay => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.display = match fmt.display {
+                            DateDisplay::Date     => DateDisplay::DateTime,
+                            DateDisplay::Time     => DateDisplay::Date,
+                            DateDisplay::DateTime => DateDisplay::Time,
+                        };
+                    }
+                }
+                PropsField::ShowDow => {
+                    if let Some(fmt) = date_fmt { fmt.show_dow = !fmt.show_dow; }
+                }
+                PropsField::Clock => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.clock = match fmt.clock {
+                            Clock::Hr12 => Clock::Hr24,
+                            Clock::Hr24 => Clock::Hr12,
+                        };
+                    }
+                }
+                PropsField::DateFmtCode => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.code = match fmt.code {
+                            DateFmtCode::MMDDYY   => DateFmtCode::YYYYMMDD,
+                            DateFmtCode::DDMMYY   => DateFmtCode::MMDDYY,
+                            DateFmtCode::YYYYMMDD => DateFmtCode::DDMMYY,
+                        };
+                    }
+                }
+                PropsField::ShowAmPm => {
+                    if let Some(fmt) = date_fmt { fmt.show_ampm = !fmt.show_ampm; }
+                }
+                PropsField::DateSep => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.date_sep = cycle_date_sep_prev(fmt.date_sep);
+                    }
+                }
+                PropsField::TimeSep => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.time_sep = cycle_date_sep_prev(fmt.time_sep);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn col_props_right(&mut self) {
+        if let ColMode::Props { ref active_field, ref mut head_cur, ref head_buf,
+                                ref mut width_cur, ref width_buf, ref mut date_fmt, .. } = self.col_mode {
+            match active_field {
+                PropsField::Head  => {
+                    let len = head_buf.chars().count();
+                    if *head_cur < len { *head_cur += 1; }
+                }
+                PropsField::Width => {
+                    let len = width_buf.chars().count();
+                    if *width_cur < len { *width_cur += 1; }
+                }
+                PropsField::DateDisplay => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.display = match fmt.display {
+                            DateDisplay::Date     => DateDisplay::Time,
+                            DateDisplay::Time     => DateDisplay::DateTime,
+                            DateDisplay::DateTime => DateDisplay::Date,
+                        };
+                    }
+                }
+                PropsField::ShowDow => {
+                    if let Some(fmt) = date_fmt { fmt.show_dow = !fmt.show_dow; }
+                }
+                PropsField::Clock => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.clock = match fmt.clock {
+                            Clock::Hr12 => Clock::Hr24,
+                            Clock::Hr24 => Clock::Hr12,
+                        };
+                    }
+                }
+                PropsField::DateFmtCode => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.code = match fmt.code {
+                            DateFmtCode::MMDDYY   => DateFmtCode::DDMMYY,
+                            DateFmtCode::DDMMYY   => DateFmtCode::YYYYMMDD,
+                            DateFmtCode::YYYYMMDD => DateFmtCode::MMDDYY,
+                        };
+                    }
+                }
+                PropsField::ShowAmPm => {
+                    if let Some(fmt) = date_fmt { fmt.show_ampm = !fmt.show_ampm; }
+                }
+                PropsField::DateSep => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.date_sep = cycle_date_sep_next(fmt.date_sep);
+                    }
+                }
+                PropsField::TimeSep => {
+                    if let Some(fmt) = date_fmt {
+                        fmt.time_sep = cycle_date_sep_next(fmt.time_sep);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn cursor_col_left(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        let lc = self.view.left_count;
+        self.col_cursor = match self.col_cursor {
+            0 if lc > 0 => lc,      // main → last left col
+            0           => 0,       // no left cols, stay
+            1 if lc > 0 => 1,       // first left col → stay (already leftmost)
+            1           => 0,       // first right col (lc==0) → main
+            c if c == lc + 1 => 0,  // first right col → main
+            c           => c - 1,   // within left or within right
+        };
+    }
+
+    pub fn cursor_col_right(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        let n  = self.view.columns.len();
+        let lc = self.view.left_count;
+        self.col_cursor = match self.col_cursor {
+            0           => if lc + 1 <= n { lc + 1 } else { 0 },  // main → first right
+            c if c == lc && lc > 0 => 0,  // last left col → main
+            c if c < n  => c + 1,          // within left or within right
+            _           => self.col_cursor, // already rightmost
+        };
     }
 
     // ── CatMgr navigation ────────────────────────────────────────────────────
