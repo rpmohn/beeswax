@@ -36,6 +36,20 @@ static COL_FORM_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "",     "",        "", "", "",      "", "",         "", ""],
 };
 
+static CALENDAR_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "", "", "", "", "SetTime", "", "", "", ""],
+    shift:  ["",     "", "", "", "", "",        "", "", "", ""],
+    ctrl:   ["",     "", "", "", "", "",        "", "", "", ""],
+    alt:    ["",     "", "", "", "", "",        "", "", "", ""],
+};
+
+static SET_TIME_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "", "", "", "", "", "", "", "", ""],
+    shift:  ["",     "", "", "", "", "", "", "", "", ""],
+    ctrl:   ["",     "", "", "", "", "", "", "", "", ""],
+    alt:    ["",     "", "", "", "", "", "", "", "", ""],
+};
+
 static MENU_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "", "", "", "", "", "", "", "", ""],
     shift:  ["",     "", "", "", "", "", "", "", "", ""],
@@ -47,6 +61,12 @@ static MENU_FKEYS: FKeyLabels = FKeyLabels {
 pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
     let def = if !matches!(app.menu, MenuState::Closed) {
         &MENU_FKEYS
+    } else if matches!(app.col_mode, ColMode::QuickAdd { .. }) {
+        &MENU_FKEYS   // just F1 Help, rest blank — same as menu blank bar
+    } else if matches!(app.col_mode, ColMode::Calendar { .. }) {
+        &CALENDAR_FKEYS
+    } else if matches!(app.col_mode, ColMode::SetTime { .. }) {
+        &SET_TIME_FKEYS
     } else if matches!(app.col_mode, ColMode::Form { .. } | ColMode::Choices { .. } | ColMode::Props { .. }) {
         &COL_FORM_FKEYS
     } else {

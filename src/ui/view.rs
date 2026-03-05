@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 use crate::app::{App, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos, MenuState, Mode,
-                 PropsField, flatten_cats, format_date_value};
+                 PropsField, TimeField, flatten_cats, format_date_value};
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
 use super::{cursor_split, fkeys, menu};
 
@@ -379,6 +379,44 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(visible_lines), inner);
     }
 
+    // ── Quick-add category picker (Alt-R / Alt-L) ────────────────────────────
+    if let ColMode::QuickAdd { position, picker_cursor } = &app.col_mode {
+        let rev   = Style::default().add_modifier(Modifier::REVERSED);
+        let flat  = flatten_cats(&app.categories);
+        let title = match position {
+            ColPos::Right => " Add Column Right ",
+            ColPos::Left  => " Add Column Left ",
+        };
+        let lines: Vec<Line> = flat.iter().enumerate().map(|(i, cat)| {
+            let indent    = " ".repeat(cat.depth * 2 + 1);
+            let indicator = match cat.kind {
+                CategoryKind::Standard  => " ",
+                CategoryKind::Date      => "*",
+                CategoryKind::Numeric   => "#",
+                CategoryKind::Unindexed => "D",
+            };
+            let text = format!("{}{} {}", indent, indicator, cat.name);
+            if i == *picker_cursor {
+                Line::from(Span::styled(text, rev))
+            } else {
+                Line::from(Span::raw(text))
+            }
+        }).collect();
+
+        let picker_h = (lines.len() as u16 + 2).min(area.height.saturating_sub(4)).max(4);
+        let picker_rect = centered_rect(40, picker_h, area);
+        frame.render_widget(Clear, picker_rect);
+
+        let block = Block::default().borders(Borders::ALL).title(title);
+        frame.render_widget(block.clone(), picker_rect);
+        let inner = block.inner(picker_rect);
+
+        let visible = inner.height as usize;
+        let offset  = if *picker_cursor >= visible { picker_cursor - visible + 1 } else { 0 };
+        let visible_lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
+        frame.render_widget(Paragraph::new(visible_lines), inner);
+    }
+
     // ── Column Properties modal ───────────────────────────────────────────────
     if let ColMode::Props { head_buf, head_cur, width_buf, width_cur,
                             date_fmt, active_field, is_date } = &app.col_mode {
@@ -517,6 +555,110 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         frame.render_widget(Paragraph::new(form_lines), inner);
     }
+
+    // ── Calendar modal ────────────────────────────────────────────────────────
+    if let ColMode::Calendar { year, month, day, hour, min, sec } = &app.col_mode {
+        let (cal_year, cal_month, cal_day) = (*year, *month, *day);
+        let (cal_hour, cal_min, cal_sec)   = (*hour, *min, *sec);
+        let (today_y, today_m, today_d)    = cal_today();
+        let dim   = cal_days_in_month(cal_year, cal_month);
+        let start = cal_first_dow(cal_year, cal_month) as usize;
+        let mname = CAL_MONTH_NAMES[(cal_month as usize).saturating_sub(1)];
+
+        // Box: 24 wide (22 inner), 11 tall (9 inner)
+        let cal_rect = centered_rect(24, 11, area);
+        frame.render_widget(Clear, cal_rect);
+        let block = Block::default().borders(Borders::ALL).title(" Calendar ");
+        frame.render_widget(block.clone(), cal_rect);
+        let inner = block.inner(cal_rect);
+        let iw = inner.width as usize;
+
+        let rev  = Style::default().add_modifier(Modifier::REVERSED);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+
+        // Title: centre "Month YYYY" in iw chars
+        let title_str = format!("{} {}", mname, cal_year);
+        let tpad = (iw.saturating_sub(title_str.chars().count())) / 2;
+        let title_line = Line::from(Span::raw(format!("{}{}", " ".repeat(tpad), title_str)));
+
+        // Day-of-week header
+        let header_line = Line::from(Span::raw(" Su Mo Tu We Th Fr Sa"));
+
+        let mut cal_lines: Vec<Line<'static>> = vec![title_line, header_line];
+
+        // 6 week rows: each cell is 2 chars, separated by 1 space, with 1 leading space
+        for row in 0..6usize {
+            let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
+            for col in 0..7usize {
+                if col > 0 { spans.push(Span::raw(" ")); }
+                let cell = row * 7 + col;
+                if cell < start || cell >= start + dim as usize {
+                    spans.push(Span::raw("  "));
+                } else {
+                    let d = (cell - start + 1) as u32;
+                    let s = format!("{:2}", d);
+                    let style = if d == cal_day {
+                        rev
+                    } else if cal_year == today_y && cal_month == today_m && d == today_d {
+                        bold
+                    } else {
+                        Style::default()
+                    };
+                    spans.push(Span::styled(s, style));
+                }
+            }
+            cal_lines.push(Line::from(spans));
+        }
+
+        // Time display
+        cal_lines.push(Line::from(Span::raw(
+            format!(" Time: {:02}:{:02}:{:02}", cal_hour, cal_min, cal_sec)
+        )));
+
+        frame.render_widget(Paragraph::new(cal_lines), inner);
+    }
+
+    // ── SetTime modal ─────────────────────────────────────────────────────────
+    if let ColMode::SetTime { year, month, day, hour_buf, min_buf, sec_buf, active, .. } = &app.col_mode {
+        let rev = Style::default().add_modifier(Modifier::REVERSED);
+
+        let st_rect = centered_rect(28, 7, area);
+        frame.render_widget(Clear, st_rect);
+        let block = Block::default().borders(Borders::ALL).title(" Set Time ");
+        frame.render_widget(block.clone(), st_rect);
+        let inner = block.inner(st_rect);
+
+        let date_line = Line::from(Span::raw(
+            format!(" Date: {:04}-{:02}-{:02}", year, month, day)
+        ));
+
+        let make_field = |buf: &str, field: TimeField| -> Span<'static> {
+            let s = format!("{:>2}", buf);
+            if *active == field { Span::styled(s, rev) } else { Span::raw(s) }
+        };
+
+        let time_line = Line::from(vec![
+            Span::raw(" Time: "),
+            make_field(hour_buf, TimeField::Hour),
+            Span::raw(":"),
+            make_field(min_buf, TimeField::Min),
+            Span::raw(":"),
+            make_field(sec_buf, TimeField::Sec),
+        ]);
+
+        let help_line = Line::from(Span::raw(
+            " \u{2190}\u{2192} field   ENTER saves   ESC cancels"
+        ));
+
+        frame.render_widget(Paragraph::new(vec![
+            Line::from(""),
+            date_line,
+            Line::from(""),
+            time_line,
+            Line::from(""),
+            help_line,
+        ]), inner);
+    }
 }
 
 /// Compute a centred Rect of `width` × `height` inside `area`.
@@ -617,4 +759,46 @@ fn input_row_spans(buffer: &str, cursor: usize) -> Vec<Span<'static>> {
         Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
         Span::raw(right),
     ]
+}
+
+// ── Calendar helpers ──────────────────────────────────────────────────────────
+
+static CAL_MONTH_NAMES: [&str; 12] = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+];
+
+fn cal_today() -> (i32, u32, u32) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let z   = (secs / 86400) as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y   = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp  = (5 * doy + 2) / 153;
+    let d   = doy - (153 * mp + 2) / 5 + 1;
+    let m   = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y   = if m <= 2 { y + 1 } else { y };
+    (y as i32, m as u32, d as u32)
+}
+
+fn cal_days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11               => 30,
+        2 => if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 29 } else { 28 },
+        _ => 30,
+    }
+}
+
+/// Day of week for the 1st of `month`/`year`. 0 = Sunday … 6 = Saturday.
+fn cal_first_dow(year: i32, month: u32) -> u32 {
+    static T: [i64; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let y = if month < 3 { year as i64 - 1 } else { year as i64 };
+    ((y + y / 4 - y / 100 + y / 400 + T[month as usize - 1] + 1).rem_euclid(7)) as u32
 }

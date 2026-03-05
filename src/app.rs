@@ -59,6 +59,9 @@ pub enum ColPos { Right, Left }
 #[derive(Clone, Copy, PartialEq)]
 pub enum ChoicesKind { Category, Position }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum TimeField { Hour, Min, Sec }
+
 pub enum ColMode {
     Normal,
     Form {
@@ -81,6 +84,11 @@ pub enum ColMode {
         kind:          ChoicesKind,
     },
     Move,
+    /// Alt-R / Alt-L quick-add: category picker that inserts a column immediately.
+    QuickAdd {
+        position:      ColPos,
+        picker_cursor: usize,
+    },
     Props {
         head_buf:     String,
         head_cur:     usize,
@@ -89,6 +97,28 @@ pub enum ColMode {
         date_fmt:     Option<DateFmt>,
         active_field: PropsField,
         is_date:      bool,
+    },
+    /// F3 Calendar date picker for date-type columns.
+    Calendar {
+        year:  i32,
+        month: u32,
+        day:   u32,
+        hour:  u32,
+        min:   u32,
+        sec:   u32,
+    },
+    /// F6 SetTime sub-modal opened from Calendar.
+    SetTime {
+        year:      i32,
+        month:     u32,
+        day:       u32,
+        hour_buf:  String,
+        min_buf:   String,
+        sec_buf:   String,
+        active:    TimeField,
+        orig_hour: u32,
+        orig_min:  u32,
+        orig_sec:  u32,
     },
 }
 
@@ -259,6 +289,116 @@ pub fn parse_datetime(s: &str) -> Option<(i32, u32, u32, u32, u32, u32)> {
     Some((year, month, day, hour, min, sec))
 }
 
+/// Parse a time string such as "2300", "11pm", "11:30pm", "23:00", "9:30".
+/// Returns (hour, min, sec) or None if unparseable/out-of-range.
+fn parse_time_str(s: &str) -> Option<(u32, u32, u32)> {
+    let s = s.trim();
+    if s.is_empty() { return None; }
+    let sl = s.to_ascii_lowercase();
+    // Strip am/pm suffix
+    let (core, is_pm, is_am) =
+        if sl.ends_with("pm") { (&s[..s.len()-2], true,  false) }
+        else if sl.ends_with("am") { (&s[..s.len()-2], false, true)  }
+        else if sl.ends_with('p')  { (&s[..s.len()-1], true,  false) }
+        else if sl.ends_with('a')  { (&s[..s.len()-1], false, true)  }
+        else                       { (s,               false, false) };
+    let core = core.trim();
+    if core.is_empty() { return None; }
+    let (hour, min, sec) = if core.contains(':') {
+        let parts: Vec<&str> = core.splitn(3, ':').collect();
+        let h = parts[0].trim().parse::<u32>().ok()?;
+        let m = parts.get(1).and_then(|x| x.trim().parse::<u32>().ok()).unwrap_or(0);
+        let s = parts.get(2).and_then(|x| x.trim().parse::<u32>().ok()).unwrap_or(0);
+        (h, m, s)
+    } else {
+        // Pure digits: 1–2 = HH, 3 = H:MM, 4 = HH:MM
+        let digits: String = core.chars().filter(|c| c.is_ascii_digit()).collect();
+        match digits.len() {
+            1 | 2 => (digits.parse::<u32>().ok()?, 0, 0),
+            3     => (digits[..1].parse::<u32>().ok()?, digits[1..].parse::<u32>().ok()?, 0),
+            4     => (digits[..2].parse::<u32>().ok()?, digits[2..].parse::<u32>().ok()?, 0),
+            _     => return None,
+        }
+    };
+    let hour = if is_pm {
+        if hour == 12 { 12 } else if hour < 12 { hour + 12 } else { return None }
+    } else if is_am {
+        if hour == 12 { 0  } else if hour <= 12 { hour }     else { return None }
+    } else { hour };
+    if hour > 23 || min > 59 || sec > 59 { return None; }
+    Some((hour, min, sec))
+}
+
+/// Expand a 1–2 digit year to 4 digits (< 70 → 2000+, ≥ 70 → 1900+).
+fn parse_year_str(s: &str) -> Option<i32> {
+    let s = s.trim();
+    let y = s.parse::<i32>().ok()?;
+    Some(if s.len() <= 2 { if y < 70 { 2000 + y } else { 1900 + y } } else { y })
+}
+
+/// Parse a date string that uses `/`, `.`, or `-` as a separator.
+/// Uses `fmt_code` to determine MM/DD vs DD/MM field order.
+fn parse_date_fields(s: &str, fmt_code: DateFmtCode, default_year: i32) -> Option<(i32, u32, u32)> {
+    let sep = if s.contains('/') { '/' }
+              else if s.contains('.') { '.' }
+              else if s.contains('-') { '-' }
+              else { return None; };
+    let parts: Vec<&str> = s.splitn(3, sep).collect();
+    let (a, b, year) = match parts.len() {
+        2 => (parts[0].trim().parse::<u32>().ok()?,
+              parts[1].trim().parse::<u32>().ok()?,
+              default_year),
+        3 => (parts[0].trim().parse::<u32>().ok()?,
+              parts[1].trim().parse::<u32>().ok()?,
+              parse_year_str(parts[2])?),
+        _ => return None,
+    };
+    let (month, day) = match fmt_code {
+        DateFmtCode::DDMMYY => (b, a),
+        _                   => (a, b),
+    };
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) { return None; }
+    Some((year, month, day))
+}
+
+/// Smart date/time input parser.
+///
+/// Accepts full ISO (`YYYY-MM-DD HH:MM:SS`), partial dates (`M/D`, `M/D/YY`),
+/// pure times (`HHMM`, `NNpm`, `HH:MM`), and combinations (`4/2 11pm`).
+/// `fmt_code` controls MM/DD vs DD/MM ordering for two-field date inputs.
+pub fn parse_date_input(s: &str, fmt_code: DateFmtCode) -> Option<(i32, u32, u32, u32, u32, u32)> {
+    let s = s.trim();
+    if s.is_empty() { return None; }
+    // Full ISO datetime/date takes priority
+    if let Some(r) = parse_datetime(s) { return Some(r); }
+    let (today_y, today_m, today_d) = today();
+    // Split on first space → potential "date time" pair
+    let (date_part, time_part) = match s.find(' ') {
+        Some(pos) => { let (d, t) = s.split_at(pos); (d.trim(), Some(t.trim())) }
+        None      => (s, None),
+    };
+    let has_slash_dot = date_part.contains('/') || date_part.contains('.');
+    let has_dash      = date_part.contains('-');
+    if !has_slash_dot && !has_dash && time_part.is_none() {
+        // No date separators → treat entirely as a time, use today's date
+        let (h, m, sec) = parse_time_str(date_part)?;
+        return Some((today_y, today_m, today_d, h, m, sec));
+    }
+    if !has_slash_dot && has_dash && time_part.is_none() {
+        // Dash-only: try as M-D date
+        if let Some((y, mo, d)) = parse_date_fields(date_part, fmt_code, today_y) {
+            return Some((y, mo, d, 0, 0, 0));
+        }
+        // Fall back to treating it as a time
+        let (h, m, sec) = parse_time_str(date_part)?;
+        return Some((today_y, today_m, today_d, h, m, sec));
+    }
+    // Slash or dot → definite date part
+    let (year, month, day) = parse_date_fields(date_part, fmt_code, today_y)?;
+    let (h, m, sec) = time_part.and_then(parse_time_str).unwrap_or((0, 0, 0));
+    Some((year, month, day, h, m, sec))
+}
+
 /// Format a stored `YYYY-MM-DD HH:MM:SS` string according to a `DateFmt`.
 /// Returns `stored.to_string()` if the value cannot be parsed.
 pub fn format_date_value(stored: &str, fmt: &DateFmt) -> String {
@@ -297,6 +437,24 @@ fn cycle_date_sep_next(c: char) -> char {
 
 fn cycle_date_sep_prev(c: char) -> char {
     match c { '/' => ' ', '-' => '/', '.' => '-', ' ' => '.', _ => '/' }
+}
+
+fn today() -> (i32, u32, u32) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    civil_from_days((secs / 86400) as i64)
+}
+
+pub fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11               => 30,
+        2 => if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 29 } else { 28 },
+        _ => 30,
+    }
 }
 
 // ── App impl ──────────────────────────────────────────────────────────────────
@@ -596,6 +754,33 @@ impl App {
         self.mode = Mode::Create { buffer: first_char.to_string(), cursor: 1 };
     }
 
+    /// Typing a printable character in Normal mode:
+    /// - On a non-main column item cell → begin editing that cell with `ch` as the first character.
+    /// - Otherwise → begin creating a new item (existing behaviour).
+    pub fn begin_char_input(&mut self, ch: char) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        if self.col_cursor > 0 {
+            if let CursorPos::Item { section, item } = &self.cursor {
+                let col     = self.col_cursor;
+                let col_idx = col - 1;
+                if col_idx < self.view.columns.len() {
+                    let cat_id   = self.view.columns[col_idx].cat_id;
+                    let original = self.view.sections[*section].items[*item]
+                        .values.get(&cat_id).cloned().unwrap_or_default();
+                    self.mode = Mode::Edit {
+                        original,
+                        buffer: ch.to_string(),
+                        cursor: 1,
+                        col,
+                    };
+                    return;
+                }
+            }
+        }
+        // Default: start creating a new main-column item
+        self.mode = Mode::Create { buffer: ch.to_string(), cursor: 1 };
+    }
+
     pub fn begin_create_blank(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
         self.mode = Mode::Create { buffer: String::new(), cursor: 0 };
@@ -679,8 +864,10 @@ impl App {
                     && self.view.columns[col_idx].date_fmt.is_some()
                     && matches!(self.cursor, CursorPos::Item { .. })
                 {
-                    let trimmed = buffer.trim();
-                    if !trimmed.is_empty() && parse_datetime(trimmed).is_none() {
+                    let trimmed  = buffer.trim();
+                    let fmt_code = self.view.columns[col_idx].date_fmt.as_ref()
+                        .map(|f| f.code).unwrap_or(DateFmtCode::MMDDYY);
+                    if !trimmed.is_empty() && parse_date_input(trimmed, fmt_code).is_none() {
                         return; // Stay in edit mode — invalid date
                     }
                 }
@@ -729,13 +916,15 @@ impl App {
                             }
                         }
                         CursorPos::Item { section, item } => {
-                            let col_idx = col - 1;
-                            let cat_id  = self.view.columns[col_idx].cat_id;
-                            let is_date = self.view.columns[col_idx].date_fmt.is_some();
-                            let (s, i)  = (*section, *item);
+                            let col_idx  = col - 1;
+                            let cat_id   = self.view.columns[col_idx].cat_id;
+                            let is_date  = self.view.columns[col_idx].date_fmt.is_some();
+                            let fmt_code = self.view.columns[col_idx].date_fmt.as_ref()
+                                .map(|f| f.code).unwrap_or(DateFmtCode::MMDDYY);
+                            let (s, i)   = (*section, *item);
                             // Normalize date values to YYYY-MM-DD HH:MM:SS
                             let final_text = if is_date && !text.is_empty() {
-                                if let Some((y, mo, d, h, mi, sec)) = parse_datetime(&text) {
+                                if let Some((y, mo, d, h, mi, sec)) = parse_date_input(&text, fmt_code) {
                                     format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, mo, d, h, mi, sec)
                                 } else {
                                     text.clone()
@@ -808,6 +997,65 @@ impl App {
         if self.col_cursor > 0 && !self.view.columns.is_empty() {
             self.col_mode = ColMode::Move;
         }
+    }
+
+    // ── Quick-add column (Alt-R / Alt-L) ─────────────────────────────────────
+
+    pub fn col_quick_add(&mut self, position: ColPos) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        let flat = flatten_cats(&self.categories);
+        if flat.is_empty() { return; }
+        self.col_mode = ColMode::QuickAdd { position, picker_cursor: 0 };
+    }
+
+    pub fn col_quick_add_up(&mut self) {
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        }
+    }
+
+    pub fn col_quick_add_down(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            if *picker_cursor + 1 < len { *picker_cursor += 1; }
+        }
+    }
+
+    pub fn col_quick_add_confirm(&mut self) {
+        let (position, picker_cursor) = match &self.col_mode {
+            ColMode::QuickAdd { position, picker_cursor } => (*position, *picker_cursor),
+            _ => return,
+        };
+        self.col_mode = ColMode::Normal;
+        let flat = flatten_cats(&self.categories);
+        let Some(entry) = flat.get(picker_cursor) else { return };
+        let name   = entry.name.clone();
+        let cat_id = entry.id;
+        let kind   = entry.kind;
+        let width  = 12usize;
+        let id     = self.alloc_id();
+        let lc     = self.view.left_count;
+        let (pos, new_lc) = if self.view.columns.is_empty() {
+            (0, if position == ColPos::Left { 1 } else { 0 })
+        } else if self.col_cursor == 0 {
+            match position {
+                ColPos::Left  => (lc, lc + 1),
+                ColPos::Right => (lc, lc),
+            }
+        } else {
+            let cur    = (self.col_cursor - 1).min(self.view.columns.len() - 1);
+            let in_left = cur < lc;
+            let p = match position { ColPos::Right => cur + 1, ColPos::Left => cur };
+            (p, if in_left { lc + 1 } else { lc })
+        };
+        self.view.left_count = new_lc;
+        let date_fmt = if kind == CategoryKind::Date { Some(DateFmt::default()) } else { None };
+        self.view.columns.insert(pos, Column { id, name, cat_id, width, date_fmt });
+        self.col_cursor = pos + 1;
+    }
+
+    pub fn col_quick_add_cancel(&mut self) {
+        self.col_mode = ColMode::Normal;
     }
 
     pub fn col_form_confirm(&mut self) {
@@ -1452,6 +1700,220 @@ impl App {
         let new_flat = flatten_cats(&self.categories);
         if let Some(pos) = new_flat.iter().position(|e| e.id == cat_id) {
             self.cat_state.cursor = pos;
+        }
+    }
+
+    // ── Calendar picker ───────────────────────────────────────────────────────
+
+    pub fn col_open_calendar(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        if self.col_cursor == 0 { return; }
+        let col_idx = self.col_cursor - 1;
+        if col_idx >= self.view.columns.len() { return; }
+        if self.view.columns[col_idx].date_fmt.is_none() { return; }
+        if !matches!(self.cursor, CursorPos::Item { .. }) { return; }
+        let cat_id = self.view.columns[col_idx].cat_id;
+        let val = match &self.cursor {
+            CursorPos::Item { section, item } =>
+                self.view.sections[*section].items[*item]
+                    .values.get(&cat_id).cloned().unwrap_or_default(),
+            _ => String::new(),
+        };
+        let (year, month, day, hour, min, sec) =
+            parse_datetime(&val).unwrap_or_else(|| {
+                let (y, mo, d) = today();
+                (y, mo, d, 0, 0, 0)
+            });
+        self.col_mode = ColMode::Calendar { year, month, day, hour, min, sec };
+    }
+
+    pub fn col_calendar_left(&mut self) {
+        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
+            if *day > 1 { *day -= 1; }
+            else if *month > 1 { *month -= 1; *day = days_in_month(*year, *month); }
+            else { *year -= 1; *month = 12; *day = 31; }
+        }
+    }
+
+    pub fn col_calendar_right(&mut self) {
+        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
+            let dim = days_in_month(*year, *month);
+            if *day < dim { *day += 1; }
+            else if *month < 12 { *month += 1; *day = 1; }
+            else { *year += 1; *month = 1; *day = 1; }
+        }
+    }
+
+    pub fn col_calendar_up(&mut self) {
+        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
+            for _ in 0..7 {
+                if *day > 1 { *day -= 1; }
+                else {
+                    if *month > 1 { *month -= 1; } else { *year -= 1; *month = 12; }
+                    *day = days_in_month(*year, *month);
+                }
+            }
+        }
+    }
+
+    pub fn col_calendar_down(&mut self) {
+        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
+            for _ in 0..7 {
+                let dim = days_in_month(*year, *month);
+                if *day < dim { *day += 1; }
+                else {
+                    if *month < 12 { *month += 1; } else { *year += 1; *month = 1; }
+                    *day = 1;
+                }
+            }
+        }
+    }
+
+    pub fn col_calendar_pgup(&mut self) {
+        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
+            if *month > 1 { *month -= 1; } else { *year -= 1; *month = 12; }
+            *day = (*day).min(days_in_month(*year, *month));
+        }
+    }
+
+    pub fn col_calendar_pgdn(&mut self) {
+        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
+            if *month < 12 { *month += 1; } else { *year += 1; *month = 1; }
+            *day = (*day).min(days_in_month(*year, *month));
+        }
+    }
+
+    pub fn col_calendar_year_prev(&mut self) {
+        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
+            *year -= 1;
+            *day = (*day).min(days_in_month(*year, *month));
+        }
+    }
+
+    pub fn col_calendar_year_next(&mut self) {
+        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
+            *year += 1;
+            *day = (*day).min(days_in_month(*year, *month));
+        }
+    }
+
+    pub fn col_calendar_confirm(&mut self) {
+        let (year, month, day, hour, min, sec) = match &self.col_mode {
+            ColMode::Calendar { year, month, day, hour, min, sec } =>
+                (*year, *month, *day, *hour, *min, *sec),
+            _ => return,
+        };
+        self.col_mode = ColMode::Normal;
+        if self.col_cursor == 0 { return; }
+        let col_idx = self.col_cursor - 1;
+        if col_idx >= self.view.columns.len() { return; }
+        let cat_id = self.view.columns[col_idx].cat_id;
+        let val = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, hour, min, sec);
+        if let CursorPos::Item { section, item } = &self.cursor {
+            let (s, i) = (*section, *item);
+            self.view.sections[s].items[i].values.insert(cat_id, val);
+        }
+    }
+
+    pub fn col_calendar_cancel(&mut self) {
+        self.col_mode = ColMode::Normal;
+    }
+
+    // ── SetTime modal ─────────────────────────────────────────────────────────
+
+    pub fn col_open_set_time(&mut self) {
+        let (year, month, day, hour, min, sec) = match &self.col_mode {
+            ColMode::Calendar { year, month, day, hour, min, sec } =>
+                (*year, *month, *day, *hour, *min, *sec),
+            _ => return,
+        };
+        self.col_mode = ColMode::SetTime {
+            year, month, day,
+            hour_buf:  format!("{:02}", hour),
+            min_buf:   format!("{:02}", min),
+            sec_buf:   format!("{:02}", sec),
+            active:    TimeField::Hour,
+            orig_hour: hour,
+            orig_min:  min,
+            orig_sec:  sec,
+        };
+    }
+
+    pub fn col_set_time_confirm(&mut self) {
+        let (year, month, day, h, m, s) = match &self.col_mode {
+            ColMode::SetTime { year, month, day, hour_buf, min_buf, sec_buf, .. } => {
+                let h = hour_buf.trim().parse::<u32>().unwrap_or(0).min(23);
+                let m = min_buf.trim().parse::<u32>().unwrap_or(0).min(59);
+                let s = sec_buf.trim().parse::<u32>().unwrap_or(0).min(59);
+                (*year, *month, *day, h, m, s)
+            }
+            _ => return,
+        };
+        self.col_mode = ColMode::Normal;
+        if self.col_cursor == 0 { return; }
+        let col_idx = self.col_cursor - 1;
+        if col_idx >= self.view.columns.len() { return; }
+        let cat_id = self.view.columns[col_idx].cat_id;
+        let val = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, h, m, s);
+        if let CursorPos::Item { section, item } = &self.cursor {
+            let (si, ii) = (*section, *item);
+            self.view.sections[si].items[ii].values.insert(cat_id, val);
+        }
+    }
+
+    pub fn col_set_time_cancel(&mut self) {
+        let (year, month, day, orig_hour, orig_min, orig_sec) = match &self.col_mode {
+            ColMode::SetTime { year, month, day, orig_hour, orig_min, orig_sec, .. } =>
+                (*year, *month, *day, *orig_hour, *orig_min, *orig_sec),
+            _ => return,
+        };
+        self.col_mode = ColMode::Calendar {
+            year, month, day,
+            hour: orig_hour, min: orig_min, sec: orig_sec,
+        };
+    }
+
+    pub fn col_set_time_left(&mut self) {
+        if let ColMode::SetTime { active, .. } = &mut self.col_mode {
+            *active = match active {
+                TimeField::Hour => TimeField::Sec,
+                TimeField::Min  => TimeField::Hour,
+                TimeField::Sec  => TimeField::Min,
+            };
+        }
+    }
+
+    pub fn col_set_time_right(&mut self) {
+        if let ColMode::SetTime { active, .. } = &mut self.col_mode {
+            *active = match active {
+                TimeField::Hour => TimeField::Min,
+                TimeField::Min  => TimeField::Sec,
+                TimeField::Sec  => TimeField::Hour,
+            };
+        }
+    }
+
+    pub fn col_set_time_backspace(&mut self) {
+        if let ColMode::SetTime { active, hour_buf, min_buf, sec_buf, .. } = &mut self.col_mode {
+            let buf = match active {
+                TimeField::Hour => hour_buf,
+                TimeField::Min  => min_buf,
+                TimeField::Sec  => sec_buf,
+            };
+            buf.pop();
+        }
+    }
+
+    pub fn col_set_time_input_char(&mut self, ch: char) {
+        if !ch.is_ascii_digit() { return; }
+        if let ColMode::SetTime { active, hour_buf, min_buf, sec_buf, .. } = &mut self.col_mode {
+            let buf = match active {
+                TimeField::Hour => hour_buf,
+                TimeField::Min  => min_buf,
+                TimeField::Sec  => sec_buf,
+            };
+            if buf.len() >= 2 { buf.clear(); }
+            buf.push(ch);
         }
     }
 }

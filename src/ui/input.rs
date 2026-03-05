@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, CatMode, ColMode, ColFormField, FKeyMod, MenuState, Mode};
+use crate::app::{App, AppScreen, CatMode, ColMode, ColFormField, ColPos, FKeyMod, MenuState, Mode};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -44,6 +44,24 @@ pub fn handle_event(app: &mut App, event: Event) {
     // Menu takes priority over all other input
     if !matches!(app.menu, MenuState::Closed) {
         handle_menu(app, code);
+        return;
+    }
+
+    // Calendar picker takes priority
+    if matches!(app.col_mode, ColMode::Calendar { .. }) {
+        handle_col_calendar(app, code, modifiers);
+        return;
+    }
+
+    // SetTime modal takes priority
+    if matches!(app.col_mode, ColMode::SetTime { .. }) {
+        handle_col_set_time(app, code);
+        return;
+    }
+
+    // Quick-add category picker takes priority
+    if matches!(app.col_mode, ColMode::QuickAdd { .. }) {
+        handle_col_quick_add(app, code);
         return;
     }
 
@@ -95,6 +113,14 @@ pub fn handle_event(app: &mut App, event: Event) {
 // ── View handlers ─────────────────────────────────────────────────────────────
 
 fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::ALT) {
+        match code {
+            KeyCode::Char('r') => app.col_quick_add(ColPos::Right),
+            KeyCode::Char('l') => app.col_quick_add(ColPos::Left),
+            _ => {}
+        }
+        return;
+    }
     match code {
         KeyCode::Up    => app.cursor_up(),
         KeyCode::Down  => app.cursor_down(),
@@ -102,10 +128,11 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Right => app.cursor_col_right(),
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2) | KeyCode::Enter => app.begin_edit(),
+        KeyCode::F(3)   => app.col_open_calendar(),
         KeyCode::F(6)   => app.col_open_props(),
         KeyCode::F(9)   => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
-        KeyCode::Char(ch) if modifiers.is_empty() => app.begin_create(ch),
+        KeyCode::Char(ch) if modifiers.is_empty() => app.begin_char_input(ch),
         _ => {}
     }
 }
@@ -227,6 +254,51 @@ fn handle_col_move(app: &mut App, code: KeyCode) {
         KeyCode::Left         => app.col_move_left(),
         KeyCode::Right        => app.col_move_right(),
         KeyCode::Enter | KeyCode::Esc => { app.col_mode = ColMode::Normal; }
+        _ => {}
+    }
+}
+
+// ── Quick-add handler ─────────────────────────────────────────────────────────
+
+fn handle_col_quick_add(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up    => app.col_quick_add_up(),
+        KeyCode::Down  => app.col_quick_add_down(),
+        KeyCode::Enter => app.col_quick_add_confirm(),
+        KeyCode::Esc   => app.col_quick_add_cancel(),
+        _ => {}
+    }
+}
+
+// ── Calendar handler ──────────────────────────────────────────────────────────
+
+fn handle_col_calendar(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    match code {
+        KeyCode::Up        => app.col_calendar_up(),
+        KeyCode::Down      => app.col_calendar_down(),
+        KeyCode::Left  if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_prev(),
+        KeyCode::Left      => app.col_calendar_left(),
+        KeyCode::Right if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
+        KeyCode::Right     => app.col_calendar_right(),
+        KeyCode::PageUp    => app.col_calendar_pgup(),
+        KeyCode::PageDown  => app.col_calendar_pgdn(),
+        KeyCode::Enter     => app.col_calendar_confirm(),
+        KeyCode::Esc       => app.col_calendar_cancel(),
+        KeyCode::F(6)      => app.col_open_set_time(),
+        _ => {}
+    }
+}
+
+// ── SetTime handler ───────────────────────────────────────────────────────────
+
+fn handle_col_set_time(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter     => app.col_set_time_confirm(),
+        KeyCode::Esc       => app.col_set_time_cancel(),
+        KeyCode::Left      => app.col_set_time_left(),
+        KeyCode::Right     => app.col_set_time_right(),
+        KeyCode::Backspace => app.col_set_time_backspace(),
+        KeyCode::Char(ch)  => app.col_set_time_input_char(ch),
         _ => {}
     }
 }
