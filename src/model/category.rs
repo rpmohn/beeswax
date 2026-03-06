@@ -6,6 +6,7 @@ pub enum CategoryKind {
     Unindexed,
 }
 
+#[derive(Clone)]
 pub struct Category {
     pub id:       usize,
     pub name:     String,

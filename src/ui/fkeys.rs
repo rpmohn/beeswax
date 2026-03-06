@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use crate::app::{App, AppScreen, ColMode, FKeyMod, MenuState, SectionMode};
+use crate::app::{App, AppScreen, AssignMode, ColMode, FKeyMod, MenuState, Mode, SectionMode};
 
 /// Action labels for F1–F10 (index 0 = F1, index 9 = F10).
 pub struct FKeyLabels {
@@ -61,8 +61,12 @@ static MENU_FKEYS: FKeyLabels = FKeyLabels {
 pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
     let def = if !matches!(app.menu, MenuState::Closed) {
         &MENU_FKEYS
-    } else if matches!(app.sec_mode, SectionMode::Add { .. } | SectionMode::Choices { .. }) {
-        &MENU_FKEYS   // section add dialog is self-describing
+    } else if matches!(app.assign_mode, AssignMode::Profile { .. }) {
+        &MENU_FKEYS   // assignment profile is self-describing
+    } else if matches!(app.sec_mode, SectionMode::Add { .. } | SectionMode::Choices { .. } | SectionMode::ConfirmRemove { .. }) {
+        &MENU_FKEYS   // section dialogs are self-describing
+    } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. }) {
+        &MENU_FKEYS   // item delete dialog is self-describing
     } else if matches!(app.col_mode, ColMode::QuickAdd { .. } | ColMode::ConfirmRemove { .. }) {
         &MENU_FKEYS   // just F1 Help, rest blank — same as menu blank bar
     } else if matches!(app.col_mode, ColMode::Calendar { .. }) {

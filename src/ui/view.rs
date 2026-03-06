@@ -5,9 +5,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use crate::app::{App, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos, MenuState, Mode,
-                 PropsField, SectionFormField, SectionInsert, SectionMode, TimeField,
-                 flatten_cats, format_date_value};
+use crate::app::{App, AssignMode, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos,
+                 MenuState, Mode, PropsField, SectionFormField, SectionInsert, SectionMode,
+                 TimeField, col_autocomplete_match, col_display_values,
+                 flatten_cats, format_date_value, section_item_indices};
+use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
 use super::{cursor_split, fkeys, menu};
 
@@ -71,7 +73,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let left_active  = if cursor_on_head { active_col.filter(|&i| i < lc) } else { None };
         let left_head_edit = head_cell_edit(left_active, &app.mode);
         let left_head_spans = col_cells(left_cols, &left_head_vals,
-                                        left_active, left_head_edit);
+                                        left_active, left_head_edit, None);
 
         // Main column content
         let pfx_w      = SECTION_PREFIX.chars().count();
@@ -120,7 +122,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let right_active = if cursor_on_head { active_col.filter(|&i| i >= lc).map(|i| i - lc) } else { None };
         let right_head_edit = head_cell_edit(right_active.map(|i| i + lc), &app.mode);
         let right_head_spans = col_cells(right_cols, &right_head_vals,
-                                         right_active, right_head_edit);
+                                         right_active, right_head_edit, None);
 
         let mut row = left_head_spans;
         row.extend(head_spans);
@@ -133,16 +135,18 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let empty: Vec<String> = app.view.columns.iter().map(|_| String::new()).collect();
                 let left_empty  = &empty[..lc];
                 let right_empty = &empty[lc..];
-                let mut spans = col_cells(left_cols, left_empty, None, None);
+                let mut spans = col_cells(left_cols, left_empty, None, None, None);
                 spans.extend(input_row_spans(buffer, *cursor));
                 if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
-                spans.extend(col_cells(right_cols, right_empty, None, None));
+                spans.extend(col_cells(right_cols, right_empty, None, None, None));
                 lines.push(Line::from(spans));
             }
         }
 
         // ── Item rows ────────────────────────────────────────────────────
-        for (i_idx, item) in section.items.iter().enumerate() {
+        let sec_item_indices = section_item_indices(&app.view, s_idx, &app.categories);
+        for (i_idx, &gi) in sec_item_indices.iter().enumerate() {
+            let item = &app.view.items[gi];
             let cursor_on_item = matches!(
                 &app.cursor,
                 CursorPos::Item { section: si, item: ii } if *si == s_idx && *ii == i_idx
@@ -153,14 +157,23 @@ pub fn render(frame: &mut Frame, app: &App) {
             let item_text: String = item.text.chars().take(max_text_w).collect();
             let item_w    = pfx_w + item_text.chars().count();
 
-            // All column values for this item
-            let all_vals: Vec<String> = app.view.columns.iter()
-                .map(|c| item.values.get(&c.cat_id).cloned().unwrap_or_default())
+            // Multi-line column values: Vec<Vec<String>> (outer=columns, inner=assignments).
+            // Date columns always produce one entry; standard columns may produce multiple.
+            let all_vals_lines: Vec<Vec<String>> = app.view.columns.iter()
+                .map(|c| {
+                    if c.date_fmt.is_some() {
+                        let v = item.values.get(&c.cat_id).cloned().unwrap_or_default();
+                        vec![v]   // col_cells formats via date_fmt
+                    } else {
+                        col_display_values(&item.values, c.cat_id, c.format, &app.categories)
+                    }
+                })
                 .collect();
-            let left_vals  = &all_vals[..lc];
-            let right_vals = &all_vals[lc..];
 
-            // Which cell (if any) is in edit mode
+            // How many display rows does this item need?
+            let n_rows = all_vals_lines.iter().map(|v| v.len().max(1)).max().unwrap_or(1);
+
+            // Which cell (if any) is in edit mode — only applies to row 0.
             let (item_active_col, item_cell_edit): (Option<usize>, Option<(&str, usize)>) =
                 if cursor_on_item {
                     match &app.mode {
@@ -174,56 +187,98 @@ pub fn render(frame: &mut Frame, app: &App) {
                     (None, None)
                 };
 
+            // Autocomplete hint for standard-column edit cells (row 0 only).
+            let autocomplete_hint: Option<String> =
+                if cursor_on_item {
+                    if let Mode::Edit { col, buffer, .. } = &app.mode {
+                        if *col > 0 {
+                            let col_idx = col - 1;
+                            if col_idx < app.view.columns.len()
+                                && app.view.columns[col_idx].date_fmt.is_none()
+                            {
+                                let col_cat_id = app.view.columns[col_idx].cat_id;
+                                let trimmed = buffer.trim();
+                                col_autocomplete_match(&app.categories, col_cat_id, trimmed)
+                                    .map(|(_, name)| {
+                                        let pfx = trimmed.chars().count();
+                                        name.chars().skip(pfx).collect::<String>()
+                                    })
+                            } else { None }
+                        } else { None }
+                    } else { None }
+                } else { None };
+
             let left_item_active  = item_active_col.filter(|&i| i < lc);
             let right_item_active = item_active_col.filter(|&i| i >= lc).map(|i| i - lc);
-            let left_item_edit    = item_cell_edit.filter(|_| left_item_active.is_some());
-            let right_item_edit   = item_cell_edit.filter(|_| right_item_active.is_some());
 
-            // Left column value cells
-            let left_item_spans = col_cells(left_cols, left_vals,
-                                            left_item_active, left_item_edit);
+            for row_i in 0..n_rows {
+                // Values for this sub-row (empty string if this column has fewer assignments).
+                let left_vals_row: Vec<String> = all_vals_lines[..lc].iter()
+                    .map(|v| v.get(row_i).cloned().unwrap_or_default())
+                    .collect();
+                let right_vals_row: Vec<String> = all_vals_lines[lc..].iter()
+                    .map(|v| v.get(row_i).cloned().unwrap_or_default())
+                    .collect();
 
-            // Main column content
-            let mut item_spans: Vec<Span<'static>> = if cursor_on_item {
-                match &app.mode {
-                    Mode::Normal => {
-                        let style = if app.col_cursor == 0 {
-                            Style::default().add_modifier(Modifier::REVERSED)
-                        } else {
-                            Style::default().add_modifier(Modifier::BOLD)
-                        };
-                        vec![Span::raw(ITEM_PREFIX), Span::styled(item_text, style)]
+                // Edit / active highlight applies to the focused sub-row.
+                let (left_active, right_active, left_edit, right_edit, hint_ref) = if row_i == app.sub_row {
+                    let le = item_cell_edit.filter(|_| left_item_active.is_some());
+                    let re = item_cell_edit.filter(|_| right_item_active.is_some());
+                    let h  = autocomplete_hint.as_deref();
+                    (left_item_active, right_item_active, le, re, h)
+                } else {
+                    (None, None, None, None, None)
+                };
+
+                let left_item_spans = col_cells(left_cols, &left_vals_row,
+                                                left_active, left_edit,
+                                                hint_ref.filter(|_| left_active.is_some()));
+
+                // Main column content: item text on row 0, blank on subsequent rows.
+                let mut item_spans: Vec<Span<'static>> = if row_i == 0 && cursor_on_item {
+                    match &app.mode {
+                        Mode::Normal => {
+                            let style = if app.col_cursor == 0 {
+                                Style::default().add_modifier(Modifier::REVERSED)
+                            } else {
+                                Style::default().add_modifier(Modifier::BOLD)
+                            };
+                            vec![Span::raw(ITEM_PREFIX), Span::styled(item_text.clone(), style)]
+                        }
+                        Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
+                            let (left, hi, right) = cursor_split(buffer, *cursor);
+                            vec![
+                                Span::raw(ITEM_PREFIX),
+                                Span::raw(left),
+                                Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
+                                Span::raw(right),
+                            ]
+                        }
+                        Mode::Edit { .. } =>
+                            vec![Span::raw(ITEM_PREFIX),
+                                 Span::styled(item_text.clone(), Style::default().add_modifier(Modifier::BOLD))],
+                        Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } =>
+                            vec![Span::raw(ITEM_PREFIX), Span::raw(item_text.clone())],
                     }
-                    Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
-                        let (left, hi, right) = cursor_split(buffer, *cursor);
-                        vec![
-                            Span::raw(ITEM_PREFIX),
-                            Span::raw(left),
-                            Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
-                            Span::raw(right),
-                        ]
-                    }
-                    Mode::Edit { .. } =>
-                        vec![Span::raw(ITEM_PREFIX),
-                             Span::styled(item_text, Style::default().add_modifier(Modifier::BOLD))],
-                    Mode::Create { .. } =>
-                        vec![Span::raw(ITEM_PREFIX), Span::raw(item_text)],
+                } else if row_i == 0 {
+                    vec![Span::raw(ITEM_PREFIX), Span::raw(item_text.clone())]
+                } else {
+                    vec![Span::raw(" ".repeat(main_col_w))]
+                };
+                let cur_item_w = if row_i == 0 { item_w } else { main_col_w };
+                if row_i == 0 && cur_item_w < main_col_w {
+                    item_spans.push(Span::raw(" ".repeat(main_col_w - cur_item_w)));
                 }
-            } else {
-                vec![Span::raw(ITEM_PREFIX), Span::raw(item_text)]
-            };
-            if item_w < main_col_w {
-                item_spans.push(Span::raw(" ".repeat(main_col_w - item_w)));
+
+                let right_item_spans = col_cells(right_cols, &right_vals_row,
+                                                 right_active, right_edit,
+                                                 hint_ref.filter(|_| right_active.is_some()));
+
+                let mut row = left_item_spans;
+                row.extend(item_spans);
+                row.extend(right_item_spans);
+                lines.push(Line::from(row));
             }
-
-            // Right column value cells
-            let right_item_spans = col_cells(right_cols, right_vals,
-                                             right_item_active, right_item_edit);
-
-            let mut row = left_item_spans;
-            row.extend(item_spans);
-            row.extend(right_item_spans);
-            lines.push(Line::from(row));
 
             if cursor_on_item {
                 if let Mode::Create { buffer, cursor } = &app.mode {
@@ -231,10 +286,10 @@ pub fn render(frame: &mut Frame, app: &App) {
                     let empty: Vec<String> = app.view.columns.iter().map(|_| String::new()).collect();
                     let left_empty  = &empty[..lc];
                     let right_empty = &empty[lc..];
-                    let mut spans = col_cells(left_cols, left_empty, None, None);
+                    let mut spans = col_cells(left_cols, left_empty, None, None, None);
                     spans.extend(input_row_spans(buffer, *cursor));
                     if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
-                    spans.extend(col_cells(right_cols, right_empty, None, None));
+                    spans.extend(col_cells(right_cols, right_empty, None, None, None));
                     lines.push(Line::from(spans));
                 }
             }
@@ -425,8 +480,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Column Properties modal ───────────────────────────────────────────────
     if let ColMode::Props { head_buf, head_cur, width_buf, width_cur,
-                            date_fmt, active_field, is_date } = &app.col_mode {
-        let modal_h = if *is_date { 18u16 } else { 8u16 };
+                            format, date_fmt, active_field, is_date } = &app.col_mode {
+        let modal_h = if *is_date { 18u16 } else { 10u16 };
         let modal_rect = centered_rect(66, modal_h, area);
         frame.render_widget(Clear, modal_rect);
 
@@ -480,11 +535,31 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         };
 
+        // Format field (Standard columns only)
+        let format_line = if !*is_date {
+            let fmt_label = match format {
+                ColFormat::NameOnly       => "Name only",
+                ColFormat::ParentCategory => "Parent:Category",
+                ColFormat::Ancestor       => "Ancestor",
+                ColFormat::Star           => "*  (Star)",
+                ColFormat::YesNo          => "Yes/No",
+                ColFormat::CategoryNote   => "Category note",
+            };
+            let fmt_spans = field_span(" Format:       ", fmt_label.to_string(),
+                                       *active_field, PropsField::Format);
+            Some(Line::from(fmt_spans))
+        } else {
+            None
+        };
+
         let mut form_lines: Vec<Line<'static>> = vec![
             Line::from(""),
             head_line,
             width_line,
         ];
+        if let Some(fl) = format_line {
+            form_lines.push(fl);
+        }
 
         if *is_date {
             if let Some(fmt) = date_fmt {
@@ -674,6 +749,46 @@ pub fn render(frame: &mut Frame, app: &App) {
         ]), inner);
     }
 
+    // ── Remove-item confirmation modal ────────────────────────────────────────
+    if let Mode::ConfirmDeleteItem { yes } = &app.mode {
+        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let dlg_rect = centered_rect(46, 9, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default().borders(Borders::ALL).title(" Remove Item ");
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+        let iw = inner.width as usize;
+
+        let msg = "Remove this item from the section?";
+        let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
+        let hint = "(Use Alt-F4 to discard the item completely.)";
+        let hpad = (iw.saturating_sub(hint.chars().count())) / 2;
+
+        let yes_label = " Yes ";
+        let no_label  = " No  ";
+        let yes_style = if *yes { rev } else { Style::default() };
+        let no_style  = if !yes { rev } else { Style::default() };
+        let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
+        let lpad = gap / 2;
+
+        frame.render_widget(Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg))),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw(" ".repeat(lpad)),
+                Span::styled(yes_label, yes_style),
+                Span::raw("  "),
+                Span::styled(no_label, no_style),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("{}{}", " ".repeat(hpad), hint),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+        ]), inner);
+    }
+
     // ── Remove-column confirmation modal ──────────────────────────────────────
     if let ColMode::ConfirmRemove { yes } = &app.col_mode {
         let rev = Style::default().add_modifier(Modifier::REVERSED);
@@ -711,13 +826,101 @@ pub fn render(frame: &mut Frame, app: &App) {
         ]), inner);
     }
 
+    // ── Remove-section confirmation modal ─────────────────────────────────────
+    if let SectionMode::ConfirmRemove { yes } = &app.sec_mode {
+        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let dlg_rect = centered_rect(44, 7, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default().borders(Borders::ALL).title(" Remove Section ");
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+        let iw = inner.width as usize;
+
+        let msg = "Remove this section from the view?";
+        let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
+        let msg_line = Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg)));
+
+        let yes_label = " Yes ";
+        let no_label  = " No  ";
+        let yes_style = if *yes { rev } else { Style::default() };
+        let no_style  = if !yes { rev } else { Style::default() };
+        let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
+        let lpad = gap / 2;
+        let btn_line = Line::from(vec![
+            Span::raw(" ".repeat(lpad)),
+            Span::styled(yes_label, yes_style),
+            Span::raw("  "),
+            Span::styled(no_label, no_style),
+        ]);
+
+        frame.render_widget(Paragraph::new(vec![
+            Line::from(""),
+            msg_line,
+            Line::from(""),
+            btn_line,
+            Line::from(""),
+        ]), inner);
+    }
+
+    // ── Assignment Profile modal ──────────────────────────────────────────────
+    if let AssignMode::Profile { gi, cursor: prof_cursor } = &app.assign_mode {
+        let (gi, prof_cur) = (*gi, *prof_cursor);
+        let cats    = flatten_cats(&app.categories);
+        let rev     = Style::default().add_modifier(Modifier::REVERSED);
+        let bold    = Style::default().add_modifier(Modifier::BOLD);
+
+        // Box height: show up to 16 categories + 2 border + 2 header + 1 help = cap at 24
+        let visible = cats.len().min(16);
+        let box_h   = (visible + 4) as u16;  // 2 border + 1 header + 1 help
+        let box_w   = 50u16;
+        let dlg_rect = centered_rect(box_w, box_h, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Assignment Profile ");
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+
+        // Column header
+        let hdr = Line::from(vec![
+            Span::styled("    Category", bold),
+        ]);
+
+        // Scroll window
+        let start = if prof_cur >= visible { prof_cur - visible + 1 } else { 0 };
+        let empty_vals = std::collections::HashMap::new();
+        let item_vals = app.view.items.get(gi).map(|it| &it.values).unwrap_or(&empty_vals);
+
+        let mut cat_lines: Vec<Line<'static>> = vec![hdr];
+        for (i, e) in cats.iter().enumerate().skip(start).take(visible) {
+            let assigned = item_vals.contains_key(&e.id);
+            let marker   = if assigned { "* " } else { "  " };
+            let indent   = "  ".repeat(e.depth);
+            let label    = format!("{}{}{}", marker, indent, e.name);
+            let style    = if i == prof_cur { rev } else { Style::default() };
+            cat_lines.push(Line::from(Span::styled(label, style)));
+        }
+
+        // Help line at bottom
+        let help = Line::from(Span::raw(
+            "  Space=assign/unassign  Enter/Esc=close"
+        ));
+
+        // Pad with empty lines to fill box before help
+        while cat_lines.len() < inner.height.saturating_sub(1) as usize {
+            cat_lines.push(Line::from(""));
+        }
+        cat_lines.push(help);
+
+        frame.render_widget(Paragraph::new(cat_lines), inner);
+    }
+
     // ── Section Add modal ─────────────────────────────────────────────────────
     let sec_add_state = match &app.sec_mode {
         SectionMode::Add { cat_idx, insert, active_field } =>
             Some((*cat_idx, *insert, *active_field, None::<usize>)),
         SectionMode::Choices { cat_idx, insert, active_field, picker_cursor } =>
             Some((*cat_idx, *insert, *active_field, Some(*picker_cursor))),
-        SectionMode::Normal => None,
+        SectionMode::Normal | SectionMode::ConfirmRemove { .. } => None,
     };
     if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
         let cats       = flatten_cats(&app.categories);
@@ -846,11 +1049,13 @@ fn head_cell_edit<'a>(active_col: Option<usize>, mode: &'a Mode) -> Option<(&'a 
 /// `values` must have the same length as `columns`.
 /// `active_col` (0-indexed within `columns`) highlights that cell.
 /// `cell_edit` supplies (buffer, cursor) to show an edit cursor in the active cell.
+/// `autocomplete_hint` is a dim suffix shown after the cursor in the active edit cell.
 fn col_cells(
     columns: &[Column],
     values: &[String],
     active_col: Option<usize>,
     cell_edit: Option<(&str, usize)>,
+    autocomplete_hint: Option<&str>,
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     for (i, (col, val)) in columns.iter().zip(values.iter()).enumerate() {
@@ -862,7 +1067,8 @@ fn col_cells(
         };
         if active_col == Some(i) {
             if let Some((buf, cur)) = cell_edit {
-                spans.extend(cell_edit_spans(buf, cur, col.width));
+                let hint = if cell_edit.is_some() { autocomplete_hint } else { None };
+                spans.extend(cell_edit_spans(buf, cur, col.width, hint));
             } else {
                 let cell = pad_or_trunc(&display_val, col.width);
                 spans.push(Span::styled(cell, Style::default().add_modifier(Modifier::REVERSED)));
@@ -876,7 +1082,8 @@ fn col_cells(
 }
 
 /// Spans for a column cell in edit mode: scrolling window + cursor-highlighted char.
-fn cell_edit_spans(buffer: &str, cursor: usize, width: usize) -> Vec<Span<'static>> {
+/// `hint` is an optional dim autocomplete suffix shown after typed text.
+fn cell_edit_spans(buffer: &str, cursor: usize, width: usize, hint: Option<&str>) -> Vec<Span<'static>> {
     let chars: Vec<char> = buffer.chars().collect();
     let cur   = cursor.min(chars.len());
     // Scroll the window left so the cursor is always visible.
@@ -884,15 +1091,24 @@ fn cell_edit_spans(buffer: &str, cursor: usize, width: usize) -> Vec<Span<'stati
     let visible: String = chars[start..].iter().take(width).collect();
     let cur_in_win = cur - start;
     let (left, hi, right) = cursor_split(&visible, cur_in_win);
-    let used = left.chars().count() + 1 + right.chars().count();
-    let pad  = width.saturating_sub(used);
+    let buf_used = left.chars().count() + 1 + right.chars().count();
     let mut spans = vec![
         Span::raw(left),
         Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
         Span::raw(right),
     ];
-    if pad > 0 {
-        spans.push(Span::raw(" ".repeat(pad)));
+    if let Some(hint_str) = hint.filter(|s| !s.is_empty()) {
+        let remaining = width.saturating_sub(buf_used);
+        if remaining > 0 {
+            let shown: String = hint_str.chars().take(remaining).collect();
+            let hint_len = shown.chars().count();
+            spans.push(Span::styled(shown, Style::default().add_modifier(Modifier::DIM)));
+            let pad = remaining.saturating_sub(hint_len);
+            if pad > 0 { spans.push(Span::raw(" ".repeat(pad))); }
+        }
+    } else {
+        let pad = width.saturating_sub(buf_used);
+        if pad > 0 { spans.push(Span::raw(" ".repeat(pad))); }
     }
     spans
 }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+#[derive(Clone)]
 pub struct Item {
     pub id:     usize,
     pub text:   String,

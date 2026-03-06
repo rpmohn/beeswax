@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, CatMode, ColMode, ColFormField, ColPos, FKeyMod, MenuState, Mode, SectionInsert, SectionMode};
+use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FKeyMod, MenuState, Mode, SectionInsert, SectionMode};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -47,6 +47,18 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // Assignment Profile takes priority
+    if matches!(app.assign_mode, AssignMode::Profile { .. }) {
+        handle_assign_profile(app, code);
+        return;
+    }
+
+    // Section remove confirmation takes priority
+    if matches!(app.sec_mode, SectionMode::ConfirmRemove { .. }) {
+        handle_sec_confirm_remove(app, code);
+        return;
+    }
+
     // Section Add choices picker takes priority
     if matches!(app.sec_mode, SectionMode::Choices { .. }) {
         handle_sec_choices(app, code);
@@ -68,6 +80,12 @@ pub fn handle_event(app: &mut App, event: Event) {
     // SetTime modal takes priority
     if matches!(app.col_mode, ColMode::SetTime { .. }) {
         handle_col_set_time(app, code);
+        return;
+    }
+
+    // Remove-item confirmation takes priority
+    if matches!(app.mode, Mode::ConfirmDeleteItem { .. }) {
+        handle_item_confirm_delete(app, code);
         return;
     }
 
@@ -137,6 +155,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('l') => app.col_quick_add(ColPos::Left),
             KeyCode::Char('d') => app.sec_open_add(SectionInsert::Below),
             KeyCode::Char('u') => app.sec_open_add(SectionInsert::Above),
+            KeyCode::F(4)      => app.item_remove(),   // discard without confirmation
             _ => {}
         }
         return;
@@ -148,12 +167,25 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Right => app.cursor_col_right(),
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2) | KeyCode::Enter => app.begin_edit(),
-        KeyCode::F(3)   => app.col_open_calendar(),
+        KeyCode::F(3)   => {
+            if app.col_cursor == 0 { app.assign_open(); }
+            else                   { app.col_open_calendar(); }
+        }
         KeyCode::F(6)   => app.col_open_props(),
-        KeyCode::Delete => app.col_open_confirm_remove(),
+        KeyCode::Delete => {
+            if app.col_cursor == 0 {
+                match app.cursor {
+                    CursorPos::SectionHead(_) => app.sec_open_confirm_remove(),
+                    CursorPos::Item { .. }    => app.item_open_confirm_delete(),
+                }
+            } else {
+                app.col_open_confirm_remove();
+            }
+        }
         KeyCode::F(9)   => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
-        KeyCode::Char(ch) if modifiers.is_empty() => app.begin_char_input(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.begin_char_input(ch),
         _ => {}
     }
 }
@@ -184,6 +216,8 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
         KeyCode::Up     => app.cat_cursor_up(),
         KeyCode::Down   => app.cat_cursor_down(),
+        KeyCode::PageUp => app.cat_cursor_pgup(10),
+        KeyCode::PageDown => app.cat_cursor_pgdn(10),
         KeyCode::Insert => app.cat_begin_create(false),          // sibling
         KeyCode::F(2) | KeyCode::Enter => app.cat_begin_edit(),
         KeyCode::F(7)   => app.cat_promote(),
@@ -211,6 +245,7 @@ fn handle_catmgr_input(app: &mut App, code: KeyCode) {
         KeyCode::Enter     => app.cat_confirm(),
         KeyCode::Esc       => app.cat_cancel(),
         KeyCode::Backspace => app.cat_input_backspace(),
+        KeyCode::Delete    => app.cat_input_delete(),
         KeyCode::Left      => app.cat_edit_cursor_left(),
         KeyCode::Right     => app.cat_edit_cursor_right(),
         KeyCode::Char(ch)  => app.cat_input_char(ch),
@@ -329,6 +364,22 @@ fn handle_col_set_time(app: &mut App, code: KeyCode) {
     }
 }
 
+// ── Remove-item confirmation handler ─────────────────────────────────────────
+
+fn handle_item_confirm_delete(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter                 => app.item_confirm_delete_confirm(),
+        KeyCode::Esc                   => app.item_confirm_delete_cancel(),
+        KeyCode::Left | KeyCode::Right => app.item_confirm_delete_toggle(),
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            if let Mode::ConfirmDeleteItem { yes } = &mut app.mode { *yes = true; }
+            app.item_confirm_delete_confirm();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => app.item_confirm_delete_cancel(),
+        _ => {}
+    }
+}
+
 // ── Remove-column confirmation handler ───────────────────────────────────────
 
 fn handle_col_confirm_remove(app: &mut App, code: KeyCode) {
@@ -341,6 +392,17 @@ fn handle_col_confirm_remove(app: &mut App, code: KeyCode) {
             app.col_confirm_remove_confirm();
         }
         KeyCode::Char('n') | KeyCode::Char('N') => app.col_confirm_remove_cancel(),
+        _ => {}
+    }
+}
+
+// ── Section remove confirmation handler ────────────────────────────────────────
+
+fn handle_sec_confirm_remove(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Left | KeyCode::Right => app.sec_confirm_remove_toggle(),
+        KeyCode::Enter                 => app.sec_confirm_remove_confirm(),
+        KeyCode::Esc                   => app.sec_confirm_remove_cancel(),
         _ => {}
     }
 }
@@ -366,6 +428,20 @@ fn handle_sec_choices(app: &mut App, code: KeyCode) {
         KeyCode::Down  => app.sec_choices_down(),
         KeyCode::Enter => app.sec_choices_confirm(),
         KeyCode::Esc   => app.sec_choices_cancel(),
+        _ => {}
+    }
+}
+
+// ── Assignment Profile handler ────────────────────────────────────────────────
+
+fn handle_assign_profile(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up       => app.assign_cursor_up(),
+        KeyCode::Down     => app.assign_cursor_down(),
+        KeyCode::PageUp   => app.assign_cursor_pgup(10),
+        KeyCode::PageDown => app.assign_cursor_pgdn(10),
+        KeyCode::Char(' ')     => app.assign_toggle(),
+        KeyCode::Enter | KeyCode::Esc | KeyCode::F(3) => app.assign_close(),
         _ => {}
     }
 }

@@ -1,7 +1,5 @@
-use super::item::Item;
-
 pub struct Section {
-    pub id:    usize,
-    pub name:  String,
-    pub items: Vec<Item>,
+    pub id:     usize,
+    pub name:   String,
+    pub cat_id: usize,   // backing category
 }

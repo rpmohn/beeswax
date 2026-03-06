@@ -32,10 +32,26 @@ impl Default for DateFmt {
     }
 }
 
+/// Display format for a Standard-category column.
+#[derive(Clone, Copy, PartialEq)]
+pub enum ColFormat {
+    NameOnly,       // name of the assigned subcategory (default)
+    ParentCategory, // "Parent:Name"
+    Ancestor,       // immediate child of column head that is ancestor of assigned cat
+    Star,           // "*" if assigned, blank if not
+    YesNo,          // "Y" if assigned, "N" if not
+    CategoryNote,   // one line from the category's note (notes not yet implemented)
+}
+
+impl Default for ColFormat {
+    fn default() -> Self { ColFormat::NameOnly }
+}
+
 pub struct Column {
     pub id:       usize,
     pub name:     String,   // "Column head" (category name)
     pub cat_id:   usize,    // ID of the backing category
     pub width:    usize,    // default 12
-    pub date_fmt: Option<DateFmt>,  // Some only for Date-type backing category
+    pub format:   ColFormat,         // display format for Standard columns
+    pub date_fmt: Option<DateFmt>,   // Some only for Date-type backing category
 }

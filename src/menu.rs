@@ -10,6 +10,7 @@ pub enum MenuAction {
     ColumnMove,
     ColumnWidth,
     SectionAdd,
+    SectionRemove,
 }
 
 pub struct SubSubItem {
@@ -66,7 +67,8 @@ static COLUMN_SUB: &[SubSubItem] = &[
 ];
 
 static SECTION_SUB: &[SubSubItem] = &[
-    SubSubItem { label: "Add",    description: "Add a new section to the view",    action: MenuAction::SectionAdd },
+    SubSubItem { label: "Add",    description: "Add a new section to the view",       action: MenuAction::SectionAdd },
+    SubSubItem { label: "Remove", description: "Remove the current section from view", action: MenuAction::SectionRemove },
 ];
 
 static VIEW_SUB: &[SubItem] = &[
