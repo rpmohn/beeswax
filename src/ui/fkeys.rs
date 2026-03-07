@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use crate::app::{App, AppScreen, AssignMode, ColMode, FKeyMod, MenuState, Mode, SectionMode};
+use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, FKeyMod, MenuState, Mode, SectionMode};
 
 /// Action labels for F1–F10 (index 0 = F1, index 9 = F10).
 pub struct FKeyLabels {
@@ -57,6 +57,13 @@ static MENU_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "", "", "", "", "", "", "", "", ""],
 };
 
+static CATPROPS_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Edit", "Choices", "", "", "Props", "", "Default", "", ""],
+    shift:  ["",     "",     "",        "", "", "",      "", "",         "", ""],
+    ctrl:   ["",     "",     "",        "", "", "",      "", "",         "", ""],
+    alt:    ["",     "",     "",        "", "", "",      "", "",         "", ""],
+};
+
 static EDIT_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "Paste", "Copy", "Cut",    "Note", "Marker", "Mark", "", "", ""],
     shift:  ["",     "",      "",     "",        "",     "",       "",     "", "", ""],
@@ -82,6 +89,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &SET_TIME_FKEYS
     } else if matches!(app.col_mode, ColMode::Form { .. } | ColMode::Choices { .. } | ColMode::Props { .. }) {
         &COL_FORM_FKEYS
+    } else if matches!(app.cat_state.mode, CatMode::Props { .. }) {
+        &CATPROPS_FKEYS
     } else if matches!(app.mode, Mode::Edit { .. } | Mode::Create { .. }) {
         &EDIT_FKEYS
     } else {

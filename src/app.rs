@@ -32,11 +32,37 @@ pub enum Mode {
 
 // ── CatMgr state ──────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum CatPropsField {
+    Name, ShortName, AlsoMatch, Note, NoteFile,
+    ExclChildren, MatchCatName, MatchShortName,
+}
+
 pub enum CatMode {
     Normal,
     Edit   { buffer: String, cursor: usize },
     /// `as_child`: insert below as child (Alt-R) vs sibling (INS)
     Create { buffer: String, cursor: usize, as_child: bool },
+    /// Category Properties modal (F6).
+    Props {
+        name_buf:         String,
+        name_cur:         usize,
+        short_name_buf:   String,
+        short_name_cur:   usize,
+        also_match_buf:   String,
+        also_match_cur:   usize,
+        note_file_buf:    String,
+        note_file_cur:    usize,
+        excl_children:    bool,
+        match_cat_name:   bool,
+        match_short_name: bool,
+        active_field:     CatPropsField,
+        /// Snapshotted at open time for read-only display.
+        parent_name:      String,
+        kind:             CategoryKind,
+        has_note:         bool,
+        cat_id:           usize,
+    },
 }
 
 pub struct CatMgrState {
@@ -315,6 +341,37 @@ fn rename_cat(cats: &mut Vec<Category>, path: &[usize], name: String) {
     } else {
         rename_cat(&mut cats[head].children, tail, name);
     }
+}
+
+// ── CatProps helpers (free functions) ─────────────────────────────────────────
+
+/// Returns the parent's name, or `"(top level)"` if found at the top level.
+pub fn find_cat_parent_name(cats: &[Category], target_id: usize, parent: Option<&str>) -> Option<String> {
+    for cat in cats {
+        if cat.id == target_id {
+            return Some(parent.unwrap_or("(top level)").to_string());
+        }
+        if let Some(n) = find_cat_parent_name(&cat.children, target_id, Some(&cat.name)) {
+            return Some(n);
+        }
+    }
+    None
+}
+
+fn find_cat_by_id(cats: &[Category], id: usize) -> Option<&Category> {
+    for cat in cats {
+        if cat.id == id { return Some(cat); }
+        if let Some(c) = find_cat_by_id(&cat.children, id) { return Some(c); }
+    }
+    None
+}
+
+fn find_cat_by_id_mut(cats: &mut Vec<Category>, id: usize) -> Option<&mut Category> {
+    for cat in cats.iter_mut() {
+        if cat.id == id { return Some(cat); }
+        if let Some(c) = find_cat_by_id_mut(&mut cat.children, id) { return Some(c); }
+    }
+    None
 }
 
 // ── Note helpers (free functions) ─────────────────────────────────────────────
@@ -766,6 +823,8 @@ pub fn add_child_to_cat(cats: &mut Vec<Category>, head_id: usize, new_id: usize,
             cat.children.push(Category {
                 id: new_id, name: name.to_string(),
                 kind: CategoryKind::Standard, children: vec![], note: String::new(),
+                short_name: String::new(), also_match: String::new(), note_file: String::new(),
+                excl_children: false, match_cat_name: true, match_short_name: true,
             });
             return true;
         }
@@ -836,10 +895,14 @@ impl App {
         };
 
         fn date(id: usize, name: &str) -> Category {
-            Category { id, name: name.to_string(), kind: CategoryKind::Date, children: vec![], note: String::new() }
+            Category { id, name: name.to_string(), kind: CategoryKind::Date, children: vec![], note: String::new(),
+                short_name: String::new(), also_match: String::new(), note_file: String::new(),
+                excl_children: false, match_cat_name: true, match_short_name: true }
         }
         fn std(id: usize, name: &str) -> Category {
-            Category { id, name: name.to_string(), kind: CategoryKind::Standard, children: vec![], note: String::new() }
+            Category { id, name: name.to_string(), kind: CategoryKind::Standard, children: vec![], note: String::new(),
+                short_name: String::new(), also_match: String::new(), note_file: String::new(),
+                excl_children: false, match_cat_name: true, match_short_name: true }
         }
 
         let main_cat = Category {
@@ -852,7 +915,13 @@ impl App {
                 date(5, "Done"),
                 std(6, "Initial Section"),
             ],
-            note: String::new(),
+            note:             String::new(),
+            short_name:       String::new(),
+            also_match:       String::new(),
+            note_file:        String::new(),
+            excl_children:    false,
+            match_cat_name:   true,
+            match_short_name: true,
         };
 
         App {
@@ -2409,7 +2478,7 @@ impl App {
             CatMode::Edit { cursor, .. } | CatMode::Create { cursor, .. } => {
                 if *cursor > 0 { *cursor -= 1; }
             }
-            CatMode::Normal => {}
+            CatMode::Normal | CatMode::Props { .. } => {}
         }
     }
 
@@ -2419,7 +2488,7 @@ impl App {
                 let len = buffer.chars().count();
                 if *cursor < len { *cursor += 1; }
             }
-            CatMode::Normal => {}
+            CatMode::Normal | CatMode::Props { .. } => {}
         }
     }
 
@@ -2446,7 +2515,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal => return,
+            CatMode::Normal | CatMode::Props { .. } => return,
         };
         let byte_pos = char_to_byte(buffer, *cursor);
         buffer.insert(byte_pos, ch);
@@ -2457,7 +2526,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal => return,
+            CatMode::Normal | CatMode::Props { .. } => return,
         };
         if *cursor > 0 {
             *cursor -= 1;
@@ -2470,7 +2539,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal => return,
+            CatMode::Normal | CatMode::Props { .. } => return,
         };
         let len = buffer.chars().count();
         if *cursor < len {
@@ -2493,7 +2562,9 @@ impl App {
                 let text = buffer.trim().to_string();
                 if text.is_empty() { return; }
                 let id  = self.alloc_id();
-                let cat = Category { id, name: text, kind: CategoryKind::Standard, children: vec![], note: String::new() };
+                let cat = Category { id, name: text, kind: CategoryKind::Standard, children: vec![], note: String::new(),
+                    short_name: String::new(), also_match: String::new(), note_file: String::new(),
+                    excl_children: false, match_cat_name: true, match_short_name: true };
                 let flat = flatten_cats(&self.categories);
                 if flat.is_empty() {
                     self.categories.push(cat);
@@ -2515,12 +2586,202 @@ impl App {
                     }
                 }
             }
-            CatMode::Normal => {}
+            CatMode::Normal | CatMode::Props { .. } => {}
         }
     }
 
     pub fn cat_cancel(&mut self) {
         self.cat_state.mode = CatMode::Normal;
+    }
+
+    // ── Category Properties modal ─────────────────────────────────────────────
+
+    pub fn cat_open_props(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        if flat.is_empty() { return; }
+        let idx    = self.cat_state.cursor.min(flat.len() - 1);
+        let cat_id = flat[idx].id;
+        let kind   = flat[idx].kind;
+
+        let (name, short_name, also_match, note_file, excl_children, match_cat_name, match_short_name) = {
+            match find_cat_by_id(&self.categories, cat_id) {
+                Some(cat) => (
+                    cat.name.clone(),
+                    cat.short_name.clone(),
+                    cat.also_match.clone(),
+                    cat.note_file.clone(),
+                    cat.excl_children,
+                    cat.match_cat_name,
+                    cat.match_short_name,
+                ),
+                None => return,
+            }
+        };
+        let has_note    = !cat_note_for_id(&self.categories, cat_id).is_empty();
+        let parent_name = find_cat_parent_name(&self.categories, cat_id, None)
+            .unwrap_or_else(|| "(top level)".to_string());
+        let name_cur         = name.chars().count();
+        let short_name_cur   = short_name.chars().count();
+        let also_match_cur   = also_match.chars().count();
+        let note_file_cur    = note_file.chars().count();
+        self.cat_state.mode = CatMode::Props {
+            name_buf: name, name_cur,
+            short_name_buf: short_name, short_name_cur,
+            also_match_buf: also_match, also_match_cur,
+            note_file_buf: note_file, note_file_cur,
+            excl_children, match_cat_name, match_short_name,
+            active_field: CatPropsField::Name,
+            parent_name, kind, has_note, cat_id,
+        };
+    }
+
+    pub fn cat_props_confirm(&mut self) {
+        let old = std::mem::replace(&mut self.cat_state.mode, CatMode::Normal);
+        let CatMode::Props {
+            name_buf, short_name_buf, also_match_buf, note_file_buf,
+            excl_children, match_cat_name, match_short_name, cat_id, ..
+        } = old else { return };
+        let name = name_buf.trim().to_string();
+        if let Some(cat) = find_cat_by_id_mut(&mut self.categories, cat_id) {
+            if !name.is_empty() { cat.name = name; }
+            cat.short_name       = short_name_buf;
+            cat.also_match       = also_match_buf;
+            cat.note_file        = note_file_buf;
+            cat.excl_children    = excl_children;
+            cat.match_cat_name   = match_cat_name;
+            cat.match_short_name = match_short_name;
+        }
+    }
+
+    pub fn cat_props_cancel(&mut self) {
+        self.cat_state.mode = CatMode::Normal;
+    }
+
+    /// Open the note editor for the category shown in the Props modal.
+    /// Only acts when the active field is Note.
+    pub fn cat_props_open_editor(&mut self) {
+        if matches!(&self.cat_state.mode, CatMode::Props { active_field: CatPropsField::Note, .. }) {
+            self.open_note();
+        }
+    }
+
+    pub fn cat_props_field_next(&mut self) {
+        if let CatMode::Props { active_field, .. } = &mut self.cat_state.mode {
+            *active_field = match *active_field {
+                CatPropsField::Name           => CatPropsField::ShortName,
+                CatPropsField::ShortName      => CatPropsField::AlsoMatch,
+                CatPropsField::AlsoMatch      => CatPropsField::Note,
+                CatPropsField::Note           => CatPropsField::NoteFile,
+                CatPropsField::NoteFile       => CatPropsField::ExclChildren,
+                CatPropsField::ExclChildren   => CatPropsField::MatchCatName,
+                CatPropsField::MatchCatName   => CatPropsField::MatchShortName,
+                CatPropsField::MatchShortName => CatPropsField::Name,
+            };
+        }
+    }
+
+    pub fn cat_props_field_prev(&mut self) {
+        if let CatMode::Props { active_field, .. } = &mut self.cat_state.mode {
+            *active_field = match *active_field {
+                CatPropsField::Name           => CatPropsField::MatchShortName,
+                CatPropsField::ShortName      => CatPropsField::Name,
+                CatPropsField::AlsoMatch      => CatPropsField::ShortName,
+                CatPropsField::Note           => CatPropsField::AlsoMatch,
+                CatPropsField::NoteFile       => CatPropsField::Note,
+                CatPropsField::ExclChildren   => CatPropsField::NoteFile,
+                CatPropsField::MatchCatName   => CatPropsField::ExclChildren,
+                CatPropsField::MatchShortName => CatPropsField::MatchCatName,
+            };
+        }
+    }
+
+    pub fn cat_props_input_char(&mut self, ch: char) {
+        let CatMode::Props {
+            active_field, name_buf, name_cur, short_name_buf, short_name_cur,
+            also_match_buf, also_match_cur, note_file_buf, note_file_cur, ..
+        } = &mut self.cat_state.mode else { return };
+        let (buf, cur) = match active_field {
+            CatPropsField::Name      => (name_buf,       name_cur),
+            CatPropsField::ShortName => (short_name_buf, short_name_cur),
+            CatPropsField::AlsoMatch => (also_match_buf, also_match_cur),
+            CatPropsField::NoteFile  => (note_file_buf,  note_file_cur),
+            _ => return,
+        };
+        let byte = char_to_byte(buf, *cur);
+        buf.insert(byte, ch);
+        *cur += 1;
+    }
+
+    pub fn cat_props_backspace(&mut self) {
+        let CatMode::Props {
+            active_field, name_buf, name_cur, short_name_buf, short_name_cur,
+            also_match_buf, also_match_cur, note_file_buf, note_file_cur, ..
+        } = &mut self.cat_state.mode else { return };
+        let (buf, cur) = match active_field {
+            CatPropsField::Name      => (name_buf,       name_cur),
+            CatPropsField::ShortName => (short_name_buf, short_name_cur),
+            CatPropsField::AlsoMatch => (also_match_buf, also_match_cur),
+            CatPropsField::NoteFile  => (note_file_buf,  note_file_cur),
+            _ => return,
+        };
+        if *cur == 0 { return; }
+        *cur -= 1;
+        let byte = char_to_byte(buf, *cur);
+        buf.remove(byte);
+    }
+
+    pub fn cat_props_delete(&mut self) {
+        let CatMode::Props {
+            active_field, name_buf, name_cur, short_name_buf, short_name_cur,
+            also_match_buf, also_match_cur, note_file_buf, note_file_cur, ..
+        } = &mut self.cat_state.mode else { return };
+        let (buf, cur) = match active_field {
+            CatPropsField::Name      => (name_buf,       name_cur),
+            CatPropsField::ShortName => (short_name_buf, short_name_cur),
+            CatPropsField::AlsoMatch => (also_match_buf, also_match_cur),
+            CatPropsField::NoteFile  => (note_file_buf,  note_file_cur),
+            _ => return,
+        };
+        let len = buf.chars().count();
+        if *cur >= len { return; }
+        let byte = char_to_byte(buf, *cur);
+        buf.remove(byte);
+    }
+
+    pub fn cat_props_cursor_left(&mut self) {
+        let CatMode::Props {
+            active_field, name_cur, short_name_cur, also_match_cur, note_file_cur,
+            excl_children, match_cat_name, match_short_name, ..
+        } = &mut self.cat_state.mode else { return };
+        match active_field {
+            CatPropsField::Name      => { if *name_cur > 0       { *name_cur -= 1; } }
+            CatPropsField::ShortName => { if *short_name_cur > 0 { *short_name_cur -= 1; } }
+            CatPropsField::AlsoMatch => { if *also_match_cur > 0 { *also_match_cur -= 1; } }
+            CatPropsField::Note      => {}
+            CatPropsField::NoteFile  => { if *note_file_cur > 0  { *note_file_cur -= 1; } }
+            CatPropsField::ExclChildren   => *excl_children    = !*excl_children,
+            CatPropsField::MatchCatName   => *match_cat_name   = !*match_cat_name,
+            CatPropsField::MatchShortName => *match_short_name = !*match_short_name,
+        }
+    }
+
+    pub fn cat_props_cursor_right(&mut self) {
+        let CatMode::Props {
+            active_field,
+            name_buf, name_cur, short_name_buf, short_name_cur,
+            also_match_buf, also_match_cur, note_file_buf, note_file_cur,
+            excl_children, match_cat_name, match_short_name, ..
+        } = &mut self.cat_state.mode else { return };
+        match active_field {
+            CatPropsField::Name      => { let l = name_buf.chars().count();       if *name_cur < l       { *name_cur += 1; } }
+            CatPropsField::ShortName => { let l = short_name_buf.chars().count(); if *short_name_cur < l { *short_name_cur += 1; } }
+            CatPropsField::AlsoMatch => { let l = also_match_buf.chars().count(); if *also_match_cur < l { *also_match_cur += 1; } }
+            CatPropsField::Note      => {}
+            CatPropsField::NoteFile  => { let l = note_file_buf.chars().count();  if *note_file_cur < l  { *note_file_cur += 1; } }
+            CatPropsField::ExclChildren   => *excl_children    = !*excl_children,
+            CatPropsField::MatchCatName   => *match_cat_name   = !*match_cat_name,
+            CatPropsField::MatchShortName => *match_short_name = !*match_short_name,
+        }
     }
 
     pub fn cat_delete(&mut self) {

@@ -136,10 +136,12 @@ pub fn handle_event(app: &mut App, event: Event) {
             else if in_edit   { handle_view_input(app, code) }
         }
         AppScreen::CatMgr => {
+            let in_props  = matches!(app.cat_state.mode, CatMode::Props { .. });
             let in_normal = matches!(app.cat_state.mode, CatMode::Normal);
             let in_edit   = matches!(app.cat_state.mode, CatMode::Edit   { .. });
             let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
-            if      in_normal { handle_catmgr_normal(app, code, modifiers) }
+            if      in_props  { handle_catmgr_props(app, code, modifiers) }
+            else if in_normal { handle_catmgr_normal(app, code, modifiers) }
             else if in_edit   { handle_catmgr_input(app, code) }
             else if in_create { handle_catmgr_input(app, code) }
         }
@@ -222,11 +224,31 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Insert => app.cat_begin_create(false),          // sibling
         KeyCode::F(2) | KeyCode::Enter => app.cat_begin_edit(),
         KeyCode::F(5)   => app.open_note(),
+        KeyCode::F(6)   => app.cat_open_props(),
         KeyCode::F(7)   => app.cat_promote(),
         KeyCode::F(8)   => app.cat_demote(),
         KeyCode::Esc | KeyCode::F(9) => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Delete => app.cat_delete(),
+        _ => {}
+    }
+}
+
+fn handle_catmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    match code {
+        KeyCode::Enter     => app.cat_props_confirm(),
+        KeyCode::Esc       => app.cat_props_cancel(),
+        // F2 Edit / F3 Choices open the note editor when Note field is active
+        KeyCode::F(2) | KeyCode::F(3) => app.cat_props_open_editor(),
+        // Shift+Tab: BackTab (most terminals) or Tab+SHIFT (some terminals)
+        KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => app.cat_props_field_prev(),
+        KeyCode::Tab       | KeyCode::Down   => app.cat_props_field_next(),
+        KeyCode::BackTab   | KeyCode::Up     => app.cat_props_field_prev(),
+        KeyCode::Left      => app.cat_props_cursor_left(),
+        KeyCode::Right     => app.cat_props_cursor_right(),
+        // Both Backspace and Delete perform backward deletion (cursor starts at end of text)
+        KeyCode::Backspace | KeyCode::Delete => app.cat_props_backspace(),
+        KeyCode::Char(ch)  => app.cat_props_input_char(ch),
         _ => {}
     }
 }
