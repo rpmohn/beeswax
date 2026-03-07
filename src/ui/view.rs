@@ -7,14 +7,15 @@ use ratatui::{
 };
 use crate::app::{App, AssignMode, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos,
                  MenuState, Mode, PropsField, SectionFormField, SectionInsert, SectionMode,
-                 TimeField, col_autocomplete_match, col_display_values,
+                 TimeField, cat_note_for_id, col_autocomplete_match, col_display_values,
                  flatten_cats, format_date_value, section_item_indices};
 use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
 use super::{cursor_split, fkeys, menu};
 
-const SECTION_PREFIX: &str = " ";
-const ITEM_PREFIX:    &str = "    \u{2022} ";
+const SECTION_PREFIX:    &str = " ";
+const ITEM_PREFIX:       &str = "    \u{2022} ";   // bullet  •
+const ITEM_NOTE_PREFIX:  &str = "    \u{266A} ";   // musical eighth note ♪
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -68,6 +69,14 @@ pub fn render(frame: &mut Frame, app: &App) {
         let cursor_on_head = matches!(&app.cursor, CursorPos::SectionHead(i) if *i == s_idx);
 
         // ── Section head row ─────────────────────────────────────────────
+        // Note indicator: ♩ prepended to section name when backing category has a note.
+        let sec_has_note = !cat_note_for_id(&app.categories, section.cat_id).is_empty();
+        let sec_display_name: String = if sec_has_note {
+            format!("\u{266A}{}", section.name)
+        } else {
+            section.name.clone()
+        };
+
         // Left column header cells
         let left_head_vals: Vec<String> = left_cols.iter().map(|c| c.name.clone()).collect();
         let left_active  = if cursor_on_head { active_col.filter(|&i| i < lc) } else { None };
@@ -81,7 +90,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let (mut head_spans, head_used): (Vec<Span<'static>>, usize) = if cursor_on_head {
             match &app.mode {
                 Mode::Normal => {
-                    let name: String = section.name.chars().take(max_name_w).collect();
+                    let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
                     let style = if app.col_cursor == 0 {
                         Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
@@ -101,14 +110,14 @@ pub fn render(frame: &mut Frame, app: &App) {
                     ], w)
                 }
                 _ => {
-                    let name: String = section.name.chars().take(max_name_w).collect();
+                    let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
                     (vec![Span::raw(SECTION_PREFIX),
                           Span::styled(name, Style::default().add_modifier(Modifier::BOLD))], w)
                 }
             }
         } else {
-            let name: String = section.name.chars().take(max_name_w).collect();
+            let name: String = sec_display_name.chars().take(max_name_w).collect();
             let w = pfx_w + name.chars().count();
             (vec![Span::raw(SECTION_PREFIX),
                   Span::styled(name, Style::default().add_modifier(Modifier::BOLD))], w)
@@ -152,7 +161,8 @@ pub fn render(frame: &mut Frame, app: &App) {
                 CursorPos::Item { section: si, item: ii } if *si == s_idx && *ii == i_idx
             );
 
-            let pfx_w      = ITEM_PREFIX.chars().count();
+            let item_pfx   = if item.note.is_empty() { ITEM_PREFIX } else { ITEM_NOTE_PREFIX };
+            let pfx_w      = item_pfx.chars().count();
             let max_text_w = main_col_w.saturating_sub(pfx_w);
             let item_text: String = item.text.chars().take(max_text_w).collect();
             let item_w    = pfx_w + item_text.chars().count();
@@ -243,25 +253,25 @@ pub fn render(frame: &mut Frame, app: &App) {
                             } else {
                                 Style::default().add_modifier(Modifier::BOLD)
                             };
-                            vec![Span::raw(ITEM_PREFIX), Span::styled(item_text.clone(), style)]
+                            vec![Span::raw(item_pfx), Span::styled(item_text.clone(), style)]
                         }
                         Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
                             let (left, hi, right) = cursor_split(buffer, *cursor);
                             vec![
-                                Span::raw(ITEM_PREFIX),
+                                Span::raw(item_pfx),
                                 Span::raw(left),
                                 Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
                                 Span::raw(right),
                             ]
                         }
                         Mode::Edit { .. } =>
-                            vec![Span::raw(ITEM_PREFIX),
+                            vec![Span::raw(item_pfx),
                                  Span::styled(item_text.clone(), Style::default().add_modifier(Modifier::BOLD))],
                         Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } =>
-                            vec![Span::raw(ITEM_PREFIX), Span::raw(item_text.clone())],
+                            vec![Span::raw(item_pfx), Span::raw(item_text.clone())],
                     }
                 } else if row_i == 0 {
-                    vec![Span::raw(ITEM_PREFIX), Span::raw(item_text.clone())]
+                    vec![Span::raw(item_pfx), Span::raw(item_text.clone())]
                 } else {
                     vec![Span::raw(" ".repeat(main_col_w))]
                 };

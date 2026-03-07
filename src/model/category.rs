@@ -12,4 +12,5 @@ pub struct Category {
     pub name:     String,
     pub kind:     CategoryKind,
     pub children: Vec<Category>,
+    pub note:     String,
 }

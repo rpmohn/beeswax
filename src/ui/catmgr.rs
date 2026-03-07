@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
-use crate::app::{App, CatMode, FlatCat, MenuState, flatten_cats};
+use crate::app::{App, CatMode, FlatCat, MenuState, cat_note_for_id, flatten_cats};
 use crate::model::CategoryKind;
 use super::{cursor_split, fkeys, menu};
 
@@ -14,21 +14,20 @@ fn base_indent(depth: usize) -> String {
     " ".repeat(depth * 2)
 }
 
-/// The single-character type indicator (space for Standard).
-fn kind_indicator(kind: CategoryKind) -> &'static str {
+/// The single-character type indicator.
+/// Standard with a note shows ♪; other types never show the note indicator here.
+fn kind_indicator(kind: CategoryKind, has_note: bool) -> &'static str {
     match kind {
-        CategoryKind::Standard  => " ",
+        CategoryKind::Standard  => if has_note { "\u{266A}" } else { " " },
         CategoryKind::Date      => "*",
         CategoryKind::Numeric   => "#",
-        CategoryKind::Unindexed => "D",
+        CategoryKind::Unindexed => "\u{25A1}",  // □
     }
 }
 
-/// Build the three leading spans common to every row:
-///   base_indent | indicator | " "
-/// Returns them as raw (unstyled) strings ready to pass to Span::raw.
-fn leading(entry: &FlatCat) -> (String, &'static str) {
-    (base_indent(entry.depth), kind_indicator(entry.kind))
+/// Build the leading indent + indicator for a row.
+fn leading(entry: &FlatCat, has_note: bool) -> (String, &'static str) {
+    (base_indent(entry.depth), kind_indicator(entry.kind, has_note))
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -93,7 +92,8 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         for (row, entry) in flat.iter().enumerate() {
             let cursor_here = row == cursor;
-            let (ind, kchar) = leading(entry);
+            let has_note    = !cat_note_for_id(&app.categories, entry.id).is_empty();
+            let (ind, kchar) = leading(entry, has_note);
 
             // ── Category row ─────────────────────────────────────────────
             let line = if cursor_here {

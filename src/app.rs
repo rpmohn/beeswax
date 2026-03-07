@@ -162,6 +162,15 @@ pub enum SectionMode {
     ConfirmRemove { yes: bool },
 }
 
+// ── Note state ────────────────────────────────────────────────────────────────
+
+/// Identifies what the pending note operation is attached to.
+#[derive(Clone)]
+pub enum NoteTarget {
+    Item(usize),   // global item index
+    Cat(usize),    // category id
+}
+
 // ── Menu state ────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
@@ -205,6 +214,8 @@ pub struct App {
     pub menu:        MenuState,
     // F-key bar
     pub fkey_mod:    FKeyMod,
+    // Note
+    pub pending_note: Option<NoteTarget>,
     // Misc
     pub quit:        bool,
     next_id:         usize,
@@ -304,6 +315,36 @@ fn rename_cat(cats: &mut Vec<Category>, path: &[usize], name: String) {
     } else {
         rename_cat(&mut cats[head].children, tail, name);
     }
+}
+
+// ── Note helpers (free functions) ─────────────────────────────────────────────
+
+fn find_cat_note(cats: &[Category], id: usize) -> Option<String> {
+    for cat in cats {
+        if cat.id == id { return Some(cat.note.clone()); }
+        if let Some(n) = find_cat_note(&cat.children, id) { return Some(n); }
+    }
+    None
+}
+
+fn find_cat_note_name(cats: &[Category], id: usize) -> Option<String> {
+    for cat in cats {
+        if cat.id == id { return Some(cat.name.clone()); }
+        if let Some(n) = find_cat_note_name(&cat.children, id) { return Some(n); }
+    }
+    None
+}
+
+fn set_cat_note(cats: &mut Vec<Category>, id: usize, note: String) {
+    for cat in cats.iter_mut() {
+        if cat.id == id { cat.note = note; return; }
+        set_cat_note(&mut cat.children, id, note.clone());
+    }
+}
+
+/// Return the note string for the category backing `cat_id`, or empty string.
+pub fn cat_note_for_id(cats: &[Category], id: usize) -> String {
+    find_cat_note(cats, id).unwrap_or_default()
 }
 
 // ── Datetime helpers ──────────────────────────────────────────────────────────
@@ -664,6 +705,33 @@ pub fn col_display_values(
         .collect()
 }
 
+/// Return the category IDs of sub-categories under `col_cat_id` that the item is assigned to.
+/// Used to resolve which sub-category a note belongs to (non-date columns).
+pub fn item_col_assigned_cat_ids(
+    item_values: &HashMap<usize, String>,
+    col_cat_id:  usize,
+    cats:        &[Category],
+) -> Vec<usize> {
+    let mut parent_map = HashMap::new();
+    let mut name_map   = HashMap::new();
+    build_cat_maps(cats, None, &mut parent_map, &mut name_map);
+    let is_at_or_under = |mut id: usize| -> bool {
+        loop {
+            if id == col_cat_id { return true; }
+            match parent_map.get(&id) {
+                Some(Some(p)) => id = *p,
+                _             => return false,
+            }
+        }
+    };
+    let mut ids: Vec<usize> = item_values.keys().copied()
+        .filter(|&id| is_at_or_under(id))
+        .collect();
+    // Sort by name for stable ordering (matches col_display_values NameOnly order).
+    ids.sort_by_key(|id| name_map.get(id).cloned().unwrap_or_default());
+    ids
+}
+
 /// Find a descendant of the category with `head_id` whose name starts with `prefix`
 /// (case-insensitive). Returns `(id, full_name)` of the first match.
 pub fn col_autocomplete_match(cats: &[Category], head_id: usize, prefix: &str) -> Option<(usize, String)> {
@@ -697,7 +765,7 @@ pub fn add_child_to_cat(cats: &mut Vec<Category>, head_id: usize, new_id: usize,
         if cat.id == head_id {
             cat.children.push(Category {
                 id: new_id, name: name.to_string(),
-                kind: CategoryKind::Standard, children: vec![],
+                kind: CategoryKind::Standard, children: vec![], note: String::new(),
             });
             return true;
         }
@@ -768,10 +836,10 @@ impl App {
         };
 
         fn date(id: usize, name: &str) -> Category {
-            Category { id, name: name.to_string(), kind: CategoryKind::Date, children: vec![] }
+            Category { id, name: name.to_string(), kind: CategoryKind::Date, children: vec![], note: String::new() }
         }
         fn std(id: usize, name: &str) -> Category {
-            Category { id, name: name.to_string(), kind: CategoryKind::Standard, children: vec![] }
+            Category { id, name: name.to_string(), kind: CategoryKind::Standard, children: vec![], note: String::new() }
         }
 
         let main_cat = Category {
@@ -784,6 +852,7 @@ impl App {
                 date(5, "Done"),
                 std(6, "Initial Section"),
             ],
+            note: String::new(),
         };
 
         App {
@@ -798,10 +867,11 @@ impl App {
             sub_row:     0,
             assign_mode: AssignMode::Normal,
             sec_mode:    SectionMode::Normal,
-            menu:       MenuState::Closed,
-            fkey_mod:   FKeyMod::Normal,
-            quit:       false,
-            next_id:    7,
+            menu:         MenuState::Closed,
+            fkey_mod:     FKeyMod::Normal,
+            pending_note: None,
+            quit:         false,
+            next_id:      7,
         }
     }
 
@@ -816,11 +886,128 @@ impl App {
         id
     }
 
+    // ── Note ──────────────────────────────────────────────────────────────────
+
+    /// Set `pending_note` for the currently highlighted item or section-backing category.
+    /// The main loop will suspend the TUI, open $EDITOR, and call `apply_note`.
+    pub fn open_note(&mut self) {
+        if matches!(self.mode, Mode::Edit { .. } | Mode::Create { .. }) { return; }
+
+        // CatMgr: note for the currently selected category.
+        if self.screen == AppScreen::CatMgr {
+            let flat = flatten_cats(&self.categories);
+            if let Some(entry) = flat.get(self.cat_state.cursor) {
+                self.pending_note = Some(NoteTarget::Cat(entry.id));
+            }
+            return;
+        }
+
+        let target = if self.col_cursor > 0 {
+            if let Some(col) = self.view.columns.get(self.col_cursor - 1) {
+                if col.date_fmt.is_some() {
+                    // Date column: note belongs to the category itself.
+                    Some(NoteTarget::Cat(col.cat_id))
+                } else if let CursorPos::Item { section, item } = self.cursor {
+                    // Non-date column on an item: note belongs to the specific sub-category
+                    // the item is assigned to at sub_row.
+                    let gi = self.global_item_idx(section, item);
+                    let sub_cat_id = gi.and_then(|gi| {
+                        let ids = item_col_assigned_cat_ids(
+                            &self.view.items[gi].values, col.cat_id, &self.categories,
+                        );
+                        ids.get(self.sub_row).copied()
+                    });
+                    sub_cat_id.map(NoteTarget::Cat)
+                } else {
+                    // Non-date column on section head: note for the column's category.
+                    Some(NoteTarget::Cat(col.cat_id))
+                }
+            } else {
+                None
+            }
+        } else {
+            match self.cursor {
+                CursorPos::Item { section, item } => {
+                    self.global_item_idx(section, item).map(NoteTarget::Item)
+                }
+                CursorPos::SectionHead(s) => {
+                    self.view.sections.get(s).map(|sec| NoteTarget::Cat(sec.cat_id))
+                }
+            }
+        };
+        self.pending_note = target;
+    }
+
+    /// Return a short label (item text or category name) for use in a temp filename.
+    pub fn get_note_label(&self, target: &NoteTarget) -> String {
+        let raw = match target {
+            NoteTarget::Item(gi) => {
+                self.view.items.get(*gi).map(|i| i.text.as_str()).unwrap_or("item").to_string()
+            }
+            NoteTarget::Cat(cat_id) => {
+                find_cat_note_name(&self.categories, *cat_id)
+                    .unwrap_or_else(|| "category".to_string())
+            }
+        };
+        // Sanitize: keep alphanumeric/hyphen/underscore, replace the rest with '_', cap at 32 chars.
+        raw.chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .take(32)
+            .collect::<String>()
+            .trim_matches('_')
+            .to_string()
+    }
+
+    /// Return the current note text for `target`.
+    pub fn get_note_content(&self, target: &NoteTarget) -> String {
+        match target {
+            NoteTarget::Item(gi) => {
+                self.view.items.get(*gi).map(|i| i.note.clone()).unwrap_or_default()
+            }
+            NoteTarget::Cat(cat_id) => {
+                find_cat_note(&self.categories, *cat_id).unwrap_or_default()
+            }
+        }
+    }
+
+    /// Write the edited note back to the data model.
+    pub fn apply_note(&mut self, target: NoteTarget, content: String) {
+        match target {
+            NoteTarget::Item(gi) => {
+                if let Some(item) = self.view.items.get_mut(gi) {
+                    item.note = content;
+                }
+            }
+            NoteTarget::Cat(cat_id) => {
+                set_cat_note(&mut self.categories, cat_id, content);
+            }
+        }
+    }
+
     // ── Screen toggle ─────────────────────────────────────────────────────────
 
     pub fn toggle_catmgr(&mut self) {
         self.cat_state.mode = CatMode::Normal;
         self.mode            = Mode::Normal;
+        if self.screen == AppScreen::View {
+            // Position the CatMgr cursor on the contextually relevant category.
+            let cat_id = if self.col_cursor > 0 {
+                self.view.columns.get(self.col_cursor - 1).map(|c| c.cat_id)
+            } else {
+                match self.cursor {
+                    CursorPos::SectionHead(s) =>
+                        self.view.sections.get(s).map(|s| s.cat_id),
+                    CursorPos::Item { section, .. } =>
+                        self.view.sections.get(section).map(|s| s.cat_id),
+                }
+            };
+            if let Some(id) = cat_id {
+                let flat = flatten_cats(&self.categories);
+                if let Some(pos) = flat.iter().position(|e| e.id == id) {
+                    self.cat_state.cursor = pos;
+                }
+            }
+        }
         self.screen = match self.screen {
             AppScreen::View   => AppScreen::CatMgr,
             AppScreen::CatMgr => AppScreen::View,
@@ -1230,7 +1417,7 @@ impl App {
                     Some(local) => indices.get(local).map(|&g| g + 1).unwrap_or(self.view.items.len()),
                     None        => indices.first().copied().unwrap_or(self.view.items.len()),
                 };
-                self.view.items.insert(global_pos, Item { id, text, values });
+                self.view.items.insert(global_pos, Item { id, text, values, note: String::new() });
                 // Local index is position within section after insertion.
                 let new_local = section_item_indices(&self.view, sec_idx, &self.categories)
                     .iter().position(|&g| g == global_pos).unwrap_or(0);
@@ -2306,7 +2493,7 @@ impl App {
                 let text = buffer.trim().to_string();
                 if text.is_empty() { return; }
                 let id  = self.alloc_id();
-                let cat = Category { id, name: text, kind: CategoryKind::Standard, children: vec![] };
+                let cat = Category { id, name: text, kind: CategoryKind::Standard, children: vec![], note: String::new() };
                 let flat = flatten_cats(&self.categories);
                 if flat.is_empty() {
                     self.categories.push(cat);

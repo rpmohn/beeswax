@@ -171,6 +171,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             if app.col_cursor == 0 { app.assign_open(); }
             else                   { app.col_open_calendar(); }
         }
+        KeyCode::F(5)   => app.open_note(),
         KeyCode::F(6)   => app.col_open_props(),
         KeyCode::Delete => {
             if app.col_cursor == 0 {
@@ -220,9 +221,10 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::PageDown => app.cat_cursor_pgdn(10),
         KeyCode::Insert => app.cat_begin_create(false),          // sibling
         KeyCode::F(2) | KeyCode::Enter => app.cat_begin_edit(),
+        KeyCode::F(5)   => app.open_note(),
         KeyCode::F(7)   => app.cat_promote(),
         KeyCode::F(8)   => app.cat_demote(),
-        KeyCode::F(9)   => app.toggle_catmgr(),
+        KeyCode::Esc | KeyCode::F(9) => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Delete => app.cat_delete(),
         _ => {}

@@ -23,10 +23,10 @@ pub static VIEW_FKEYS: FKeyLabels = FKeyLabels {
 };
 
 pub static CATMGR_FKEYS: FKeyLabels = FKeyLabels {
-    normal: ["Help", "Edit", "",  "",  "",  "",  "Promo", "Demote", "View",  "Menu"],
-    shift:  ["",     "",     "",  "",  "",  "",  "",      "",       "",      ""    ],
-    ctrl:   ["",     "",     "",  "",  "",  "",  "",      "",       "",      ""    ],
-    alt:    ["",     "",     "",  "",  "",  "",  "",      "",       "",      ""    ],
+    normal: ["Help", "Edit", "",  "",  "Note", "Props", "Prm (\u{2190})", "Dem (\u{2192})", "To View", "Menu"],
+    shift:  ["",     "",     "",  "",  "",     "",      "",               "",               "",         ""   ],
+    ctrl:   ["",     "",     "",  "",  "",     "",      "",               "",               "",         ""   ],
+    alt:    ["",     "",     "",  "",  "",     "",      "",               "",               "",         ""   ],
 };
 
 static COL_FORM_FKEYS: FKeyLabels = FKeyLabels {
@@ -57,6 +57,13 @@ static MENU_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "", "", "", "", "", "", "", "", ""],
 };
 
+static EDIT_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Paste", "Copy", "Cut",    "Note", "Marker", "Mark", "", "", ""],
+    shift:  ["",     "",      "",     "",        "",     "",       "",     "", "", ""],
+    ctrl:   ["",     "",      "",     "",        "",     "",       "",     "", "", ""],
+    alt:    ["Compose", "MakeCat", "", "Delete", "",     "",       "Split","", "", ""],
+};
+
 /// Render the two-row, 10-section F-key bar into `area` (must be 2 rows tall).
 pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
     let def = if !matches!(app.menu, MenuState::Closed) {
@@ -75,6 +82,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &SET_TIME_FKEYS
     } else if matches!(app.col_mode, ColMode::Form { .. } | ColMode::Choices { .. } | ColMode::Props { .. }) {
         &COL_FORM_FKEYS
+    } else if matches!(app.mode, Mode::Edit { .. } | Mode::Create { .. }) {
+        &EDIT_FKEYS
     } else {
         match app.screen {
             AppScreen::View   => &VIEW_FKEYS,
