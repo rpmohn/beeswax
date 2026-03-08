@@ -114,8 +114,9 @@ pub enum ColMode {
     Move,
     /// Alt-R / Alt-L quick-add: category picker that inserts a column immediately.
     QuickAdd {
-        position:      ColPos,
-        picker_cursor: usize,
+        position:       ColPos,
+        picker_cursor:  usize,
+        confirm_delete: bool,   // true when "Discard this category?" dialog is shown
     },
     Props {
         head_buf:     String,
@@ -287,6 +288,27 @@ pub fn section_item_indices(view: &View, sec_idx: usize, cats: &[Category]) -> V
 
 // ── Tree helpers (free functions) ─────────────────────────────────────────────
 
+/// Returns true if a category may never be deleted:
+/// - top-level categories (depth 0) — only one is allowed
+/// - the reserved system categories: Entry, When, Done
+pub fn cat_is_protected(entry: &FlatCat) -> bool {
+    entry.depth == 0
+        || matches!(entry.name.as_str(), "Entry" | "When" | "Done")
+}
+
+/// Returns true if `candidate_id` is equal to `descendant_id` or is an ancestor of it.
+/// Uses the flat path representation: candidate is an ancestor if descendant's path starts
+/// with candidate's path.
+pub fn cat_is_ancestor_or_equal(flat: &[FlatCat], candidate_id: usize, descendant_id: usize) -> bool {
+    if candidate_id == descendant_id { return true; }
+    let cand_path = flat.iter().find(|e| e.id == candidate_id).map(|e| e.path.as_slice());
+    let desc_path = flat.iter().find(|e| e.id == descendant_id).map(|e| e.path.as_slice());
+    match (cand_path, desc_path) {
+        (Some(cp), Some(dp)) => dp.starts_with(cp),
+        _ => false,
+    }
+}
+
 pub fn flatten_cats(cats: &[Category]) -> Vec<FlatCat> {
     let mut out = Vec::new();
     flatten_inner(cats, 0, &[], &mut out);
@@ -400,6 +422,23 @@ fn set_cat_note(cats: &mut Vec<Category>, id: usize, note: String) {
         if cat.id == id { cat.note = note; return; }
         set_cat_note(&mut cat.children, id, note.clone());
     }
+}
+
+/// Return the note indicator character for a category:
+/// ♬ (U+266C) if an external note_file is set (takes priority),
+/// ♪ (U+266A) if an inline note is set,
+/// ""  if neither.
+pub fn cat_note_indicator(cats: &[Category], id: usize) -> &'static str {
+    for cat in cats {
+        if cat.id == id {
+            if !cat.note_file.is_empty() { return "\u{266C}"; }
+            if !cat.note.is_empty()      { return "\u{266A}"; }
+            return "";
+        }
+        let ind = cat_note_indicator(&cat.children, id);
+        if !ind.is_empty() { return ind; }
+    }
+    ""
 }
 
 /// Return the note string for the category backing `cat_id`, or empty string.
@@ -1701,7 +1740,7 @@ impl App {
         if !matches!(self.mode, Mode::Normal) { return; }
         let flat = flatten_cats(&self.categories);
         if flat.is_empty() { return; }
-        self.col_mode = ColMode::QuickAdd { position, picker_cursor: 0 };
+        self.col_mode = ColMode::QuickAdd { position, picker_cursor: 0, confirm_delete: false };
     }
 
     pub fn col_quick_add_up(&mut self) {
@@ -1717,12 +1756,40 @@ impl App {
         }
     }
 
+    pub fn col_quick_add_pgup(&mut self, page: usize) {
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = picker_cursor.saturating_sub(page);
+        }
+    }
+
+    pub fn col_quick_add_pgdn(&mut self, page: usize) {
+        let len = flatten_cats(&self.categories).len();
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            if len > 0 { *picker_cursor = (*picker_cursor + page).min(len - 1); }
+        }
+    }
+
+    pub fn col_quick_add_home(&mut self) {
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = 0;
+        }
+    }
+
+    pub fn col_quick_add_end(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            if len > 0 { *picker_cursor = len - 1; }
+        }
+    }
+
     pub fn col_quick_add_confirm(&mut self) {
+        if !matches!(self.cat_state.mode, CatMode::Normal) { return; } // don't confirm mid-create
         let (position, picker_cursor) = match &self.col_mode {
-            ColMode::QuickAdd { position, picker_cursor } => (*position, *picker_cursor),
+            ColMode::QuickAdd { position, picker_cursor, .. } => (*position, *picker_cursor),
             _ => return,
         };
         self.col_mode = ColMode::Normal;
+        self.cat_search = None;
         let flat = flatten_cats(&self.categories);
         let Some(entry) = flat.get(picker_cursor) else { return };
         let name   = entry.name.clone();
@@ -1752,6 +1819,62 @@ impl App {
 
     pub fn col_quick_add_cancel(&mut self) {
         self.col_mode = ColMode::Normal;
+        self.cat_state.mode = CatMode::Normal;
+        self.cat_search = None;
+    }
+
+    pub fn col_quick_add_begin_delete(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        if flat.is_empty() { return; }
+        let pc = match &self.col_mode {
+            ColMode::QuickAdd { picker_cursor, .. } => *picker_cursor,
+            _ => return,
+        };
+        let entry = match flat.get(pc) {
+            Some(e) => e,
+            None => return,
+        };
+        // Guard: protected system categories and top-level category.
+        if cat_is_protected(entry) { return; }
+        let candidate_id = entry.id;
+        // Guard: cannot delete the current section head or any of its ancestors.
+        let section_head_cat_id = match &self.cursor {
+            CursorPos::SectionHead(si) => self.view.sections.get(*si).map(|s| s.cat_id),
+            CursorPos::Item { section, .. } => self.view.sections.get(*section).map(|s| s.cat_id),
+        };
+        if let Some(head_id) = section_head_cat_id {
+            if cat_is_ancestor_or_equal(&flat, candidate_id, head_id) {
+                return;
+            }
+        }
+        if let ColMode::QuickAdd { confirm_delete, .. } = &mut self.col_mode {
+            *confirm_delete = true;
+        }
+    }
+
+    pub fn col_quick_add_delete_confirm(&mut self) {
+        let pc = match &mut self.col_mode {
+            ColMode::QuickAdd { confirm_delete, picker_cursor, .. } => {
+                if !*confirm_delete { return; }
+                *confirm_delete = false;
+                *picker_cursor
+            }
+            _ => return,
+        };
+        // Sync so cat_delete operates on the picker's position.
+        self.cat_state.cursor = pc;
+        self.cat_delete();
+        // Sync picker_cursor back (cat_delete may have clamped it).
+        let new_cur = self.cat_state.cursor;
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = new_cur;
+        }
+    }
+
+    pub fn col_quick_add_delete_cancel(&mut self) {
+        if let ColMode::QuickAdd { confirm_delete, .. } = &mut self.col_mode {
+            *confirm_delete = false;
+        }
     }
 
     pub fn col_form_confirm(&mut self) {
@@ -2353,18 +2476,20 @@ impl App {
 
     /// Active cat-list cursor regardless of which window is visible.
     fn active_cat_cursor(&self) -> usize {
-        match &self.assign_mode {
-            AssignMode::Profile { cursor, .. } => *cursor,
-            AssignMode::Normal => self.cat_state.cursor,
-        }
+        if let AssignMode::Profile { cursor, .. } = &self.assign_mode { return *cursor; }
+        if let ColMode::QuickAdd { picker_cursor, .. } = &self.col_mode { return *picker_cursor; }
+        self.cat_state.cursor
     }
 
     /// Set the active cat-list cursor.
     fn set_active_cat_cursor(&mut self, idx: usize) {
-        match &mut self.assign_mode {
-            AssignMode::Profile { cursor, on_sub, .. } => { *cursor = idx; *on_sub = false; }
-            AssignMode::Normal => { self.cat_state.cursor = idx; }
+        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+            *cursor = idx; *on_sub = false; return;
         }
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = idx; return;
+        }
+        self.cat_state.cursor = idx;
     }
 
     /// Move to the first match after appending `ch` to the search buffer.
@@ -2745,7 +2870,7 @@ impl App {
                     }
                     let new_flat = flatten_cats(&self.categories);
                     if let Some(pos) = new_flat.iter().position(|e| e.id == id) {
-                        self.cat_state.cursor = pos;
+                        self.set_active_cat_cursor(pos);
                     }
                 }
             }
@@ -2952,6 +3077,7 @@ impl App {
         let flat = flatten_cats(&self.categories);
         if flat.is_empty() { return; }
         let idx  = self.cat_state.cursor.min(flat.len() - 1);
+        if cat_is_protected(&flat[idx]) { return; }
         let path = flat[idx].path.clone();
         take_cat(&mut self.categories, &path);
         let new_flat = flatten_cats(&self.categories);

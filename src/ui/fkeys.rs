@@ -64,6 +64,13 @@ static ASSIGN_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "",     "", "", "", "",      "",        "", "", ""],
 };
 
+static QUICK_ADD_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Edit", "", "", "", "Props", "", "", "", ""],
+    shift:  ["",     "",     "", "", "", "",      "", "", "", ""],
+    ctrl:   ["",     "",     "", "", "", "",      "", "", "", ""],
+    alt:    ["",     "",     "", "", "", "",      "", "", "", ""],
+};
+
 static MENU_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "", "", "", "", "", "", "", "", ""],
     shift:  ["",     "", "", "", "", "", "", "", "", ""],
@@ -97,8 +104,10 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &MENU_FKEYS   // section dialogs are self-describing
     } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. }) {
         &MENU_FKEYS   // item delete dialog is self-describing
-    } else if matches!(app.col_mode, ColMode::QuickAdd { .. } | ColMode::ConfirmRemove { .. }) {
-        &MENU_FKEYS   // just F1 Help, rest blank — same as menu blank bar
+    } else if matches!(app.col_mode, ColMode::QuickAdd { .. }) {
+        &QUICK_ADD_FKEYS
+    } else if matches!(app.col_mode, ColMode::ConfirmRemove { .. }) {
+        &MENU_FKEYS
     } else if matches!(app.col_mode, ColMode::Calendar { .. }) {
         &CALENDAR_FKEYS
     } else if matches!(app.col_mode, ColMode::SetTime { .. }) {

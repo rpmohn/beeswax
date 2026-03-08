@@ -363,11 +363,68 @@ fn handle_col_move(app: &mut App, code: KeyCode) {
 // ── Quick-add handler ─────────────────────────────────────────────────────────
 
 fn handle_col_quick_add(app: &mut App, code: KeyCode) {
+    // Delete confirmation takes priority.
+    if let ColMode::QuickAdd { confirm_delete, .. } = &app.col_mode {
+        if *confirm_delete {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => app.col_quick_add_delete_confirm(),
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc   => app.col_quick_add_delete_cancel(),
+                _ => {}
+            }
+            return;
+        }
+    }
+    // Props modal active: route to its handler.
+    if matches!(app.cat_state.mode, CatMode::Props { .. }) {
+        handle_catmgr_props(app, code, KeyModifiers::NONE);
+        return;
+    }
+    // While a create/edit buffer is active, route typing to the catmgr input handler.
+    if !matches!(app.cat_state.mode, CatMode::Normal) {
+        handle_catmgr_input(app, code);
+        return;
+    }
+    // Search mode: search keys here; any other key clears search and falls through.
+    if app.cat_search.is_some() {
+        match code {
+            KeyCode::Esc | KeyCode::Enter => { app.cat_search_clear(); return; }
+            KeyCode::Backspace => { app.cat_search_backspace(); return; }
+            KeyCode::F(7)      => { app.cat_search_prev(); return; }
+            KeyCode::F(8)      => { app.cat_search_next(); return; }
+            KeyCode::Char(ch) if ch != ' ' => { app.cat_search_char(ch); return; }
+            _ => { app.cat_search_clear(); }
+        }
+    }
     match code {
-        KeyCode::Up    => app.col_quick_add_up(),
-        KeyCode::Down  => app.col_quick_add_down(),
-        KeyCode::Enter => app.col_quick_add_confirm(),
-        KeyCode::Esc   => app.col_quick_add_cancel(),
+        KeyCode::Up       => app.col_quick_add_up(),
+        KeyCode::Down     => app.col_quick_add_down(),
+        KeyCode::PageUp   => app.col_quick_add_pgup(10),
+        KeyCode::PageDown => app.col_quick_add_pgdn(10),
+        KeyCode::Home     => app.col_quick_add_home(),
+        KeyCode::End      => app.col_quick_add_end(),
+        KeyCode::Enter    => app.col_quick_add_confirm(),
+        KeyCode::Esc      => app.col_quick_add_cancel(),
+        KeyCode::Insert   => {
+            // Sync cat_state.cursor so cat_confirm inserts at picker position.
+            if let ColMode::QuickAdd { picker_cursor, .. } = &app.col_mode {
+                app.cat_state.cursor = *picker_cursor;
+            }
+            app.cat_begin_create(false);
+        }
+        KeyCode::Delete   => app.col_quick_add_begin_delete(),
+        KeyCode::F(2)     => {
+            if let ColMode::QuickAdd { picker_cursor, .. } = &app.col_mode {
+                app.cat_state.cursor = *picker_cursor;
+            }
+            app.cat_begin_edit();
+        }
+        KeyCode::F(6)     => {
+            if let ColMode::QuickAdd { picker_cursor, .. } = &app.col_mode {
+                app.cat_state.cursor = *picker_cursor;
+            }
+            app.cat_open_props();
+        }
+        KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
         _ => {}
     }
 }

@@ -5,17 +5,17 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use crate::app::{App, AssignMode, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos,
+use crate::app::{App, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos,
                  MenuState, Mode, PropsField, SectionFormField, SectionInsert, SectionMode,
-                 TimeField, cat_note_for_id, col_autocomplete_match, col_display_values,
-                 flatten_cats, format_date_value, section_item_indices};
+                 TimeField, cat_note_indicator, col_autocomplete_match,
+                 col_display_values, flatten_cats, format_date_value, section_item_indices};
 use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
-use super::{cursor_split, fkeys, menu};
+use super::{cursor_split, fkeys, menu, title_bar_top};
 
 const SECTION_PREFIX:    &str = " ";
 const ITEM_PREFIX:       &str = "    \u{2022} ";   // bullet  •
-const ITEM_NOTE_PREFIX:  &str = "    \u{2669} ";   // musical quarter note ♩ (single note)
+const ITEM_NOTE_PREFIX:  &str = "    \u{266A} ";   // musical eighth note ♪ (single note indicator)
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -32,7 +32,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     // ── Title bar / Menu bar (2 lines) ───────────────────────────────────
     if matches!(app.menu, MenuState::Closed) {
         let title = Paragraph::new(vec![
-            Line::from(Span::raw(format!(" BEESWAX 0.1{:>68}", "2026-03-04"))),
+            Line::from(Span::raw(title_bar_top(area.width))),
             Line::from(Span::raw(format!(" View: {}", app.view.name))),
         ])
         .style(Style::default().add_modifier(Modifier::REVERSED));
@@ -69,13 +69,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         let cursor_on_head = matches!(&app.cursor, CursorPos::SectionHead(i) if *i == s_idx);
 
         // ── Section head row ─────────────────────────────────────────────
-        // Note indicator: ♬ prepended to section name when backing category has a note.
-        let sec_has_note = !cat_note_for_id(&app.categories, section.cat_id).is_empty();
-        let sec_display_name: String = if sec_has_note {
-            format!("\u{266C}{}", section.name)
-        } else {
-            section.name.clone()
-        };
+        // Note indicator: leading space replaced with ♪/♬ when backing category has a note/file.
+        let sec_note_ind = cat_note_indicator(&app.categories, section.cat_id);
+        let sec_prefix = if !sec_note_ind.is_empty() { sec_note_ind } else { SECTION_PREFIX };
+        let sec_display_name = section.name.clone();
 
         // Left column header cells
         let left_head_vals: Vec<String> = left_cols.iter().map(|c| c.name.clone()).collect();
@@ -97,13 +94,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                     } else {
                         Style::default().add_modifier(Modifier::BOLD)
                     };
-                    (vec![Span::raw(SECTION_PREFIX), Span::styled(name, style)], w)
+                    (vec![Span::raw(sec_prefix), Span::styled(name, style)], w)
                 }
                 Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
                     let (left, hi, right) = cursor_split(buffer, *cursor);
                     let w = pfx_w + buffer.chars().count();
                     (vec![
-                        Span::raw(SECTION_PREFIX),
+                        Span::raw(sec_prefix),
                         Span::styled(left,  Style::default().add_modifier(Modifier::BOLD)),
                         Span::styled(hi,    Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)),
                         Span::styled(right, Style::default().add_modifier(Modifier::BOLD)),
@@ -112,14 +109,14 @@ pub fn render(frame: &mut Frame, app: &App) {
                 _ => {
                     let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
-                    (vec![Span::raw(SECTION_PREFIX),
+                    (vec![Span::raw(sec_prefix),
                           Span::styled(name, Style::default().add_modifier(Modifier::BOLD))], w)
                 }
             }
         } else {
             let name: String = sec_display_name.chars().take(max_name_w).collect();
             let w = pfx_w + name.chars().count();
-            (vec![Span::raw(SECTION_PREFIX),
+            (vec![Span::raw(sec_prefix),
                   Span::styled(name, Style::default().add_modifier(Modifier::BOLD))], w)
         };
         if head_used < main_col_w {
@@ -451,41 +448,120 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Quick-add category picker (Alt-R / Alt-L) ────────────────────────────
-    if let ColMode::QuickAdd { position, picker_cursor } = &app.col_mode {
-        let rev   = Style::default().add_modifier(Modifier::REVERSED);
-        let flat  = flatten_cats(&app.categories);
-        let title = match position {
+    if let ColMode::QuickAdd { position, picker_cursor, confirm_delete } = &app.col_mode {
+        let rev  = Style::default().add_modifier(Modifier::REVERSED);
+        let dim  = Style::default().add_modifier(Modifier::DIM);
+        let flat = flatten_cats(&app.categories);
+        let pc   = *picker_cursor;
+
+        // Header line: search or instruction
+        let header_text = if let Some(buf) = &app.cat_search {
+            format!(" Search for: {}", buf)
+        } else {
+            " Select category for column head".to_string()
+        };
+
+        // Build scrollable category rows (may include an inline create row)
+        let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
+        let mut cat_lines: Vec<Line<'static>> = Vec::new();
+
+        if flat.is_empty() {
+            if let CatMode::Create { buffer, cursor: buf_cur, .. } = &app.cat_state.mode {
+                let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                cat_lines.push(Line::from(vec![
+                    Span::raw("   "),
+                    Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                ]));
+            } else {
+                cat_lines.push(Line::from(Span::styled(
+                    " (no categories \u{2014} press INS to add)", dim,
+                )));
+            }
+        } else {
+            for (i, cat) in flat.iter().enumerate() {
+                let indent   = " ".repeat(cat.depth * 2 + 1);
+                let note_ind = cat_note_indicator(&app.categories, cat.id);
+                let type_ind = match cat.kind {
+                    CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
+                    CategoryKind::Date      => "*",
+                    CategoryKind::Numeric   => "#",
+                    CategoryKind::Unindexed => "\u{25A1}",
+                };
+                let is_cur = i == pc;
+                cat_lines.push(Line::from(vec![
+                    Span::raw(format!("{}{} ", indent, type_ind)),
+                    if is_cur { Span::styled(cat.name.clone(), rev) }
+                    else      { Span::raw(cat.name.clone()) },
+                ]));
+
+                // Inline create row appears after the cursor row
+                if is_cur {
+                    if let CatMode::Create { buffer, cursor: buf_cur, as_child } = &app.cat_state.mode {
+                        let d = if *as_child { cat.depth + 1 } else { cat.depth };
+                        let cr_indent = " ".repeat(d * 2 + 1);
+                        let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                        cat_lines.push(Line::from(vec![
+                            Span::raw(format!("{}  ", cr_indent)),
+                            Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                        ]));
+                    }
+                }
+            }
+        }
+
+        // Box sizing: +3 = 2 borders + 1 header line
+        let n = cat_lines.len();
+        let picker_h = (n as u16 + 3).min(area.height.saturating_sub(4)).max(5);
+        let picker_rect = centered_rect(44, picker_h, area);
+        frame.render_widget(Clear, picker_rect);
+
+        let box_title = match position {
             ColPos::Right => " Add Column Right ",
             ColPos::Left  => " Add Column Left ",
         };
-        let lines: Vec<Line> = flat.iter().enumerate().map(|(i, cat)| {
-            let indent    = " ".repeat(cat.depth * 2 + 1);
-            let indicator = match cat.kind {
-                CategoryKind::Standard  => " ",
-                CategoryKind::Date      => "*",
-                CategoryKind::Numeric   => "#",
-                CategoryKind::Unindexed => "D",
-            };
-            let text = format!("{}{} {}", indent, indicator, cat.name);
-            if i == *picker_cursor {
-                Line::from(Span::styled(text, rev))
-            } else {
-                Line::from(Span::raw(text))
-            }
-        }).collect();
-
-        let picker_h = (lines.len() as u16 + 2).min(area.height.saturating_sub(4)).max(4);
-        let picker_rect = centered_rect(40, picker_h, area);
-        frame.render_widget(Clear, picker_rect);
-
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default().borders(Borders::ALL).title(box_title);
         frame.render_widget(block.clone(), picker_rect);
         let inner = block.inner(picker_rect);
 
-        let visible = inner.height as usize;
-        let offset  = if *picker_cursor >= visible { picker_cursor - visible + 1 } else { 0 };
-        let visible_lines: Vec<Line> = lines.into_iter().skip(offset).take(visible).collect();
-        frame.render_widget(Paragraph::new(visible_lines), inner);
+        // Scrollable list area is inner minus the header row
+        let list_h  = inner.height.saturating_sub(1) as usize;
+        // If a create row follows cursor, keep it visible too
+        let bottom  = if in_create { pc + 1 } else { pc };
+        let offset  = if bottom >= list_h { bottom - list_h + 1 } else { 0 };
+
+        let mut all_lines = vec![Line::from(Span::raw(header_text))];
+        all_lines.extend(cat_lines.into_iter().skip(offset).take(list_h));
+        frame.render_widget(Paragraph::new(all_lines), inner);
+
+        // ── Delete confirmation overlay ───────────────────────────────────
+        if *confirm_delete {
+            let cat_name = flat.get(pc).map(|e| e.name.as_str()).unwrap_or("?");
+            let rev = Style::default().add_modifier(Modifier::REVERSED);
+            // Make the dialog wide enough to show the category name.
+            let msg = format!("Discard \"{}\"?", cat_name);
+            let dlg_w = (msg.chars().count() + 4).max(30).min(area.width as usize) as u16;
+            let dlg_rect = centered_rect(dlg_w, 5, area);
+            frame.render_widget(Clear, dlg_rect);
+            let dlg_block = Block::default().borders(Borders::ALL).title(" Discard Category? ");
+            frame.render_widget(dlg_block.clone(), dlg_rect);
+            let dlg_inner = dlg_block.inner(dlg_rect);
+            let iw = dlg_inner.width as usize;
+            let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
+            let yes_label = " Yes ";
+            let no_label  = " No  ";
+            let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
+            let lpad = gap / 2;
+            frame.render_widget(Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg))),
+                Line::from(vec![
+                    Span::raw(" ".repeat(lpad)),
+                    Span::styled(yes_label, rev),
+                    Span::raw("  "),
+                    Span::raw(no_label),
+                ]),
+            ]), dlg_inner);
+        }
     }
 
     // ── Column Properties modal ───────────────────────────────────────────────
@@ -923,9 +999,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                 (true,  false) => "* ",
                 (false, _)     => "  ",
             };
-            let has_note  = !cat_note_for_id(&app.categories, e.id).is_empty();
+            let note_ind  = cat_note_indicator(&app.categories, e.id);
             let type_ind  = match e.kind {
-                CategoryKind::Standard  => if has_note { "\u{266C}" } else { " " },  // ♬
+                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
                 CategoryKind::Date      => "*",
                 CategoryKind::Numeric   => "#",
                 CategoryKind::Unindexed => "\u{25A1}",  // □

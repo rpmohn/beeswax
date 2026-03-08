@@ -5,9 +5,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use crate::app::{App, CatMode, CatPropsField, FlatCat, MenuState, cat_note_for_id, flatten_cats};
+use crate::app::{App, CatMode, CatPropsField, FlatCat, MenuState, cat_note_for_id, cat_note_indicator, flatten_cats};
 use crate::model::CategoryKind;
-use super::{cursor_split, fkeys, menu};
+use super::{cursor_split, fkeys, menu, title_bar_top};
 
 /// Spaces before the indicator column at a given depth.
 fn base_indent(depth: usize) -> String {
@@ -15,10 +15,10 @@ fn base_indent(depth: usize) -> String {
 }
 
 /// The single-character type indicator.
-/// Standard with a note shows ♬; other types never show the note indicator here.
-fn kind_indicator(kind: CategoryKind, has_note: bool) -> &'static str {
+/// Standard cats show their note indicator (♪ inline, ♬ file); other types show their symbol.
+fn kind_indicator(kind: CategoryKind, note_ind: &'static str) -> &'static str {
     match kind {
-        CategoryKind::Standard  => if has_note { "\u{266C}" } else { " " },  // ♬ beamed sixteenth notes
+        CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
         CategoryKind::Date      => "*",
         CategoryKind::Numeric   => "#",
         CategoryKind::Unindexed => "\u{25A1}",  // □
@@ -26,8 +26,8 @@ fn kind_indicator(kind: CategoryKind, has_note: bool) -> &'static str {
 }
 
 /// Build the leading indent + indicator for a row.
-fn leading(entry: &FlatCat, has_note: bool) -> (String, &'static str) {
-    (base_indent(entry.depth), kind_indicator(entry.kind, has_note))
+fn leading(entry: &FlatCat, note_ind: &'static str) -> (String, &'static str) {
+    (base_indent(entry.depth), kind_indicator(entry.kind, note_ind))
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -50,7 +50,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             " Category Manager".to_string()
         };
         let title = Paragraph::new(vec![
-            Line::from(Span::raw(format!(" BEESWAX 0.1{:>68}", "2026-03-04"))),
+            Line::from(Span::raw(title_bar_top(area.width))),
             Line::from(Span::raw(second_line)),
         ])
         .style(Style::default().add_modifier(Modifier::REVERSED));
@@ -97,8 +97,8 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         for (row, entry) in flat.iter().enumerate() {
             let cursor_here = row == cursor;
-            let has_note    = !cat_note_for_id(&app.categories, entry.id).is_empty();
-            let (ind, kchar) = leading(entry, has_note);
+            let note_ind     = cat_note_indicator(&app.categories, entry.id);
+            let (ind, kchar) = leading(entry, note_ind);
 
             // ── Category row ─────────────────────────────────────────────
             let line = if cursor_here {
