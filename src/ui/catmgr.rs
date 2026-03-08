@@ -15,10 +15,10 @@ fn base_indent(depth: usize) -> String {
 }
 
 /// The single-character type indicator.
-/// Standard with a note shows ♪; other types never show the note indicator here.
+/// Standard with a note shows ♬; other types never show the note indicator here.
 fn kind_indicator(kind: CategoryKind, has_note: bool) -> &'static str {
     match kind {
-        CategoryKind::Standard  => if has_note { "\u{266A}" } else { " " },
+        CategoryKind::Standard  => if has_note { "\u{266C}" } else { " " },  // ♬ beamed sixteenth notes
         CategoryKind::Date      => "*",
         CategoryKind::Numeric   => "#",
         CategoryKind::Unindexed => "\u{25A1}",  // □
@@ -44,9 +44,14 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Title bar / Menu bar (2 lines) ───────────────────────────────────────
     if matches!(app.menu, MenuState::Closed) {
+        let second_line = if let Some(buf) = &app.cat_search {
+            format!(" Search for: {}", buf)
+        } else {
+            " Category Manager".to_string()
+        };
         let title = Paragraph::new(vec![
             Line::from(Span::raw(format!(" BEESWAX 0.1{:>68}", "2026-03-04"))),
-            Line::from(Span::raw(" Category Manager")),
+            Line::from(Span::raw(second_line)),
         ])
         .style(Style::default().add_modifier(Modifier::REVERSED));
         frame.render_widget(title, chunks[0]);

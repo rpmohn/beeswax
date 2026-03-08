@@ -161,6 +161,7 @@ pub enum AssignMode {
     Profile {
         gi:     usize,
         cursor: usize,   // index into flatten_cats
+        on_sub: bool,    // true when cursor rests on a Date value sub-row
     },
 }
 
@@ -234,6 +235,8 @@ pub struct App {
     pub sub_row:     usize,
     // Assignment Profile
     pub assign_mode: AssignMode,
+    // Category search (shared across CatMgr and Assignment Profile)
+    pub cat_search:  Option<String>,
     // Section
     pub sec_mode:    SectionMode,
     // Menu
@@ -935,6 +938,7 @@ impl App {
             col_mode:    ColMode::Normal,
             sub_row:     0,
             assign_mode: AssignMode::Normal,
+            cat_search:  None,
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
@@ -1472,11 +1476,13 @@ impl App {
                     CursorPos::SectionHead(s)         => (*s, None),
                     CursorPos::Item { section, item } => (*section, Some(*item)),
                 };
-                // Auto-stamp the Entry category with the creation datetime.
-                let mut values = HashMap::new();
+                // Auto-stamp the Entry category with the creation datetime (conditional).
+                let mut values    = HashMap::new();
+                let mut cond_cats = std::collections::HashSet::new();
                 let flat = flatten_cats(&self.categories);
                 if let Some(entry) = flat.iter().find(|c| c.name == "Entry") {
                     values.insert(entry.id, now_datetime_string());
+                    cond_cats.insert(entry.id);
                 }
                 // Auto-assign item to the section's backing category.
                 values.entry(self.view.sections[sec_idx].cat_id).or_insert_with(String::new);
@@ -1486,7 +1492,7 @@ impl App {
                     Some(local) => indices.get(local).map(|&g| g + 1).unwrap_or(self.view.items.len()),
                     None        => indices.first().copied().unwrap_or(self.view.items.len()),
                 };
-                self.view.items.insert(global_pos, Item { id, text, values, note: String::new() });
+                self.view.items.insert(global_pos, Item { id, text, values, cond_cats, note: String::new() });
                 // Local index is position within section after insertion.
                 let new_local = section_item_indices(&self.view, sec_idx, &self.categories)
                     .iter().position(|&g| g == global_pos).unwrap_or(0);
@@ -2220,38 +2226,93 @@ impl App {
         if self.col_cursor != 0 { return; }
         if let CursorPos::Item { section, item } = self.cursor {
             if let Some(gi) = self.global_item_idx(section, item) {
-                self.assign_mode = AssignMode::Profile { gi, cursor: 0 };
+                self.assign_mode = AssignMode::Profile { gi, cursor: 0, on_sub: false };
             }
         }
     }
 
     pub fn assign_close(&mut self) {
         self.assign_mode = AssignMode::Normal;
+        self.cat_search = None;
     }
 
     pub fn assign_cursor_up(&mut self) {
-        if let AssignMode::Profile { cursor, .. } = &mut self.assign_mode {
-            if *cursor > 0 { *cursor -= 1; }
+        let cats = flatten_cats(&self.categories);
+        let (gi, cur, sub) = match &self.assign_mode {
+            AssignMode::Profile { gi, cursor, on_sub } => (*gi, *cursor, *on_sub),
+            AssignMode::Normal => return,
+        };
+        let empty = std::collections::HashMap::new();
+        let item_vals = self.view.items.get(gi).map(|it| &it.values).unwrap_or(&empty);
+        let (new_cur, new_sub) = if sub {
+            (cur, false)   // sub-row → its parent cat
+        } else if cur > 0 {
+            let prev = cur - 1;
+            let prev_has_sub = cats.get(prev).map(|e|
+                e.kind == CategoryKind::Date
+                && item_vals.get(&e.id).map_or(false, |v| !v.is_empty())
+            ).unwrap_or(false);
+            (prev, prev_has_sub)
+        } else {
+            (cur, false)
+        };
+        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+            *cursor = new_cur;
+            *on_sub = new_sub;
         }
     }
 
     pub fn assign_cursor_down(&mut self) {
-        let len = flatten_cats(&self.categories).len();
-        if let AssignMode::Profile { cursor, .. } = &mut self.assign_mode {
-            if *cursor + 1 < len { *cursor += 1; }
+        let cats = flatten_cats(&self.categories);
+        let len = cats.len();
+        let (gi, cur, sub) = match &self.assign_mode {
+            AssignMode::Profile { gi, cursor, on_sub } => (*gi, *cursor, *on_sub),
+            AssignMode::Normal => return,
+        };
+        let empty = std::collections::HashMap::new();
+        let item_vals = self.view.items.get(gi).map(|it| &it.values).unwrap_or(&empty);
+        let (new_cur, new_sub) = if sub {
+            ((cur + 1).min(len.saturating_sub(1)), false)
+        } else {
+            let cur_has_sub = cats.get(cur).map(|e|
+                e.kind == CategoryKind::Date
+                && item_vals.get(&e.id).map_or(false, |v| !v.is_empty())
+            ).unwrap_or(false);
+            if cur_has_sub { (cur, true) } else { ((cur + 1).min(len.saturating_sub(1)), false) }
+        };
+        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+            *cursor = new_cur;
+            *on_sub = new_sub;
         }
     }
 
     pub fn assign_cursor_pgup(&mut self, page: usize) {
-        if let AssignMode::Profile { cursor, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
             *cursor = cursor.saturating_sub(page);
+            *on_sub = false;
         }
     }
 
     pub fn assign_cursor_pgdn(&mut self, page: usize) {
         let len = flatten_cats(&self.categories).len();
-        if let AssignMode::Profile { cursor, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
             if len > 0 { *cursor = (*cursor + page).min(len - 1); }
+            *on_sub = false;
+        }
+    }
+
+    pub fn assign_cursor_home(&mut self) {
+        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+            *cursor = 0;
+            *on_sub = false;
+        }
+    }
+
+    pub fn assign_cursor_end(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+            if len > 0 { *cursor = len - 1; }
+            *on_sub = false;
         }
     }
 
@@ -2260,7 +2321,10 @@ impl App {
     /// Date categories: assigned when a value string is present.
     pub fn assign_toggle(&mut self) {
         let (gi, cur) = match &self.assign_mode {
-            AssignMode::Profile { gi, cursor } => (*gi, *cursor),
+            AssignMode::Profile { gi, cursor, on_sub } => {
+                if *on_sub { return; }  // sub-rows are not directly toggleable
+                (*gi, *cursor)
+            }
             AssignMode::Normal => return,
         };
         let cats = flatten_cats(&self.categories);
@@ -2273,6 +2337,94 @@ impl App {
         } else {
             item.values.insert(cat_id, String::new());
         }
+    }
+
+    // ── Category search ───────────────────────────────────────────────────────
+
+    /// Returns the indices of all cats whose names contain `buf` (case-insensitive).
+    fn cat_search_matches(cats: &[FlatCat], buf: &str) -> Vec<usize> {
+        if buf.is_empty() { return vec![]; }
+        let lower = buf.to_lowercase();
+        cats.iter().enumerate()
+            .filter(|(_, e)| e.name.to_lowercase().contains(&lower))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Active cat-list cursor regardless of which window is visible.
+    fn active_cat_cursor(&self) -> usize {
+        match &self.assign_mode {
+            AssignMode::Profile { cursor, .. } => *cursor,
+            AssignMode::Normal => self.cat_state.cursor,
+        }
+    }
+
+    /// Set the active cat-list cursor.
+    fn set_active_cat_cursor(&mut self, idx: usize) {
+        match &mut self.assign_mode {
+            AssignMode::Profile { cursor, on_sub, .. } => { *cursor = idx; *on_sub = false; }
+            AssignMode::Normal => { self.cat_state.cursor = idx; }
+        }
+    }
+
+    /// Move to the first match after appending `ch` to the search buffer.
+    pub fn cat_search_char(&mut self, ch: char) {
+        let buf = self.cat_search.get_or_insert_with(String::new);
+        buf.push(ch);
+        let buf = buf.clone();
+        let cats = flatten_cats(&self.categories);
+        let matches = Self::cat_search_matches(&cats, &buf);
+        if let Some(&first) = matches.first() {
+            self.set_active_cat_cursor(first);
+        }
+    }
+
+    /// Remove last char from search buffer; clear search when empty.
+    pub fn cat_search_backspace(&mut self) {
+        if let Some(buf) = &mut self.cat_search {
+            buf.pop();
+            if buf.is_empty() {
+                self.cat_search = None;
+                return;
+            }
+            let buf = buf.clone();
+            let cats = flatten_cats(&self.categories);
+            let matches = Self::cat_search_matches(&cats, &buf);
+            if let Some(&first) = matches.first() {
+                self.set_active_cat_cursor(first);
+            }
+        }
+    }
+
+    /// Clear search without moving the cursor.
+    pub fn cat_search_clear(&mut self) {
+        self.cat_search = None;
+    }
+
+    /// Move to the next match (F8).
+    pub fn cat_search_next(&mut self) {
+        let buf = match &self.cat_search { Some(b) => b.clone(), None => return };
+        let cats = flatten_cats(&self.categories);
+        let matches = Self::cat_search_matches(&cats, &buf);
+        if matches.is_empty() { return; }
+        let cur = self.active_cat_cursor();
+        let next = matches.iter().find(|&&i| i > cur)
+            .copied()
+            .unwrap_or(matches[0]);
+        self.set_active_cat_cursor(next);
+    }
+
+    /// Move to the previous match (F7).
+    pub fn cat_search_prev(&mut self) {
+        let buf = match &self.cat_search { Some(b) => b.clone(), None => return };
+        let cats = flatten_cats(&self.categories);
+        let matches = Self::cat_search_matches(&cats, &buf);
+        if matches.is_empty() { return; }
+        let cur = self.active_cat_cursor();
+        let prev = matches.iter().rev().find(|&&i| i < cur)
+            .copied()
+            .unwrap_or(*matches.last().unwrap());
+        self.set_active_cat_cursor(prev);
     }
 
     // ── Section Add ──────────────────────────────────────────────────────────
@@ -2469,6 +2621,17 @@ impl App {
         let flat = flatten_cats(&self.categories);
         if flat.is_empty() { return; }
         self.cat_state.cursor = (self.cat_state.cursor + page).min(flat.len() - 1);
+    }
+
+    pub fn cat_cursor_home(&mut self) {
+        if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
+        self.cat_state.cursor = 0;
+    }
+
+    pub fn cat_cursor_end(&mut self) {
+        if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
+        let flat = flatten_cats(&self.categories);
+        if !flat.is_empty() { self.cat_state.cursor = flat.len() - 1; }
     }
 
     // ── CatMgr buffer cursor ──────────────────────────────────────────────────

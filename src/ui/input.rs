@@ -216,12 +216,30 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
         return;
     }
+    // Search mode: search keys handled here; any other key clears search and falls through.
+    if app.cat_search.is_some() {
+        match code {
+            KeyCode::Esc       => { app.cat_search_clear(); return; }
+            KeyCode::Enter     => { app.cat_search_clear(); return; }
+            KeyCode::Backspace => { app.cat_search_backspace(); return; }
+            KeyCode::F(7)      => { app.cat_search_prev(); return; }
+            KeyCode::F(8)      => { app.cat_search_next(); return; }
+            KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                              && !modifiers.contains(KeyModifiers::ALT) => {
+                app.cat_search_char(ch);
+                return;
+            }
+            _ => { app.cat_search_clear(); }  // navigation key: cancel search, then handle
+        }
+    }
     match code {
-        KeyCode::Up     => app.cat_cursor_up(),
-        KeyCode::Down   => app.cat_cursor_down(),
-        KeyCode::PageUp => app.cat_cursor_pgup(10),
+        KeyCode::Up       => app.cat_cursor_up(),
+        KeyCode::Down     => app.cat_cursor_down(),
+        KeyCode::PageUp   => app.cat_cursor_pgup(10),
         KeyCode::PageDown => app.cat_cursor_pgdn(10),
-        KeyCode::Insert => app.cat_begin_create(false),          // sibling
+        KeyCode::Home     => app.cat_cursor_home(),
+        KeyCode::End      => app.cat_cursor_end(),
+        KeyCode::Insert   => app.cat_begin_create(false),
         KeyCode::F(2) | KeyCode::Enter => app.cat_begin_edit(),
         KeyCode::F(5)   => app.open_note(),
         KeyCode::F(6)   => app.cat_open_props(),
@@ -230,6 +248,10 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Esc | KeyCode::F(9) => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Delete => app.cat_delete(),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => {
+            app.cat_search_char(ch);
+        }
         _ => {}
     }
 }
@@ -459,13 +481,31 @@ fn handle_sec_choices(app: &mut App, code: KeyCode) {
 // ── Assignment Profile handler ────────────────────────────────────────────────
 
 fn handle_assign_profile(app: &mut App, code: KeyCode) {
+    // Search mode: search keys handled here; any other key clears search and falls through.
+    if app.cat_search.is_some() {
+        match code {
+            KeyCode::Esc       => { app.cat_search_clear(); return; }
+            KeyCode::Enter     => { app.cat_search_clear(); return; }
+            KeyCode::Backspace => { app.cat_search_backspace(); return; }
+            KeyCode::F(7)      => { app.cat_search_prev(); return; }
+            KeyCode::F(8)      => { app.cat_search_next(); return; }
+            KeyCode::Char(ch) if ch != ' ' => { app.cat_search_char(ch); return; }
+            _ => { app.cat_search_clear(); }  // navigation key: cancel search, then handle
+        }
+    }
     match code {
         KeyCode::Up       => app.assign_cursor_up(),
         KeyCode::Down     => app.assign_cursor_down(),
         KeyCode::PageUp   => app.assign_cursor_pgup(10),
         KeyCode::PageDown => app.assign_cursor_pgdn(10),
+        KeyCode::Home     => app.assign_cursor_home(),
+        KeyCode::End      => app.assign_cursor_end(),
         KeyCode::Char(' ')     => app.assign_toggle(),
         KeyCode::Enter | KeyCode::Esc | KeyCode::F(3) => app.assign_close(),
+        KeyCode::F(7)     => app.cat_search_prev(),
+        KeyCode::F(8)     => app.cat_search_next(),
+        KeyCode::Backspace => app.cat_search_backspace(),
+        KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
         _ => {}
     }
 }

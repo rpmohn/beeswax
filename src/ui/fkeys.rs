@@ -50,6 +50,20 @@ static SET_TIME_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "", "", "", "", "", "", "", "", ""],
 };
 
+static SEARCH_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "", "", "", "", "", "PrevSel", "NextSel", "", ""],
+    shift:  ["",     "", "", "", "", "", "",        "",        "", ""],
+    ctrl:   ["",     "", "", "", "", "", "",        "",        "", ""],
+    alt:    ["",     "", "", "", "", "", "",        "",        "", ""],
+};
+
+static ASSIGN_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Edit", "", "", "", "Props", "InclCat", "", "", ""],
+    shift:  ["",     "",     "", "", "", "",      "",        "", "", ""],
+    ctrl:   ["",     "",     "", "", "", "",      "",        "", "", ""],
+    alt:    ["",     "",     "", "", "", "",      "",        "", "", ""],
+};
+
 static MENU_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "", "", "", "", "", "", "", "", ""],
     shift:  ["",     "", "", "", "", "", "", "", "", ""],
@@ -75,8 +89,10 @@ static EDIT_FKEYS: FKeyLabels = FKeyLabels {
 pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
     let def = if !matches!(app.menu, MenuState::Closed) {
         &MENU_FKEYS
+    } else if app.cat_search.is_some() {
+        &SEARCH_FKEYS
     } else if matches!(app.assign_mode, AssignMode::Profile { .. }) {
-        &MENU_FKEYS   // assignment profile is self-describing
+        &ASSIGN_FKEYS
     } else if matches!(app.sec_mode, SectionMode::Add { .. } | SectionMode::Choices { .. } | SectionMode::ConfirmRemove { .. }) {
         &MENU_FKEYS   // section dialogs are self-describing
     } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. }) {
