@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CategoryKind {
     Standard,
     Date,
@@ -6,7 +6,7 @@ pub enum CategoryKind {
     Unindexed,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Category {
     pub id:               usize,
     pub name:             String,

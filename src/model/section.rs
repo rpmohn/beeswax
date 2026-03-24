@@ -1,3 +1,4 @@
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Section {
     pub id:     usize,
     pub name:   String,

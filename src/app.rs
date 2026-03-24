@@ -1,6 +1,8 @@
 use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
 use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, Item, Section, View};
+use crate::persist;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 // ── F-key modifier state ──────────────────────────────────────────────────────
 
@@ -156,6 +158,11 @@ pub enum ColMode {
     },
     /// "Remove this column from the view?" confirmation dialog.
     ConfirmRemove { yes: bool },
+    /// F3 sub-category picker for standard (non-Date) columns.
+    SubPick {
+        col_idx:       usize,   // 0-based into view.columns
+        picker_cursor: usize,   // index into col_sub_cat_list()
+    },
 }
 
 // ── Assignment Profile state ──────────────────────────────────────────────────
@@ -213,6 +220,27 @@ pub enum MenuState {
     SubSub { top: usize, sub: usize, cursor: usize },
 }
 
+// ── Save/password state ───────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum AskChoice { Yes, No, Cancel }
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum PasswordPurpose { Enable, Change, Disable }
+
+pub enum SaveState {
+    Idle,
+    AskOnQuit { choice: AskChoice },
+    PasswordEntry {
+        purpose:        PasswordPurpose,
+        buf:            String,
+        cursor:         usize,
+        confirm_buf:    String,
+        confirm_active: bool,
+        error:          Option<String>,
+    },
+}
+
 /// One entry in the depth-first flattened category list used for display/navigation.
 pub struct FlatCat {
     pub depth: usize,
@@ -250,6 +278,11 @@ pub struct App {
     pub fkey_mod:    FKeyMod,
     // Note
     pub pending_note: Option<NoteTarget>,
+    // Persistence
+    pub file_path:        Option<PathBuf>,
+    pub session_password: Option<String>,
+    pub dirty:            bool,
+    pub save_state:       SaveState,
     // Misc
     pub quit:        bool,
     next_id:         usize,
@@ -986,8 +1019,43 @@ impl App {
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
             pending_note: None,
+            file_path:        None,
+            session_password: None,
+            dirty:            false,
+            save_state:       SaveState::Idle,
             quit:         false,
             next_id:      7,
+        }
+    }
+
+    /// Build an App from loaded save data, with an optional file path and password.
+    pub fn from_save(
+        data:     persist::SaveData,
+        path:     Option<PathBuf>,
+        password: Option<String>,
+    ) -> Self {
+        App {
+            screen:     AppScreen::View,
+            view:       data.view,
+            cursor:     CursorPos::SectionHead(0),
+            mode:       Mode::Normal,
+            categories: data.categories,
+            cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal },
+            col_cursor:  0,
+            col_mode:    ColMode::Normal,
+            sub_row:     0,
+            assign_mode: AssignMode::Normal,
+            cat_search:  None,
+            sec_mode:    SectionMode::Normal,
+            menu:         MenuState::Closed,
+            fkey_mod:     FKeyMod::Normal,
+            pending_note: None,
+            file_path:        path,
+            session_password: password,
+            dirty:            false,
+            save_state:       SaveState::Idle,
+            quit:         false,
+            next_id:      data.next_id,
         }
     }
 
@@ -1148,7 +1216,7 @@ impl App {
 
     fn apply_menu_action(&mut self, action: MenuAction) {
         match action {
-            MenuAction::Quit         => { self.quit = true; }
+            MenuAction::Quit         => { self.trigger_quit(); }
             MenuAction::ReturnToView => {
                 if matches!(self.screen, AppScreen::CatMgr) { self.toggle_catmgr(); }
             }
@@ -1159,9 +1227,18 @@ impl App {
             MenuAction::ColumnMove       => self.col_begin_move(),
             MenuAction::SectionAdd       => self.sec_open_add(SectionInsert::Below),
             MenuAction::SectionRemove    => self.sec_open_confirm_remove(),
+            MenuAction::FileSave                => { self.handle_file_save(); }
+            MenuAction::FileEnableEncryption
+            | MenuAction::FileChangePassword
+            | MenuAction::FileDisableEncryption => { self.handle_file_encryption(action); }
             MenuAction::Noop => {}
         }
-        self.menu = MenuState::Closed;
+        // Don't close the menu if we opened a password dialog
+        if !matches!(self.save_state, SaveState::PasswordEntry { .. }) {
+            self.menu = MenuState::Closed;
+        } else {
+            self.menu = MenuState::Closed;
+        }
     }
 
     pub fn menu_left(&mut self) {
@@ -3385,6 +3462,112 @@ impl App {
         self.col_mode = ColMode::Calendar { year, month, day, hour, min, sec };
     }
 
+    // ── Sub-category picker (F3 on standard columns) ──────────────────────────
+
+    /// Returns (cat_id, name, relative_depth) for the column head and all its
+    /// descendants, in depth-first tree order.
+    /// relative_depth 0 = the column head itself; 1 = direct children; etc.
+    pub fn col_sub_cat_list(&self, col_idx: usize) -> Vec<(usize, String, usize)> {
+        let Some(col) = self.view.columns.get(col_idx) else { return vec![] };
+        let head_id = col.cat_id;
+        let flat = flatten_cats(&self.categories);
+        let head = flat.iter().find(|e| e.id == head_id);
+        let (head_path, head_depth) = match head {
+            Some(h) => (h.path.clone(), h.depth),
+            None    => return vec![],
+        };
+        // Include the head itself (depth 0) then all descendants.
+        flat.iter()
+            .filter(|e| e.id == head_id || e.path.starts_with(&head_path))
+            .map(|e| (e.id, e.name.clone(), e.depth.saturating_sub(head_depth)))
+            .collect()
+    }
+
+    pub fn col_open_sub_pick(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        if self.col_cursor == 0 { return; }
+        let col_idx = self.col_cursor - 1;
+        let is_date = self.view.columns.get(col_idx)
+            .map(|c| c.date_fmt.is_some())
+            .unwrap_or(true);
+        if is_date { return; }
+        if !matches!(self.cursor, CursorPos::Item { .. }) { return; }
+        let subs = self.col_sub_cat_list(col_idx);
+        if subs.is_empty() { return; }
+        // Start on the first already-assigned entry, or index 0.
+        let gi = match self.cursor {
+            CursorPos::Item { section, item } => self.global_item_idx(section, item),
+            _ => None,
+        };
+        let start = gi.and_then(|gi| {
+            let vals = &self.view.items[gi].values;
+            subs.iter().position(|(id, _, _)| vals.contains_key(id))
+        }).unwrap_or(0);
+        self.col_mode = ColMode::SubPick { col_idx, picker_cursor: start };
+    }
+
+    pub fn col_sub_pick_up(&mut self) {
+        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        }
+    }
+
+    pub fn col_sub_pick_down(&mut self) {
+        let len = match &self.col_mode {
+            ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
+            _ => return,
+        };
+        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+            if *picker_cursor + 1 < len { *picker_cursor += 1; }
+        }
+    }
+
+    /// Toggle assignment of the highlighted entry.
+    ///
+    /// Rules:
+    /// - Selecting the head: clears all descendant assignments, toggles the head.
+    /// - Selecting a descendant: clears the head assignment, toggles the descendant.
+    pub fn col_sub_pick_toggle(&mut self) {
+        let (col_idx, picker_cursor) = match &self.col_mode {
+            ColMode::SubPick { col_idx, picker_cursor } => (*col_idx, *picker_cursor),
+            _ => return,
+        };
+        let subs = self.col_sub_cat_list(col_idx);
+        let Some(&(cat_id, _, _)) = subs.get(picker_cursor) else { return };
+        let head_id = self.view.columns.get(col_idx).map(|c| c.cat_id).unwrap_or(0);
+
+        let gi = match self.cursor {
+            CursorPos::Item { section, item } => self.global_item_idx(section, item),
+            _ => return,
+        };
+        let Some(gi) = gi else { return };
+        let item = &mut self.view.items[gi];
+
+        if cat_id == head_id {
+            // Toggling the head: clear all descendant assignments, then toggle head.
+            for &(desc_id, _, _) in subs.iter().filter(|(id, _, _)| *id != head_id) {
+                item.values.remove(&desc_id);
+            }
+            if item.values.contains_key(&head_id) {
+                item.values.remove(&head_id);
+            } else {
+                item.values.insert(head_id, String::new());
+            }
+        } else {
+            // Toggling a descendant: clear head assignment, toggle this descendant.
+            item.values.remove(&head_id);
+            if item.values.contains_key(&cat_id) {
+                item.values.remove(&cat_id);
+            } else {
+                item.values.insert(cat_id, String::new());
+            }
+        }
+    }
+
+    pub fn col_sub_pick_close(&mut self) {
+        self.col_mode = ColMode::Normal;
+    }
+
     pub fn col_calendar_left(&mut self) {
         if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
             if *day > 1 { *day -= 1; }
@@ -3574,6 +3757,194 @@ impl App {
             };
             if buf.len() >= 2 { buf.clear(); }
             buf.push(ch);
+        }
+    }
+
+    // ── Persistence ───────────────────────────────────────────────────────────
+
+    /// Save to `file_path`. Encrypted if `session_password` is set, plain otherwise.
+    /// No-op if no `file_path` is configured.
+    pub fn save(&mut self) -> std::io::Result<()> {
+        let path = match &self.file_path {
+            Some(p) => p.clone(),
+            None    => return Ok(()),
+        };
+        let result = if let Some(pw) = &self.session_password.clone() {
+            persist::save_encrypted(&path, pw, &self.categories, &self.view, self.next_id)
+        } else {
+            persist::save_plain(&path, &self.categories, &self.view, self.next_id)
+        };
+        if result.is_ok() { self.dirty = false; }
+        result
+    }
+
+    /// Called when the user presses Alt-Q.
+    /// If there are unsaved changes and a file is open, show the ask-save dialog.
+    /// Otherwise quit immediately.
+    pub fn trigger_quit(&mut self) {
+        if self.dirty && self.file_path.is_some() {
+            self.save_state = SaveState::AskOnQuit { choice: AskChoice::Yes };
+        } else {
+            self.quit = true;
+        }
+    }
+
+    // ── Ask-save dialog ───────────────────────────────────────────────────────
+
+    pub fn ask_save_confirm(&mut self) {
+        let _ = self.save();
+        self.save_state = SaveState::Idle;
+        self.quit = true;
+    }
+
+    pub fn ask_save_no(&mut self) {
+        self.save_state = SaveState::Idle;
+        self.quit = true;
+    }
+
+    pub fn ask_save_cancel(&mut self) {
+        self.save_state = SaveState::Idle;
+    }
+
+    pub fn ask_save_set_choice(&mut self, choice: AskChoice) {
+        if let SaveState::AskOnQuit { choice: c } = &mut self.save_state {
+            *c = choice;
+        }
+    }
+
+    pub fn ask_save_move_left(&mut self) {
+        if let SaveState::AskOnQuit { choice } = &mut self.save_state {
+            *choice = match choice {
+                AskChoice::Yes    => AskChoice::Cancel,
+                AskChoice::No     => AskChoice::Yes,
+                AskChoice::Cancel => AskChoice::No,
+            };
+        }
+    }
+
+    pub fn ask_save_move_right(&mut self) {
+        if let SaveState::AskOnQuit { choice } = &mut self.save_state {
+            *choice = match choice {
+                AskChoice::Yes    => AskChoice::No,
+                AskChoice::No     => AskChoice::Cancel,
+                AskChoice::Cancel => AskChoice::Yes,
+            };
+        }
+    }
+
+    // ── Password-entry dialog ─────────────────────────────────────────────────
+
+    pub fn password_entry_open(&mut self, purpose: PasswordPurpose) {
+        self.save_state = SaveState::PasswordEntry {
+            purpose,
+            buf:            String::new(),
+            cursor:         0,
+            confirm_buf:    String::new(),
+            confirm_active: false,
+            error:          None,
+        };
+    }
+
+    pub fn password_entry_char(&mut self, ch: char) {
+        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
+            if *confirm_active {
+                confirm_buf.push(ch);
+            } else {
+                let byte_pos = char_to_byte(buf, *cursor);
+                buf.insert(byte_pos, ch);
+                *cursor += 1;
+            }
+        }
+    }
+
+    pub fn password_entry_backspace(&mut self) {
+        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
+            if *confirm_active {
+                confirm_buf.pop();
+            } else if *cursor > 0 {
+                *cursor -= 1;
+                let byte_pos = char_to_byte(buf, *cursor);
+                buf.remove(byte_pos);
+            }
+        }
+    }
+
+    pub fn password_entry_tab(&mut self) {
+        if let SaveState::PasswordEntry { confirm_active, purpose, .. } = &mut self.save_state {
+            if *purpose != PasswordPurpose::Disable {
+                *confirm_active = !*confirm_active;
+            }
+        }
+    }
+
+    /// Confirm the password entry dialog.
+    /// Returns false and sets an error message if validation fails.
+    pub fn password_entry_confirm(&mut self) -> bool {
+        let (purpose, buf, confirm_buf) = match &self.save_state {
+            SaveState::PasswordEntry { purpose, buf, confirm_buf, .. } => {
+                (*purpose, buf.clone(), confirm_buf.clone())
+            }
+            _ => return false,
+        };
+
+        match purpose {
+            PasswordPurpose::Disable => {
+                self.session_password = None;
+                self.save_state = SaveState::Idle;
+                let _ = self.save();
+                true
+            }
+            PasswordPurpose::Enable | PasswordPurpose::Change => {
+                if buf.is_empty() {
+                    if let SaveState::PasswordEntry { error, .. } = &mut self.save_state {
+                        *error = Some("Password cannot be empty".to_string());
+                    }
+                    return false;
+                }
+                if buf != confirm_buf {
+                    if let SaveState::PasswordEntry { error, confirm_buf: cb, confirm_active, .. } = &mut self.save_state {
+                        *error  = Some("Passwords do not match".to_string());
+                        cb.clear();
+                        *confirm_active = true;
+                    }
+                    return false;
+                }
+                self.session_password = Some(buf);
+                self.save_state = SaveState::Idle;
+                let _ = self.save();
+                true
+            }
+        }
+    }
+
+    pub fn password_entry_cancel(&mut self) {
+        self.save_state = SaveState::Idle;
+    }
+
+    // ── Menu action dispatch ──────────────────────────────────────────────────
+
+    pub fn handle_file_save(&mut self) {
+        let _ = self.save();
+    }
+
+    pub fn handle_file_encryption(&mut self, action: MenuAction) {
+        match action {
+            MenuAction::FileEnableEncryption => {
+                if self.file_path.is_some() {
+                    self.password_entry_open(PasswordPurpose::Enable);
+                }
+            }
+            MenuAction::FileChangePassword => {
+                if self.file_path.is_some() && self.session_password.is_some() {
+                    self.password_entry_open(PasswordPurpose::Change);
+                }
+            }
+            MenuAction::FileDisableEncryption => {
+                if self.session_password.is_some() {
+                    self.password_entry_open(PasswordPurpose::Disable);
+                }
+            }
+            _ => {}
         }
     }
 }

@@ -2,6 +2,7 @@ use super::section::Section;
 use super::column::Column;
 use super::item::Item;
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct View {
     pub id:         usize,
     pub name:       String,

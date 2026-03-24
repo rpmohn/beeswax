@@ -1,10 +1,12 @@
 mod app;
 mod menu;
 mod model;
+mod persist;
 mod ui;
 
 use std::io;
 use std::io::Write;
+use std::path::PathBuf;
 use crossterm::{
     event::{
         self, Event,
@@ -23,14 +25,63 @@ use app::App;
 use ui::{input::handle_event, render::render};
 
 fn main() -> io::Result<()> {
-    // Setup terminal
+    // ── CLI arg parsing ───────────────────────────────────────────────────────
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut encrypt_flag = false;
+    let mut file_arg: Option<PathBuf> = None;
+
+    for arg in &args {
+        if arg == "--encrypt" {
+            encrypt_flag = true;
+        } else if !arg.starts_with('-') {
+            file_arg = Some(PathBuf::from(arg));
+        }
+    }
+
+    // ── Pre-TUI startup: load or create ──────────────────────────────────────
+    let mut app = if let Some(ref path) = file_arg {
+        if path.exists() {
+            // File exists: probe it
+            match persist::probe(path)? {
+                persist::LoadResult::Plain(data) => {
+                    App::from_save(data, Some(path.clone()), None)
+                }
+                persist::LoadResult::NeedsPassword => {
+                    // Encrypted: ask for password before entering TUI
+                    let password = read_password_pre_tui("Password: ")?;
+                    match persist::load_encrypted(path, &password) {
+                        Ok(data) => App::from_save(data, Some(path.clone()), Some(password)),
+                        Err(e) => {
+                            eprintln!("Error loading file: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+        } else if encrypt_flag {
+            // New file, encrypted: ask for password before TUI
+            let password = read_password_with_confirm_pre_tui()?;
+            let mut a = App::new();
+            a.file_path        = Some(path.clone());
+            a.session_password = Some(password);
+            a
+        } else {
+            // New plain file
+            let mut a = App::new();
+            a.file_path = Some(path.clone());
+            a
+        }
+    } else {
+        // No file arg → ephemeral (in-memory only)
+        App::new()
+    };
+
+    // ── Setup terminal ────────────────────────────────────────────────────────
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
 
     // Enable enhanced keyboard protocol if the terminal supports it.
-    // This allows modifier-only key events (Shift/Ctrl/Alt press and release)
-    // so the F-key bar can update live while a modifier is held.
     let enhanced = supports_keyboard_enhancement().unwrap_or(false);
     if enhanced {
         let _ = execute!(
@@ -44,8 +95,6 @@ fn main() -> io::Result<()> {
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
-    let mut app = App::new();
 
     loop {
         terminal.draw(|f| render(f, &app))?;
@@ -116,4 +165,45 @@ fn main() -> io::Result<()> {
     terminal.show_cursor()?;
 
     Ok(())
+}
+
+// ── Pre-TUI password prompts ──────────────────────────────────────────────────
+
+/// Read a password character-by-character with no echo.
+fn read_password_pre_tui(prompt: &str) -> io::Result<String> {
+    enable_raw_mode()?;
+    print!("{}", prompt);
+    io::stdout().flush()?;
+
+    let mut buf = String::new();
+    loop {
+        if event::poll(std::time::Duration::from_millis(200))? {
+            if let Event::Key(k) = event::read()? {
+                use crossterm::event::{KeyCode, KeyEventKind};
+                if !matches!(k.kind, KeyEventKind::Press) { continue; }
+                match k.code {
+                    KeyCode::Enter => break,
+                    KeyCode::Char(c) => { buf.push(c); }
+                    KeyCode::Backspace => { buf.pop(); }
+                    KeyCode::Esc => { buf.clear(); break; }
+                    _ => {}
+                }
+            }
+        }
+    }
+    disable_raw_mode()?;
+    println!();
+    Ok(buf)
+}
+
+/// Read a password with confirm prompt.
+fn read_password_with_confirm_pre_tui() -> io::Result<String> {
+    loop {
+        let pw1 = read_password_pre_tui("New password:     ")?;
+        let pw2 = read_password_pre_tui("Confirm password: ")?;
+        if pw1 == pw2 {
+            return Ok(pw1);
+        }
+        println!("Passwords do not match, try again.");
+    }
 }

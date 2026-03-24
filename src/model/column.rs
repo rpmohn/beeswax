@@ -1,13 +1,13 @@
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DateDisplay { Date, Time, DateTime }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Clock { Hr12, Hr24 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DateFmtCode { MMDDYY, DDMMYY, YYYYMMDD }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct DateFmt {
     pub display:   DateDisplay,
     pub show_dow:  bool,
@@ -33,7 +33,7 @@ impl Default for DateFmt {
 }
 
 /// Display format for a Standard-category column.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ColFormat {
     NameOnly,       // name of the assigned subcategory (default)
     ParentCategory, // "Parent:Name"
@@ -47,6 +47,7 @@ impl Default for ColFormat {
     fn default() -> Self { ColFormat::NameOnly }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Column {
     pub id:       usize,
     pub name:     String,   // "Column head" (category name)

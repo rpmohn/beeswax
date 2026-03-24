@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FKeyMod, MenuState, Mode, SectionInsert, SectionMode};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FKeyMod, MenuState, Mode, PasswordPurpose, SaveState, SectionInsert, SectionMode};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -35,9 +35,27 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
-    // Alt-Q always quits regardless of screen/mode
+    // Alt-Q — trigger quit (may show ask-save dialog)
     if modifiers.contains(KeyModifiers::ALT) && code == KeyCode::Char('q') {
-        app.quit = true;
+        app.trigger_quit();
+        return;
+    }
+
+    // Ctrl-S — save
+    if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('s') {
+        let _ = app.save();
+        return;
+    }
+
+    // Ask-save dialog takes priority
+    if matches!(app.save_state, SaveState::AskOnQuit { .. }) {
+        handle_ask_save(app, code);
+        return;
+    }
+
+    // Password-entry dialog takes priority
+    if matches!(app.save_state, SaveState::PasswordEntry { .. }) {
+        handle_password_entry(app, code);
         return;
     }
 
@@ -80,6 +98,12 @@ pub fn handle_event(app: &mut App, event: Event) {
     // SetTime modal takes priority
     if matches!(app.col_mode, ColMode::SetTime { .. }) {
         handle_col_set_time(app, code);
+        return;
+    }
+
+    // Sub-category picker (F3 on standard column) takes priority
+    if matches!(app.col_mode, ColMode::SubPick { .. }) {
+        handle_col_sub_pick(app, code);
         return;
     }
 
@@ -152,6 +176,64 @@ pub fn handle_event(app: &mut App, event: Event) {
             else if in_create { handle_catmgr_input(app, code) }
         }
     }
+    // Mark dirty after any key event that reached the main handlers.
+    // (Over-marks navigation keys, which is acceptable per spec.)
+    if app.file_path.is_some() {
+        app.dirty = true;
+    }
+}
+
+// ── Ask-save dialog handler ───────────────────────────────────────────────────
+
+fn handle_ask_save(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Left  => app.ask_save_move_left(),
+        KeyCode::Right => app.ask_save_move_right(),
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            app.ask_save_set_choice(AskChoice::Yes);
+            app.ask_save_confirm();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => {
+            app.ask_save_set_choice(AskChoice::No);
+            app.ask_save_no();
+        }
+        KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
+            app.ask_save_cancel();
+        }
+        KeyCode::Enter => {
+            let choice = if let SaveState::AskOnQuit { choice } = &app.save_state {
+                *choice
+            } else {
+                return;
+            };
+            match choice {
+                AskChoice::Yes    => app.ask_save_confirm(),
+                AskChoice::No     => app.ask_save_no(),
+                AskChoice::Cancel => app.ask_save_cancel(),
+            }
+        }
+        _ => {}
+    }
+}
+
+// ── Password-entry dialog handler ─────────────────────────────────────────────
+
+fn handle_password_entry(app: &mut App, code: KeyCode) {
+    // For Disable purpose, skip confirm — treat Enter as confirm directly.
+    let is_disable = matches!(
+        app.save_state,
+        SaveState::PasswordEntry { purpose: PasswordPurpose::Disable, .. }
+    );
+    match code {
+        KeyCode::Esc   => app.password_entry_cancel(),
+        KeyCode::Enter => { app.password_entry_confirm(); }
+        KeyCode::Tab   => {
+            if !is_disable { app.password_entry_tab(); }
+        }
+        KeyCode::Backspace => app.password_entry_backspace(),
+        KeyCode::Char(c)   => app.password_entry_char(c),
+        _ => {}
+    }
 }
 
 // ── View handlers ─────────────────────────────────────────────────────────────
@@ -176,8 +258,15 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2) | KeyCode::Enter => app.begin_edit(),
         KeyCode::F(3)   => {
-            if app.col_cursor == 0 { app.assign_open(); }
-            else                   { app.col_open_calendar(); }
+            if app.col_cursor == 0 {
+                app.assign_open();
+            } else {
+                let is_date = app.view.columns.get(app.col_cursor - 1)
+                    .map(|c| c.date_fmt.is_some())
+                    .unwrap_or(false);
+                if is_date { app.col_open_calendar(); }
+                else       { app.col_open_sub_pick(); }
+            }
         }
         KeyCode::F(5)   => app.open_note(),
         KeyCode::F(6)   => {
@@ -524,6 +613,18 @@ fn handle_item_confirm_delete(app: &mut App, code: KeyCode) {
             app.item_confirm_delete_confirm();
         }
         KeyCode::Char('n') | KeyCode::Char('N') => app.item_confirm_delete_cancel(),
+        _ => {}
+    }
+}
+
+// ── Sub-category picker handler ───────────────────────────────────────────────
+
+fn handle_col_sub_pick(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up              => app.col_sub_pick_up(),
+        KeyCode::Down            => app.col_sub_pick_down(),
+        KeyCode::Char(' ')       => app.col_sub_pick_toggle(),
+        KeyCode::Enter | KeyCode::Esc | KeyCode::F(3) => app.col_sub_pick_close(),
         _ => {}
     }
 }

@@ -1,12 +1,13 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
-use crate::app::{App, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos,
-                 MenuState, Mode, PropsField, SectionFormField, SectionInsert, SectionMode,
+use crate::app::{App, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
+                 CursorPos, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
+                 SectionFormField, SectionInsert, SectionMode,
                  TimeField, cat_note_indicator, col_autocomplete_match,
                  col_display_values, flatten_cats, format_date_value, section_item_indices};
 use crate::model::ColFormat;
@@ -62,7 +63,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(body_block, chunks[1]);
 
     // Column layout: left columns | main items column | right columns.
-    // Each added column occupies col.width + 1 chars (the +1 is the '|' separator).
+    // Each added column occupies col.width + 1 chars (the +1 is the '·' prefix).
     let total_body_w = body_inner.width as usize;
     let added_w: usize = app.view.columns.iter().map(|c| c.width + 1).sum();
     let main_col_w = total_body_w.saturating_sub(added_w);
@@ -94,7 +95,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let left_active  = if cursor_on_head { active_col.filter(|&i| i < lc) } else { None };
         let left_head_edit = head_cell_edit(left_active, &app.mode);
         let left_head_spans = col_cells(left_cols, &left_head_vals,
-                                        left_active, left_head_edit, None);
+                                        left_active, left_head_edit, None, "");
 
         // Main column content
         let pfx_w      = SECTION_PREFIX.chars().count();
@@ -143,7 +144,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let right_active = if cursor_on_head { active_col.filter(|&i| i >= lc).map(|i| i - lc) } else { None };
         let right_head_edit = head_cell_edit(right_active.map(|i| i + lc), &app.mode);
         let right_head_spans = col_cells(right_cols, &right_head_vals,
-                                         right_active, right_head_edit, None);
+                                         right_active, right_head_edit, None, "");
 
         let mut row = left_head_spans;
         row.extend(head_spans);
@@ -156,10 +157,10 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let empty: Vec<String> = app.view.columns.iter().map(|_| String::new()).collect();
                 let left_empty  = &empty[..lc];
                 let right_empty = &empty[lc..];
-                let mut spans = col_cells(left_cols, left_empty, None, None, None);
+                let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}");
                 spans.extend(input_row_spans(buffer, *cursor));
                 if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
-                spans.extend(col_cells(right_cols, right_empty, None, None, None));
+                spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}"));
                 lines.push(Line::from(spans));
             }
         }
@@ -254,7 +255,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
                 let left_item_spans = col_cells(left_cols, &left_vals_row,
                                                 left_active, left_edit,
-                                                hint_ref.filter(|_| left_active.is_some()));
+                                                hint_ref.filter(|_| left_active.is_some()), "\u{00B7}");
 
                 // Main column content: item text on row 0, blank on subsequent rows.
                 let mut item_spans: Vec<Span<'static>> = if row_i == 0 && cursor_on_item {
@@ -294,7 +295,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
                 let right_item_spans = col_cells(right_cols, &right_vals_row,
                                                  right_active, right_edit,
-                                                 hint_ref.filter(|_| right_active.is_some()));
+                                                 hint_ref.filter(|_| right_active.is_some()), "\u{00B7}");
 
                 let mut row = left_item_spans;
                 row.extend(item_spans);
@@ -308,10 +309,10 @@ pub fn render(frame: &mut Frame, app: &App) {
                     let empty: Vec<String> = app.view.columns.iter().map(|_| String::new()).collect();
                     let left_empty  = &empty[..lc];
                     let right_empty = &empty[lc..];
-                    let mut spans = col_cells(left_cols, left_empty, None, None, None);
+                    let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}");
                     spans.extend(input_row_spans(buffer, *cursor));
                     if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
-                    spans.extend(col_cells(right_cols, right_empty, None, None, None));
+                    spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}"));
                     lines.push(Line::from(spans));
                 }
             }
@@ -850,6 +851,98 @@ pub fn render(frame: &mut Frame, app: &App) {
         ]), inner);
     }
 
+    // ── Sub-category picker (F3 on standard column) ───────────────────────────
+    if let ColMode::SubPick { col_idx, picker_cursor } = &app.col_mode {
+        let col_idx       = *col_idx;
+        let picker_cursor = *picker_cursor;
+
+        // Build the list: column head first, then all descendants.
+        let all_cats  = flatten_cats(&app.categories);
+        let head_id   = app.view.columns.get(col_idx).map(|c| c.cat_id).unwrap_or(0);
+        let head_entry = all_cats.iter().find(|e| e.id == head_id);
+        let (head_path, head_depth) = match head_entry {
+            Some(h) => (h.path.clone(), h.depth),
+            None    => return,
+        };
+        let flat_subs: Vec<&crate::app::FlatCat> = all_cats.iter()
+            .filter(|e| e.id == head_id || e.path.starts_with(&head_path))
+            .collect();
+
+        // Current item: global index and its assigned values.
+        let (item_text, item_vals, cond_cats) = match &app.cursor {
+            CursorPos::Item { section, item } => {
+                let gi = section_item_indices(&app.view, *section, &app.categories)
+                    .get(*item).copied();
+                let it = gi.and_then(|gi| app.view.items.get(gi));
+                (
+                    it.map(|i| i.text.as_str()).unwrap_or(""),
+                    it.map(|i| &i.values),
+                    it.map(|i| &i.cond_cats),
+                )
+            }
+            _ => ("", None, None),
+        };
+        let empty_vals  = std::collections::HashMap::new();
+        let empty_conds = std::collections::HashSet::new();
+        let item_vals   = item_vals.unwrap_or(&empty_vals);
+        let cond_cats   = cond_cats.unwrap_or(&empty_conds);
+
+        let rev  = Style::default().add_modifier(Modifier::REVERSED);
+        let bold = Style::default().add_modifier(Modifier::BOLD);
+
+        // Scroll window: same 16-row limit as Assignment Profile.
+        let visible = flat_subs.len().min(16);
+        let start   = if picker_cursor >= visible { picker_cursor - visible + 1 } else { 0 };
+
+        let box_h    = (visible + 3) as u16;   // border×2 + header + rows (no inline help)
+        let box_w    = 50u16;
+        let dlg_rect = centered_rect(box_w, box_h, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title_top(Line::from(" Select Category ").alignment(Alignment::Center))
+            .title_bottom(Line::from(" Press ENTER to accept ").alignment(Alignment::Center));
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+
+        // Header line: bold description.
+        let header = format!(" Select categories for \"{}\"", item_text);
+        let mut cat_lines: Vec<Line<'static>> = vec![
+            Line::from(Span::styled(header, bold)),
+        ];
+
+        for (i, e) in flat_subs.iter().enumerate().skip(start).take(visible) {
+            let assigned = item_vals.contains_key(&e.id);
+            let is_cond  = cond_cats.contains(&e.id);
+            let marker   = match (assigned, is_cond) {
+                (true,  true)  => "*c",
+                (true,  false) => "* ",
+                (false, _)     => "  ",
+            };
+            let note_ind = cat_note_indicator(&app.categories, e.id);
+            let type_ind = match e.kind {
+                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
+                CategoryKind::Date      => "*",
+                CategoryKind::Numeric   => "#",
+                CategoryKind::Unindexed => "\u{25A1}",
+            };
+            // Indent relative to the column head (head = 0, children = 1, etc.).
+            let rel_depth = e.depth.saturating_sub(head_depth);
+            let indent    = "  ".repeat(rel_depth);
+            let highlighted = i == picker_cursor;
+            cat_lines.push(Line::from(vec![
+                Span::raw(format!(" {}\u{2502}{} {}", marker, type_ind, indent)),
+                if highlighted {
+                    Span::styled(e.name.clone(), rev)
+                } else {
+                    Span::raw(e.name.clone())
+                },
+            ]));
+        }
+
+        frame.render_widget(Paragraph::new(cat_lines), inner);
+    }
+
     // ── Item Properties modal ─────────────────────────────────────────────────
     if let Mode::ItemProps { gi, cursor, edit_buf } = &app.mode {
         let gi       = *gi;
@@ -1286,6 +1379,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
 
     }
+
 }
 
 /// Compute a centred Rect of `width` × `height` inside `area`.
@@ -1322,7 +1416,7 @@ fn head_cell_edit<'a>(active_col: Option<usize>, mode: &'a Mode) -> Option<(&'a 
     }
 }
 
-/// Append `| cell` for each column in `columns`.
+/// Append `· cell` for each column in `columns`.
 /// `values` must have the same length as `columns`.
 /// `active_col` (0-indexed within `columns`) highlights that cell.
 /// `cell_edit` supplies (buffer, cursor) to show an edit cursor in the active cell.
@@ -1333,25 +1427,37 @@ fn col_cells(
     active_col: Option<usize>,
     cell_edit: Option<(&str, usize)>,
     autocomplete_hint: Option<&str>,
+    prefix: &'static str,
 ) -> Vec<Span<'static>> {
+    let prefix_w = prefix.chars().count();
     let mut spans = Vec::new();
     for (i, (col, val)) in columns.iter().zip(values.iter()).enumerate() {
-        spans.push(Span::raw("|"));
         let display_val = if let Some(ref fmt) = col.date_fmt {
             format_date_value(val, fmt)
         } else {
             val.clone()
         };
+        let editing = active_col == Some(i) && cell_edit.is_some();
+        // Show the prefix dot only when there is actual content or the cell is being edited.
+        let show_prefix = !prefix.is_empty() && (!display_val.is_empty() || editing);
+        let text_w = if show_prefix {
+            col.width.saturating_sub(prefix_w)
+        } else {
+            col.width
+        };
+        if show_prefix {
+            spans.push(Span::raw(prefix));
+        }
         if active_col == Some(i) {
             if let Some((buf, cur)) = cell_edit {
                 let hint = if cell_edit.is_some() { autocomplete_hint } else { None };
-                spans.extend(cell_edit_spans(buf, cur, col.width, hint));
+                spans.extend(cell_edit_spans(buf, cur, text_w, hint));
             } else {
-                let cell = pad_or_trunc(&display_val, col.width);
+                let cell = pad_or_trunc(&display_val, text_w);
                 spans.push(Span::styled(cell, Style::default().add_modifier(Modifier::REVERSED)));
             }
         } else {
-            let cell = pad_or_trunc(&display_val, col.width);
+            let cell = pad_or_trunc(&display_val, text_w);
             spans.push(Span::raw(cell));
         }
     }
@@ -1441,4 +1547,119 @@ fn cal_first_dow(year: i32, month: u32) -> u32 {
     static T: [i64; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
     let y = if month < 3 { year as i64 - 1 } else { year as i64 };
     ((y + y / 4 - y / 100 + y / 400 + T[month as usize - 1] + 1).rem_euclid(7)) as u32
+}
+
+// ── Ask-save dialog ───────────────────────────────────────────────────────────
+
+pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
+    let SaveState::AskOnQuit { choice } = &app.save_state else { return };
+
+    let dlg = centered_rect(46, 7, area);
+    frame.render_widget(Clear, dlg);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Save Changes? ");
+    frame.render_widget(block.clone(), dlg);
+    let inner = block.inner(dlg);
+
+    let rev = Style::default().add_modifier(Modifier::REVERSED);
+
+    let yes_style    = if *choice == AskChoice::Yes    { rev } else { Style::default() };
+    let no_style     = if *choice == AskChoice::No     { rev } else { Style::default() };
+    let cancel_style = if *choice == AskChoice::Cancel { rev } else { Style::default() };
+
+    let btn_line = Line::from(vec![
+        Span::raw("     "),
+        Span::styled("[ Yes ]", yes_style),
+        Span::raw("      "),
+        Span::styled("No", no_style),
+        Span::raw("       "),
+        Span::styled("Cancel", cancel_style),
+    ]);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from("  Save changes before quitting?"),
+        Line::from(""),
+        btn_line,
+        Line::from(""),
+    ];
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Password-entry dialog ─────────────────────────────────────────────────────
+
+pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
+    let SaveState::PasswordEntry { purpose, buf, confirm_buf, confirm_active, error, .. } = &app.save_state
+    else { return };
+
+    let title = match purpose {
+        PasswordPurpose::Enable  => " Enable Encryption ",
+        PasswordPurpose::Change  => " Change Password ",
+        PasswordPurpose::Disable => " Disable Encryption ",
+    };
+
+    let need_confirm = *purpose != PasswordPurpose::Disable;
+    let dlg_h: u16 = if need_confirm { 9 } else { 7 };
+
+    let dlg = centered_rect(50, dlg_h, area);
+    frame.render_widget(Clear, dlg);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .title(title);
+    frame.render_widget(block.clone(), dlg);
+    let inner = block.inner(dlg);
+
+    let fw = inner.width.saturating_sub(14) as usize;  // field width
+
+    let stars: String = "*".repeat(buf.chars().count());
+    let pw_field = format!("{:<width$}", stars, width = fw);
+    let pw_style = if !*confirm_active {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default()
+    };
+    let pw_line = Line::from(vec![
+        Span::raw("  Password:  ["),
+        Span::styled(pw_field, pw_style),
+        Span::raw("]"),
+    ]);
+
+    let mut lines = vec![Line::from(""), pw_line];
+
+    if need_confirm {
+        let cf_stars: String = "*".repeat(confirm_buf.chars().count());
+        let cf_field = format!("{:<width$}", cf_stars, width = fw);
+        let cf_style = if *confirm_active {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        let cf_line = Line::from(vec![
+            Span::raw("  Confirm:   ["),
+            Span::styled(cf_field, cf_style),
+            Span::raw("]"),
+        ]);
+        lines.push(cf_line);
+    }
+
+    lines.push(Line::from(""));
+
+    if let Some(err) = error {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", err),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+    } else {
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from("  \u{2500}\u{2500}\u{2500} ENTER to confirm, ESC to cancel \u{2500}\u{2500}\u{2500}"));
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
