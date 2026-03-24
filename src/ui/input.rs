@@ -83,6 +83,12 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // Item Properties modal takes priority
+    if matches!(app.mode, Mode::ItemProps { .. }) {
+        handle_item_props(app, code);
+        return;
+    }
+
     // Remove-item confirmation takes priority
     if matches!(app.mode, Mode::ConfirmDeleteItem { .. }) {
         handle_item_confirm_delete(app, code);
@@ -174,7 +180,13 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             else                   { app.col_open_calendar(); }
         }
         KeyCode::F(5)   => app.open_note(),
-        KeyCode::F(6)   => app.col_open_props(),
+        KeyCode::F(6)   => {
+            if app.col_cursor == 0 && matches!(app.cursor, CursorPos::Item { .. }) {
+                app.item_open_props();
+            } else {
+                app.col_open_props();
+            }
+        }
         KeyCode::Delete => {
             if app.col_cursor == 0 {
                 match app.cursor {
@@ -463,6 +475,39 @@ fn handle_col_set_time(app: &mut App, code: KeyCode) {
         KeyCode::Right     => app.col_set_time_right(),
         KeyCode::Backspace => app.col_set_time_backspace(),
         KeyCode::Char(ch)  => app.col_set_time_input_char(ch),
+        _ => {}
+    }
+}
+
+// ── Item Properties modal handler ────────────────────────────────────────────
+
+fn handle_item_props(app: &mut App, code: KeyCode) {
+    // When in-place text editing is active, route to text-edit sub-handler.
+    let editing = matches!(&app.mode, Mode::ItemProps { edit_buf: Some(_), .. });
+    if editing {
+        match code {
+            KeyCode::Enter                  => app.item_props_text_confirm(),
+            KeyCode::Esc                    => app.item_props_cancel(),
+            KeyCode::Left                   => app.item_props_text_cursor_left(),
+            KeyCode::Right                  => app.item_props_text_cursor_right(),
+            KeyCode::Backspace              => app.item_props_text_backspace(),
+            KeyCode::Delete                 => app.item_props_text_delete(),
+            KeyCode::Char(ch)               => app.item_props_text_input_char(ch),
+            _ => {}
+        }
+        return;
+    }
+    match code {
+        KeyCode::Esc                        => app.item_props_cancel(),
+        KeyCode::Enter | KeyCode::F(2)      => app.item_props_edit(),
+        KeyCode::F(3)                       => app.item_props_choices(),
+        KeyCode::Up                         => app.item_props_cursor_up(),
+        KeyCode::Down                       => app.item_props_cursor_down(),
+        KeyCode::Home                       => app.item_props_cursor_home(),
+        KeyCode::End                        => app.item_props_cursor_end(),
+        KeyCode::PageUp                     => app.item_props_cursor_pgup(10),
+        KeyCode::PageDown                   => app.item_props_cursor_pgdn(10),
+        KeyCode::Delete                     => app.item_props_remove(),
         _ => {}
     }
 }

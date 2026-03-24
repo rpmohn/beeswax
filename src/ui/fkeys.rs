@@ -71,6 +71,13 @@ static QUICK_ADD_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "",     "", "", "", "",      "", "", "", ""],
 };
 
+static ITEM_PROPS_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Edit", "Choices", "", "", "Props", "", "Default", "", ""],
+    shift:  ["",     "",     "",        "", "", "",      "", "",         "", ""],
+    ctrl:   ["",     "",     "",        "", "", "",      "", "",         "", ""],
+    alt:    ["",     "",     "",        "", "", "",      "", "",         "", ""],
+};
+
 static MENU_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "", "", "", "", "", "", "", "", ""],
     shift:  ["",     "", "", "", "", "", "", "", "", ""],
@@ -102,6 +109,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &ASSIGN_FKEYS
     } else if matches!(app.sec_mode, SectionMode::Add { .. } | SectionMode::Choices { .. } | SectionMode::ConfirmRemove { .. }) {
         &MENU_FKEYS   // section dialogs are self-describing
+    } else if matches!(app.mode, Mode::ItemProps { .. }) {
+        &ITEM_PROPS_FKEYS
     } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. }) {
         &MENU_FKEYS   // item delete dialog is self-describing
     } else if matches!(app.col_mode, ColMode::QuickAdd { .. }) {

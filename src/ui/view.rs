@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use crate::app::{App, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos, CursorPos,
                  MenuState, Mode, PropsField, SectionFormField, SectionInsert, SectionMode,
@@ -31,9 +31,24 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Title bar / Menu bar (2 lines) ───────────────────────────────────
     if matches!(app.menu, MenuState::Closed) {
+        let second_line = if let Mode::ItemProps { cursor, edit_buf, .. } = &app.mode {
+            if edit_buf.is_some() {
+                " Type to edit. Press ENTER to save, ESC to cancel.".to_string()
+            } else {
+                match cursor {
+                    0 => " Press F2 to edit the item text.",
+                    1 => " Press F2 to edit the note.",
+                    2 => " Press F2 to edit the note file.",
+                    3 => " Item statistics are read-only.",
+                    _ => " Press F2 to edit. Del to remove assignment.",
+                }.to_string()
+            }
+        } else {
+            format!(" View: {}", app.view.name)
+        };
         let title = Paragraph::new(vec![
             Line::from(Span::raw(title_bar_top(area.width))),
-            Line::from(Span::raw(format!(" View: {}", app.view.name))),
+            Line::from(Span::raw(second_line)),
         ])
         .style(Style::default().add_modifier(Modifier::REVERSED));
         frame.render_widget(title, chunks[0]);
@@ -264,7 +279,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Mode::Edit { .. } =>
                             vec![Span::raw(item_pfx),
                                  Span::styled(item_text.clone(), Style::default().add_modifier(Modifier::BOLD))],
-                        Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } =>
+                        Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ItemProps { .. } =>
                             vec![Span::raw(item_pfx), Span::raw(item_text.clone())],
                     }
                 } else if row_i == 0 {
@@ -833,6 +848,131 @@ pub fn render(frame: &mut Frame, app: &App) {
             Line::from(""),
             help_line,
         ]), inner);
+    }
+
+    // ── Item Properties modal ─────────────────────────────────────────────────
+    if let Mode::ItemProps { gi, cursor, edit_buf } = &app.mode {
+        let gi       = *gi;
+        let cursor   = *cursor;
+        let edit_buf = edit_buf.clone();
+        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+
+        let item = match app.view.items.get(gi) { Some(it) => it, None => return };
+
+        // Build sorted assigned list.
+        let assigned = app.item_props_assigned(gi);
+
+        // Note field value: first line of note text (or placeholder if empty).
+        let note_text = item.note.clone();
+        let note_display = {
+            let first_line = note_text.lines().next().unwrap_or("");
+            if first_line.is_empty() { "...".to_string() } else { first_line.to_string() }
+        };
+
+        // Modal size: fixed rows + assigned list rows (min 1).
+        let n = assigned.len();
+        let max_inner = area.height.saturating_sub(4) as usize;
+        let list_h    = n.max(1).min(max_inner.saturating_sub(9));
+        let modal_h   = (2 + 8 + list_h) as u16;
+        let modal_w   = 58u16;
+        let modal_rect = centered_rect(modal_w, modal_h, area);
+        frame.render_widget(Clear, modal_rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Double)
+            .title(" Item Properties ");
+        frame.render_widget(block.clone(), modal_rect);
+        let inner = block.inner(modal_rect);
+        let iw = inner.width as usize;
+
+        // Field value width: iw minus label width (longest label = "  Item statistics:   " = 21).
+        // We right-pad each value to fill the remaining width when active.
+        let fval = |label: &str, val: &str, active: bool| -> Line<'static> {
+            let label_len = label.chars().count();
+            let val_w = iw.saturating_sub(label_len);
+            let displayed: String = val.chars().take(val_w).collect();
+            let padded = format!("{:<width$}", displayed, width = val_w);
+            Line::from(vec![
+                Span::raw(label.to_string()),
+                if active { Span::styled(padded, rev) } else { Span::raw(displayed) },
+            ])
+        };
+
+        // Scroll offset for the assigned list (only when cursor >= 4).
+        let list_cursor = cursor.saturating_sub(4);
+        let list_offset = if cursor >= 4 && list_cursor >= list_h {
+            list_cursor - list_h + 1
+        } else { 0 };
+
+        // Helper: compact date format MM/DD/YY H:MMam/pm from stored YYYY-MM-DD HH:MM:SS.
+        let fmt_date = |stored: &str| -> String {
+            if let Some((y, mo, d, h, mi, _)) = crate::app::parse_datetime(stored) {
+                let yy  = y % 100;
+                let (h12, ampm) = if h == 0 { (12u32, "am") }
+                                  else if h < 12 { (h, "am") }
+                                  else if h == 12 { (12u32, "pm") }
+                                  else { (h - 12, "pm") };
+                format!("{:02}/{:02}/{:02} {}:{:02}{}", mo, d, yy, h12, mi, ampm)
+            } else {
+                stored.to_string()
+            }
+        };
+
+        // Build Item text row — shows editing cursor when edit_buf is active.
+        let item_text_line = if let Some((buf, cur)) = &edit_buf {
+            let label = "  Item text:   ";
+            let label_len = label.chars().count();
+            let val_w = iw.saturating_sub(label_len);
+            let (left, hi, right) = crate::ui::cursor_split(buf, *cur);
+            let left: String  = left.chars().take(val_w).collect();
+            let hi: String    = hi.chars().next().map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
+            let take_right = val_w.saturating_sub(left.chars().count() + 1);
+            let right: String = right.chars().take(take_right).collect();
+            Line::from(vec![
+                Span::raw(label.to_string()),
+                Span::raw(left),
+                Span::styled(hi, rev),
+                Span::raw(right),
+            ])
+        } else {
+            fval("  Item text:   ", &item.text, cursor == 0)
+        };
+
+        let mut lines: Vec<Line> = vec![
+            Line::from(""),
+            item_text_line,
+            fval("  Note:        ", &note_display,     cursor == 1),
+            fval("  Note file:   ", &item.note_file,  cursor == 2),
+            fval("  Item statistics:   ", "...",      cursor == 3),
+            Line::from(Span::raw("  Assigned to:")),
+        ];
+
+        if n == 0 {
+            lines.push(Line::from(Span::styled("    (none)", dim)));
+        } else {
+            for (i, (_, name, kind, val)) in assigned.iter().enumerate().skip(list_offset).take(list_h) {
+                let entry = if *kind == CategoryKind::Date && !val.is_empty() {
+                    format!("  {}({})", name, fmt_date(val))
+                } else {
+                    format!("  {}", name)
+                };
+                let highlighted = cursor >= 4 && i == list_cursor;
+                let entry: String = entry.chars().take(iw.saturating_sub(2)).collect();
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    if highlighted { Span::styled(entry, rev) } else { Span::raw(entry) },
+                ]));
+            }
+        }
+
+        lines.push(Line::from(""));
+        let footer = "\u{2550}\u{2550}\u{2550} Press ENTER when done, ESC to cancel \u{2550}\u{2550}\u{2550}";
+        let fpad = iw.saturating_sub(footer.chars().count()) / 2;
+        lines.push(Line::from(Span::raw(format!("{}{}", " ".repeat(fpad), footer))));
+
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 
     // ── Remove-item confirmation modal ────────────────────────────────────────

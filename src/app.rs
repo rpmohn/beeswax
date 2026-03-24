@@ -28,6 +28,10 @@ pub enum Mode {
     Create { buffer: String, cursor: usize },
     /// "Remove this item from the section?" confirmation dialog.
     ConfirmDeleteItem { yes: bool },
+    /// Item Properties modal (F6 on an item in the main column).
+    /// cursor: 0=Item text, 1=Note, 2=Note file, 3=Item statistics, 4+=assigned list
+    /// edit_buf: Some((buffer, cur)) when in-place text editing is active (cursor==0 only)
+    ItemProps { gi: usize, cursor: usize, edit_buf: Option<(String, usize)> },
 }
 
 // ── CatMgr state ──────────────────────────────────────────────────────────────
@@ -1531,7 +1535,7 @@ impl App {
                     Some(local) => indices.get(local).map(|&g| g + 1).unwrap_or(self.view.items.len()),
                     None        => indices.first().copied().unwrap_or(self.view.items.len()),
                 };
-                self.view.items.insert(global_pos, Item { id, text, values, cond_cats, note: String::new() });
+                self.view.items.insert(global_pos, Item { id, text, values, cond_cats, note: String::new(), note_file: String::new() });
                 // Local index is position within section after insertion.
                 let new_local = section_item_indices(&self.view, sec_idx, &self.categories)
                     .iter().position(|&g| g == global_pos).unwrap_or(0);
@@ -1606,7 +1610,7 @@ impl App {
                     }
                 }
             }
-            Mode::Normal | Mode::ConfirmDeleteItem { .. } => {}
+            Mode::Normal | Mode::ConfirmDeleteItem { .. } | Mode::ItemProps { .. } => {}
         }
     }
 
@@ -1708,6 +1712,223 @@ impl App {
     pub fn item_confirm_delete_cancel(&mut self) {
         if matches!(self.mode, Mode::ConfirmDeleteItem { .. }) {
             self.mode = Mode::Normal;
+        }
+    }
+
+    // ── Item Properties modal ─────────────────────────────────────────────────
+
+    pub fn item_open_props(&mut self) {
+        if self.col_cursor != 0 { return; }
+        if !matches!(self.mode, Mode::Normal) { return; }
+        if let CursorPos::Item { section, item } = self.cursor {
+            if let Some(gi) = self.global_item_idx(section, item) {
+                self.mode = Mode::ItemProps { gi, cursor: 0, edit_buf: None };
+            }
+        }
+    }
+
+    pub fn item_props_cancel(&mut self) {
+        match &mut self.mode {
+            // If editing text in-place, Esc cancels only the edit, not the whole modal.
+            Mode::ItemProps { edit_buf, .. } if edit_buf.is_some() => {
+                *edit_buf = None;
+            }
+            Mode::ItemProps { .. } => { self.mode = Mode::Normal; }
+            _ => {}
+        }
+    }
+
+    /// Enter in-place text edit for the Item text field (cursor == 0).
+    pub fn item_props_begin_text_edit(&mut self) {
+        if let Mode::ItemProps { gi, cursor, edit_buf } = &mut self.mode {
+            if *cursor != 0 { return; }
+            if edit_buf.is_some() { return; }
+            let text = self.view.items.get(*gi)
+                .map(|it| it.text.clone()).unwrap_or_default();
+            let len = text.chars().count();
+            *edit_buf = Some((text, len)); // cursor at end
+        }
+    }
+
+    pub fn item_props_text_confirm(&mut self) {
+        let (gi, buf) = match &self.mode {
+            Mode::ItemProps { gi, edit_buf: Some((buf, _)), .. } => (*gi, buf.clone()),
+            _ => return,
+        };
+        let trimmed = buf.trim().to_string();
+        if !trimmed.is_empty() {
+            if let Some(item) = self.view.items.get_mut(gi) {
+                item.text = trimmed;
+            }
+        }
+        if let Mode::ItemProps { edit_buf, .. } = &mut self.mode {
+            *edit_buf = None;
+        }
+    }
+
+    pub fn item_props_text_input_char(&mut self, ch: char) {
+        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+            let byte_pos: usize = buf.char_indices().nth(*cur).map(|(i,_)| i).unwrap_or(buf.len());
+            buf.insert(byte_pos, ch);
+            *cur += 1;
+        }
+    }
+
+    pub fn item_props_text_backspace(&mut self) {
+        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+            if *cur > 0 {
+                *cur -= 1;
+                let byte_pos = buf.char_indices().nth(*cur).map(|(i,_)| i).unwrap_or(buf.len());
+                buf.remove(byte_pos);
+            }
+        }
+    }
+
+    pub fn item_props_text_delete(&mut self) {
+        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+            let len = buf.chars().count();
+            if *cur < len {
+                let byte_pos = buf.char_indices().nth(*cur).map(|(i,_)| i).unwrap_or(buf.len());
+                buf.remove(byte_pos);
+            }
+        }
+    }
+
+    pub fn item_props_text_cursor_left(&mut self) {
+        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode {
+            if *cur > 0 { *cur -= 1; }
+        }
+    }
+
+    pub fn item_props_text_cursor_right(&mut self) {
+        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+            if *cur < buf.chars().count() { *cur += 1; }
+        }
+    }
+
+    /// Build sorted assigned-category list: (cat_id, name, kind, stored_value).
+    pub fn item_props_assigned(&self, gi: usize) -> Vec<(usize, String, CategoryKind, String)> {
+        let flat = flatten_cats(&self.categories);
+        let item = match self.view.items.get(gi) { Some(it) => it, None => return vec![] };
+        let mut list: Vec<(usize, String, CategoryKind, String)> = item.values.keys()
+            .filter_map(|id| flat.iter().find(|e| e.id == *id).map(|e|
+                (*id, e.name.clone(), e.kind, item.values[id].clone())
+            ))
+            .collect();
+        list.sort_by(|a, b| a.1.cmp(&b.1));
+        list
+    }
+
+    pub fn item_props_max_cursor(&self, gi: usize) -> usize {
+        let n = self.item_props_assigned(gi).len();
+        // 4 fixed fields + assigned list; min cursor max is 3 (Statistics)
+        if n == 0 { 3 } else { 3 + n }
+    }
+
+    pub fn item_props_cursor_up(&mut self) {
+        if let Mode::ItemProps { cursor, .. } = &mut self.mode {
+            if *cursor > 0 { *cursor -= 1; }
+        }
+    }
+
+    pub fn item_props_cursor_down(&mut self) {
+        let (gi, cur) = match &self.mode {
+            Mode::ItemProps { gi, cursor, .. } => (*gi, *cursor),
+            _ => return,
+        };
+        let max = self.item_props_max_cursor(gi);
+        if let Mode::ItemProps { cursor, .. } = &mut self.mode {
+            if cur < max { *cursor = cur + 1; }
+        }
+    }
+
+    pub fn item_props_cursor_home(&mut self) {
+        if let Mode::ItemProps { cursor, .. } = &mut self.mode { *cursor = 0; }
+    }
+
+    pub fn item_props_cursor_end(&mut self) {
+        let gi = match &self.mode { Mode::ItemProps { gi, .. } => *gi, _ => return };
+        let max = self.item_props_max_cursor(gi);
+        if let Mode::ItemProps { cursor, .. } = &mut self.mode { *cursor = max; }
+    }
+
+    pub fn item_props_cursor_pgup(&mut self, page: usize) {
+        if let Mode::ItemProps { cursor, .. } = &mut self.mode {
+            *cursor = cursor.saturating_sub(page);
+        }
+    }
+
+    pub fn item_props_cursor_pgdn(&mut self, page: usize) {
+        let (gi, cur) = match &self.mode {
+            Mode::ItemProps { gi, cursor, .. } => (*gi, *cursor),
+            _ => return,
+        };
+        let max = self.item_props_max_cursor(gi);
+        if let Mode::ItemProps { cursor, .. } = &mut self.mode {
+            *cursor = (cur + page).min(max);
+        }
+    }
+
+    /// F2/Enter: act on the current field.
+    /// - Item text: close and begin edit
+    /// - Note: close and open note editor
+    /// - Assigned Date category (4+): close and open calendar if column exists
+    pub fn item_props_edit(&mut self) {
+        let (gi, cur) = match &self.mode {
+            Mode::ItemProps { gi, cursor, .. } => (*gi, *cursor),
+            _ => return,
+        };
+        match cur {
+            0 => { self.item_props_begin_text_edit(); return; }
+            1 => { self.pending_note = Some(NoteTarget::Item(gi)); }
+            c if c >= 4 => {
+                let list = self.item_props_assigned(gi);
+                if let Some((cat_id, _, kind, _)) = list.get(c - 4) {
+                    if *kind == CategoryKind::Date {
+                        if let Some(col_idx) = self.view.columns.iter().position(|c| c.cat_id == *cat_id) {
+                            self.mode = Mode::Normal;
+                            self.col_cursor = col_idx + 1;
+                            self.col_open_calendar();
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// F3: Note field → open note editor (modal stays open); other fields → open Assignment Profile.
+    pub fn item_props_choices(&mut self) {
+        let (gi, cur) = match &self.mode {
+            Mode::ItemProps { gi, cursor, .. } => (*gi, *cursor),
+            _ => return,
+        };
+        if cur == 1 {
+            self.pending_note = Some(NoteTarget::Item(gi));
+        } else {
+            self.mode = Mode::Normal;
+            self.assign_open();
+        }
+    }
+
+    /// Del: remove the selected assignment (only valid when cursor >= 4).
+    pub fn item_props_remove(&mut self) {
+        let (gi, cur) = match &self.mode {
+            Mode::ItemProps { gi, cursor, .. } => (*gi, *cursor),
+            _ => return,
+        };
+        if cur < 4 { return; }
+        let list = self.item_props_assigned(gi);
+        if let Some((cat_id, _, _, _)) = list.get(cur - 4) {
+            let cat_id = *cat_id;
+            if let Some(item) = self.view.items.get_mut(gi) {
+                item.values.remove(&cat_id);
+                item.cond_cats.remove(&cat_id);
+            }
+        }
+        let new_max = self.item_props_max_cursor(gi);
+        if let Mode::ItemProps { cursor, .. } = &mut self.mode {
+            *cursor = (*cursor).min(new_max);
         }
     }
 
