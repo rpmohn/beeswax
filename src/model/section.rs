@@ -78,6 +78,23 @@ impl SortSeq {
     pub const ALL: [SortSeq; 4] = [SortSeq::CategoryHierarchy, SortSeq::Alphabetic, SortSeq::Numeric, SortSeq::Date];
 }
 
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, Default)]
+pub enum SortNa {
+    #[default]
+    Bottom,
+    Top,
+}
+
+impl SortNa {
+    pub fn label(self) -> &'static str {
+        match self {
+            SortNa::Bottom => "Bottom of section",
+            SortNa::Top    => "Top of section",
+        }
+    }
+    pub const ALL: [SortNa; 2] = [SortNa::Bottom, SortNa::Top];
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Section {
     pub id:     usize,
@@ -86,10 +103,12 @@ pub struct Section {
     #[serde(default)] pub sort_new:          SortNewItems,
     #[serde(default)] pub primary_on:        SortOn,
     #[serde(default)] pub primary_order:     SortOrder,
+    #[serde(default)] pub primary_na:        SortNa,
     #[serde(default)] pub primary_cat_id:    Option<usize>,
     #[serde(default)] pub primary_seq:       SortSeq,
     #[serde(default)] pub secondary_on:      SortOn,
     #[serde(default)] pub secondary_order:   SortOrder,
+    #[serde(default)] pub secondary_na:      SortNa,
     #[serde(default)] pub secondary_cat_id:  Option<usize>,
     #[serde(default)] pub secondary_seq:     SortSeq,
 }

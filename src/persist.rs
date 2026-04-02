@@ -119,9 +119,9 @@ fn clone_view(view: &View) -> View {
             name:             s.name.clone(),
             cat_id:           s.cat_id,
             sort_new:         s.sort_new,
-            primary_on:       s.primary_on,   primary_order:    s.primary_order,
+            primary_on:       s.primary_on,   primary_order:   s.primary_order,  primary_na:   s.primary_na,
             primary_cat_id:   s.primary_cat_id, primary_seq:   s.primary_seq,
-            secondary_on:     s.secondary_on, secondary_order:  s.secondary_order,
+            secondary_on:     s.secondary_on, secondary_order: s.secondary_order, secondary_na: s.secondary_na,
             secondary_cat_id: s.secondary_cat_id, secondary_seq: s.secondary_seq,
         }).collect(),
         columns:    view.columns.iter().map(|c| crate::model::Column {

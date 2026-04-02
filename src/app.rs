@@ -1,5 +1,5 @@
 use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
-use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, Item, Section, SortNewItems, SortOn, SortOrder, SortSeq, View};
+use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, Item, Section, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
 use crate::persist;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -231,8 +231,8 @@ pub enum SecPropsField { Head, ItemSorting }
 #[derive(Clone, Copy, PartialEq)]
 pub enum SortField {
     SortNewItems,
-    PrimaryOn, PrimaryOrder, PrimaryCategory, PrimarySequence,
-    SecondaryOn, SecondaryOrder, SecondaryCategory, SecondarySequence,
+    PrimaryOn, PrimaryOrder, PrimaryNa, PrimaryCategory, PrimarySequence,
+    SecondaryOn, SecondaryOrder, SecondaryNa, SecondaryCategory, SecondarySequence,
 }
 
 pub struct SortPicker {
@@ -246,10 +246,12 @@ pub enum SortState {
         sort_new:         SortNewItems,
         primary_on:       SortOn,
         primary_order:    SortOrder,
+        primary_na:       SortNa,
         primary_cat_id:   Option<usize>,
         primary_seq:      SortSeq,
         secondary_on:     SortOn,
         secondary_order:  SortOrder,
+        secondary_na:     SortNa,
         secondary_cat_id: Option<usize>,
         secondary_seq:    SortSeq,
         active_field:     SortField,
@@ -404,14 +406,30 @@ pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &
         let flat_order: HashMap<usize, usize> = flat.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
 
         indices.sort_by(|&a, &b| {
+            use std::cmp::Ordering;
+            // n/a placement: n/a items go to top or bottom independent of sort direction
+            let na_a = item_is_na(&items[a], sec.primary_on, sec.primary_cat_id, cat_id, &parent_map);
+            let na_b = item_is_na(&items[b], sec.primary_on, sec.primary_cat_id, cat_id, &parent_map);
+            match (na_a, na_b) {
+                (true, false) => return if sec.primary_na == SortNa::Bottom { Ordering::Greater } else { Ordering::Less },
+                (false, true) => return if sec.primary_na == SortNa::Bottom { Ordering::Less } else { Ordering::Greater },
+                _ => {}
+            }
             let ka = item_sort_key(&items[a], sec.primary_on, sec.primary_cat_id, sec.primary_seq,
                                    cat_id, &parent_map, &name_map, &flat_order, cats);
             let kb = item_sort_key(&items[b], sec.primary_on, sec.primary_cat_id, sec.primary_seq,
                                    cat_id, &parent_map, &name_map, &flat_order, cats);
             let ord = ka.cmp(&kb);
             let ord = if sec.primary_order == SortOrder::Descending { ord.reverse() } else { ord };
-            if ord != std::cmp::Ordering::Equal { return ord; }
+            if ord != Ordering::Equal { return ord; }
             if sec.secondary_on != SortOn::None {
+                let na2_a = item_is_na(&items[a], sec.secondary_on, sec.secondary_cat_id, cat_id, &parent_map);
+                let na2_b = item_is_na(&items[b], sec.secondary_on, sec.secondary_cat_id, cat_id, &parent_map);
+                match (na2_a, na2_b) {
+                    (true, false) => return if sec.secondary_na == SortNa::Bottom { Ordering::Greater } else { Ordering::Less },
+                    (false, true) => return if sec.secondary_na == SortNa::Bottom { Ordering::Less } else { Ordering::Greater },
+                    _ => {}
+                }
                 let sa = item_sort_key(&items[a], sec.secondary_on, sec.secondary_cat_id, sec.secondary_seq,
                                        cat_id, &parent_map, &name_map, &flat_order, cats);
                 let sb = item_sort_key(&items[b], sec.secondary_on, sec.secondary_cat_id, sec.secondary_seq,
@@ -419,7 +437,7 @@ pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &
                 let ord2 = sa.cmp(&sb);
                 if sec.secondary_order == SortOrder::Descending { ord2.reverse() } else { ord2 }
             } else {
-                std::cmp::Ordering::Equal
+                Ordering::Equal
             }
         });
     }
@@ -486,6 +504,26 @@ fn item_sort_key(
     }
 }
 
+/// Returns true if an item has no value for the given sort key (i.e., is n/a).
+fn item_is_na(
+    item:       &Item,
+    sort_on:    SortOn,
+    sort_cat:   Option<usize>,
+    sec_cat:    usize,
+    parent_map: &HashMap<usize, Option<usize>>,
+) -> bool {
+    match sort_on {
+        SortOn::None | SortOn::ItemText => false,
+        SortOn::Category => {
+            let target = sort_cat.unwrap_or(sec_cat);
+            !item.values.keys().any(|&k| is_under_map(k, target, parent_map))
+        }
+        SortOn::CategoryNote => {
+            !item.values.keys().any(|&k| is_under_map(k, sec_cat, parent_map))
+        }
+    }
+}
+
 // ── Tree helpers (free functions) ─────────────────────────────────────────────
 
 /// Returns true if a category may never be deleted:
@@ -534,6 +572,7 @@ fn sort_visible_fields(
     let mut f = vec![SortField::SortNewItems, SortField::PrimaryOn];
     if primary_on != SortOn::None {
         f.push(SortField::PrimaryOrder);
+        f.push(SortField::PrimaryNa);
     }
     if primary_on == SortOn::Category {
         f.push(SortField::PrimaryCategory);
@@ -544,6 +583,7 @@ fn sort_visible_fields(
     f.push(SortField::SecondaryOn);
     if secondary_on != SortOn::None {
         f.push(SortField::SecondaryOrder);
+        f.push(SortField::SecondaryNa);
     }
     if secondary_on == SortOn::Category {
         f.push(SortField::SecondaryCategory);
@@ -1157,10 +1197,10 @@ impl App {
             name:             "Initial Section".to_string(),
             cat_id:           6,
             sort_new:         SortNewItems::OnLeavingSection,
-            primary_on:       SortOn::None,   primary_order:    SortOrder::Ascending,
-            primary_cat_id:   None,           primary_seq:      SortSeq::CategoryHierarchy,
-            secondary_on:     SortOn::None,   secondary_order:  SortOrder::Ascending,
-            secondary_cat_id: None,           secondary_seq:    SortSeq::CategoryHierarchy,
+            primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
+            primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
+            secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
+            secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
         };
         let view = View {
             id:         1,
@@ -1369,6 +1409,28 @@ impl App {
             if *picker_cursor < max { *picker_cursor += 1; }
         }
     }
+    pub fn view_add_pick_pgup(&mut self, page: usize) {
+        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
+            *picker_cursor = picker_cursor.saturating_sub(page);
+        }
+    }
+    pub fn view_add_pick_pgdn(&mut self, page: usize) {
+        let len = flatten_cats(&self.categories).len();
+        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
+            if len > 0 { *picker_cursor = (*picker_cursor + page).min(len - 1); }
+        }
+    }
+    pub fn view_add_pick_home(&mut self) {
+        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
+            *picker_cursor = 0;
+        }
+    }
+    pub fn view_add_pick_end(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
+            if len > 0 { *picker_cursor = len - 1; }
+        }
+    }
     pub fn view_add_pick_confirm(&mut self) {
         if let ViewMode::AddPick { name_buf, name_cursor, picker_cursor, .. } = &self.view_mode {
             let flat = flatten_cats(&self.categories);
@@ -1426,10 +1488,10 @@ impl App {
         let section = Section {
             id: sec_id, name: sec_name, cat_id,
             sort_new:         SortNewItems::OnLeavingSection,
-            primary_on:       SortOn::None,   primary_order:    SortOrder::Ascending,
-            primary_cat_id:   None,           primary_seq:      SortSeq::CategoryHierarchy,
-            secondary_on:     SortOn::None,   secondary_order:  SortOrder::Ascending,
-            secondary_cat_id: None,           secondary_seq:    SortSeq::CategoryHierarchy,
+            primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
+            primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
+            secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
+            secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
         };
         let new_view = View { id: view_id, name, sections: vec![section],
                               columns: vec![], left_count: 0 };
@@ -2706,6 +2768,36 @@ impl App {
             if *picker_cursor + 1 < list_len { *picker_cursor += 1; }
         }
     }
+    pub fn col_choices_pgup(&mut self, page: usize) {
+        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = picker_cursor.saturating_sub(page);
+        }
+    }
+    pub fn col_choices_pgdn(&mut self, page: usize) {
+        let list_len = match &self.col_mode {
+            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
+            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
+            _ => return,
+        };
+        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+            if list_len > 0 { *picker_cursor = (*picker_cursor + page).min(list_len - 1); }
+        }
+    }
+    pub fn col_choices_home(&mut self) {
+        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = 0;
+        }
+    }
+    pub fn col_choices_end(&mut self) {
+        let list_len = match &self.col_mode {
+            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
+            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
+            _ => return,
+        };
+        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+            if list_len > 0 { *picker_cursor = list_len - 1; }
+        }
+    }
 
     pub fn col_choices_confirm(&mut self) {
         let old = std::mem::replace(&mut self.col_mode, ColMode::Normal);
@@ -3265,10 +3357,10 @@ impl App {
             name,
             cat_id:           sec_cat,
             sort_new:         SortNewItems::OnLeavingSection,
-            primary_on:       SortOn::None,   primary_order:    SortOrder::Ascending,
-            primary_cat_id:   None,           primary_seq:      SortSeq::CategoryHierarchy,
-            secondary_on:     SortOn::None,   secondary_order:  SortOrder::Ascending,
-            secondary_cat_id: None,           secondary_seq:    SortSeq::CategoryHierarchy,
+            primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
+            primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
+            secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
+            secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
         });
         self.cursor = CursorPos::SectionHead(insert_idx);
     }
@@ -3377,6 +3469,28 @@ impl App {
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
             if *picker_cursor + 1 < len { *picker_cursor += 1; }
+        }
+    }
+    pub fn sec_choices_pgup(&mut self, page: usize) {
+        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+            *picker_cursor = picker_cursor.saturating_sub(page);
+        }
+    }
+    pub fn sec_choices_pgdn(&mut self, page: usize) {
+        let len = flatten_cats(&self.categories).len();
+        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+            if len > 0 { *picker_cursor = (*picker_cursor + page).min(len - 1); }
+        }
+    }
+    pub fn sec_choices_home(&mut self) {
+        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+            *picker_cursor = 0;
+        }
+    }
+    pub fn sec_choices_end(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+            if len > 0 { *picker_cursor = len - 1; }
         }
     }
 
@@ -3495,10 +3609,12 @@ impl App {
                     sort_new:         sec.sort_new,
                     primary_on:       sec.primary_on,
                     primary_order:    sec.primary_order,
+                    primary_na:       sec.primary_na,
                     primary_cat_id:   sec.primary_cat_id,
                     primary_seq:      sec.primary_seq,
                     secondary_on:     sec.secondary_on,
                     secondary_order:  sec.secondary_order,
+                    secondary_na:     sec.secondary_na,
                     secondary_cat_id: sec.secondary_cat_id,
                     secondary_seq:    sec.secondary_seq,
                     active_field:     SortField::SortNewItems,
@@ -3532,8 +3648,8 @@ impl App {
         if let SectionMode::Props {
             sec_idx,
             sort_state: SortState::Dialog {
-                sort_new, primary_on, primary_order, primary_cat_id, primary_seq,
-                secondary_on, secondary_order, secondary_cat_id, secondary_seq, ..
+                sort_new, primary_on, primary_order, primary_na, primary_cat_id, primary_seq,
+                secondary_on, secondary_order, secondary_na, secondary_cat_id, secondary_seq, ..
             }, ..
         } = self.sec_mode {
             if sec_idx < self.view.sections.len() {
@@ -3541,10 +3657,12 @@ impl App {
                 sec.sort_new         = sort_new;
                 sec.primary_on       = primary_on;
                 sec.primary_order    = primary_order;
+                sec.primary_na       = primary_na;
                 sec.primary_cat_id   = primary_cat_id;
                 sec.primary_seq      = primary_seq;
                 sec.secondary_on     = secondary_on;
                 sec.secondary_order  = secondary_order;
+                sec.secondary_na     = secondary_na;
                 sec.secondary_cat_id = secondary_cat_id;
                 sec.secondary_seq    = secondary_seq;
                 if self.file_path.is_some() { self.dirty = true; }
@@ -3569,18 +3687,20 @@ impl App {
         let (target, current_idx) = {
             let SectionMode::Props {
                 sort_state: SortState::Dialog {
-                    active_field, primary_on, primary_order, primary_cat_id, primary_seq,
-                    secondary_on, secondary_order, secondary_cat_id, secondary_seq, ..
+                    active_field, primary_on, primary_order, primary_na, primary_cat_id, primary_seq,
+                    secondary_on, secondary_order, secondary_na, secondary_cat_id, secondary_seq, ..
                 }, ..
             } = &self.sec_mode else { return; };
             match active_field {
-                SortField::SortNewItems    => (*active_field, 0),
-                SortField::PrimaryOn       => (*active_field, SortOn::ALL.iter().position(|&x| x == *primary_on).unwrap_or(0)),
-                SortField::PrimaryOrder    => (*active_field, SortOrder::ALL.iter().position(|&x| x == *primary_order).unwrap_or(0)),
-                SortField::PrimaryCategory => (*active_field, primary_cat_id.and_then(|id| flat_cats.iter().position(|e| e.id == id)).unwrap_or(0)),
-                SortField::PrimarySequence => (*active_field, SortSeq::ALL.iter().position(|&x| x == *primary_seq).unwrap_or(0)),
+                SortField::SortNewItems      => (*active_field, 0),
+                SortField::PrimaryOn         => (*active_field, SortOn::ALL.iter().position(|&x| x == *primary_on).unwrap_or(0)),
+                SortField::PrimaryOrder      => (*active_field, SortOrder::ALL.iter().position(|&x| x == *primary_order).unwrap_or(0)),
+                SortField::PrimaryNa         => (*active_field, SortNa::ALL.iter().position(|&x| x == *primary_na).unwrap_or(0)),
+                SortField::PrimaryCategory   => (*active_field, primary_cat_id.and_then(|id| flat_cats.iter().position(|e| e.id == id)).unwrap_or(0)),
+                SortField::PrimarySequence   => (*active_field, SortSeq::ALL.iter().position(|&x| x == *primary_seq).unwrap_or(0)),
                 SortField::SecondaryOn       => (*active_field, SortOn::ALL.iter().position(|&x| x == *secondary_on).unwrap_or(0)),
                 SortField::SecondaryOrder    => (*active_field, SortOrder::ALL.iter().position(|&x| x == *secondary_order).unwrap_or(0)),
+                SortField::SecondaryNa       => (*active_field, SortNa::ALL.iter().position(|&x| x == *secondary_na).unwrap_or(0)),
                 SortField::SecondaryCategory => (*active_field, secondary_cat_id.and_then(|id| flat_cats.iter().position(|e| e.id == id)).unwrap_or(0)),
                 SortField::SecondarySequence => (*active_field, SortSeq::ALL.iter().position(|&x| x == *secondary_seq).unwrap_or(0)),
             }
@@ -3588,6 +3708,20 @@ impl App {
         if let SectionMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.sec_mode {
             *picker = Some(SortPicker { cursor: current_idx, target });
         }
+    }
+
+    fn sec_sort_picker_len(&self) -> usize {
+        let flat_len = flatten_cats(&self.categories).len();
+        if let SectionMode::Props { sort_state: SortState::Dialog { picker: Some(p), .. }, .. } = &self.sec_mode {
+            match p.target {
+                SortField::SortNewItems                                   => SortNewItems::ALL.len(),
+                SortField::PrimaryOn | SortField::SecondaryOn             => SortOn::ALL.len(),
+                SortField::PrimaryOrder | SortField::SecondaryOrder       => SortOrder::ALL.len(),
+                SortField::PrimaryNa | SortField::SecondaryNa             => SortNa::ALL.len(),
+                SortField::PrimaryCategory | SortField::SecondaryCategory => flat_len,
+                SortField::PrimarySequence | SortField::SecondarySequence => SortSeq::ALL.len(),
+            }
+        } else { 0 }
     }
 
     pub fn sec_sort_picker_up(&mut self) {
@@ -3601,19 +3735,46 @@ impl App {
     }
 
     pub fn sec_sort_picker_down(&mut self) {
-        let flat_len = flatten_cats(&self.categories).len();
+        let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
             if let Some(p) = picker {
-                let max = match p.target {
-                    SortField::SortNewItems                               => SortNewItems::ALL.len(),
-                    SortField::PrimaryOn | SortField::SecondaryOn         => SortOn::ALL.len(),
-                    SortField::PrimaryOrder | SortField::SecondaryOrder   => SortOrder::ALL.len(),
-                    SortField::PrimaryCategory | SortField::SecondaryCategory => flat_len,
-                    SortField::PrimarySequence | SortField::SecondarySequence => SortSeq::ALL.len(),
-                };
                 if p.cursor + 1 < max { p.cursor += 1; }
+            }
+        }
+    }
+    pub fn sec_sort_picker_pgup(&mut self, page: usize) {
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            if let Some(p) = picker { p.cursor = p.cursor.saturating_sub(page); }
+        }
+    }
+    pub fn sec_sort_picker_pgdn(&mut self, page: usize) {
+        let max = self.sec_sort_picker_len();
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            if let Some(p) = picker {
+                if max > 0 { p.cursor = (p.cursor + page).min(max - 1); }
+            }
+        }
+    }
+    pub fn sec_sort_picker_home(&mut self) {
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            if let Some(p) = picker { p.cursor = 0; }
+        }
+    }
+    pub fn sec_sort_picker_end(&mut self) {
+        let max = self.sec_sort_picker_len();
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            if let Some(p) = picker {
+                if max > 0 { p.cursor = max - 1; }
             }
         }
     }
@@ -3628,9 +3789,9 @@ impl App {
 
         if let SectionMode::Props {
             sort_state: SortState::Dialog {
-                ref mut sort_new, ref mut primary_on, ref mut primary_order,
+                ref mut sort_new, ref mut primary_on, ref mut primary_order, ref mut primary_na,
                 ref mut primary_cat_id, ref mut primary_seq,
-                ref mut secondary_on, ref mut secondary_order,
+                ref mut secondary_on, ref mut secondary_order, ref mut secondary_na,
                 ref mut secondary_cat_id, ref mut secondary_seq,
                 ref mut picker, ..
             }, ..
@@ -3648,6 +3809,9 @@ impl App {
                 SortField::PrimaryOrder => {
                     if let Some(&v) = SortOrder::ALL.get(cursor) { *primary_order = v; }
                 }
+                SortField::PrimaryNa => {
+                    if let Some(&v) = SortNa::ALL.get(cursor) { *primary_na = v; }
+                }
                 SortField::PrimaryCategory => {
                     if let Some(e) = flat_cats.get(cursor) { *primary_cat_id = Some(e.id); }
                 }
@@ -3662,6 +3826,9 @@ impl App {
                 }
                 SortField::SecondaryOrder => {
                     if let Some(&v) = SortOrder::ALL.get(cursor) { *secondary_order = v; }
+                }
+                SortField::SecondaryNa => {
+                    if let Some(&v) = SortNa::ALL.get(cursor) { *secondary_na = v; }
                 }
                 SortField::SecondaryCategory => {
                     if let Some(e) = flat_cats.get(cursor) { *secondary_cat_id = Some(e.id); }
@@ -4186,6 +4353,34 @@ impl App {
             if *picker_cursor + 1 < len { *picker_cursor += 1; }
         }
     }
+    pub fn col_sub_pick_pgup(&mut self, page: usize) {
+        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = picker_cursor.saturating_sub(page);
+        }
+    }
+    pub fn col_sub_pick_pgdn(&mut self, page: usize) {
+        let len = match &self.col_mode {
+            ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
+            _ => return,
+        };
+        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+            if len > 0 { *picker_cursor = (*picker_cursor + page).min(len - 1); }
+        }
+    }
+    pub fn col_sub_pick_home(&mut self) {
+        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = 0;
+        }
+    }
+    pub fn col_sub_pick_end(&mut self) {
+        let len = match &self.col_mode {
+            ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
+            _ => return,
+        };
+        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+            if len > 0 { *picker_cursor = len - 1; }
+        }
+    }
 
     /// Toggle assignment of the highlighted entry.
     ///
@@ -4633,6 +4828,20 @@ impl App {
     pub fn vmgr_cursor_down(&mut self) {
         let count = 1 + self.inactive_views.len();
         if self.vmgr_state.cursor + 1 < count { self.vmgr_state.cursor += 1; }
+    }
+    pub fn vmgr_cursor_pgup(&mut self, page: usize) {
+        self.vmgr_state.cursor = self.vmgr_state.cursor.saturating_sub(page);
+    }
+    pub fn vmgr_cursor_pgdn(&mut self, page: usize) {
+        let count = 1 + self.inactive_views.len();
+        if count > 0 { self.vmgr_state.cursor = (self.vmgr_state.cursor + page).min(count - 1); }
+    }
+    pub fn vmgr_cursor_home(&mut self) {
+        self.vmgr_state.cursor = 0;
+    }
+    pub fn vmgr_cursor_end(&mut self) {
+        let count = 1 + self.inactive_views.len();
+        if count > 0 { self.vmgr_state.cursor = count - 1; }
     }
 
     pub fn vmgr_select(&mut self) {

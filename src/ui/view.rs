@@ -1966,15 +1966,15 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
 
     // ── Sort dialog overlay ───────────────────────────────────────────────────
     if let SortState::Dialog {
-        sort_new, primary_on, primary_order, primary_cat_id, primary_seq,
-        secondary_on, secondary_order, secondary_cat_id, secondary_seq,
+        sort_new, primary_on, primary_order, primary_na, primary_cat_id, primary_seq,
+        secondary_on, secondary_order, secondary_na, secondary_cat_id, secondary_seq,
         active_field: sf, picker,
     } = sort_state {
         render_sort_dialog(
             frame, app, area,
             *sort_new,
-            *primary_on, *primary_order, *primary_cat_id, *primary_seq,
-            *secondary_on, *secondary_order, *secondary_cat_id, *secondary_seq,
+            *primary_on, *primary_order, *primary_na, *primary_cat_id, *primary_seq,
+            *secondary_on, *secondary_order, *secondary_na, *secondary_cat_id, *secondary_seq,
             *sf, picker.as_ref(),
         );
     }
@@ -1987,10 +1987,12 @@ fn render_sort_dialog(
     sort_new:         SortNewItems,
     primary_on:       SortOn,
     primary_order:    SortOrder,
+    primary_na:       crate::model::SortNa,
     primary_cat_id:   Option<usize>,
     primary_seq:      SortSeq,
     secondary_on:     SortOn,
     secondary_order:  SortOrder,
+    secondary_na:     crate::model::SortNa,
     secondary_cat_id: Option<usize>,
     secondary_seq:    SortSeq,
     active_field:     SortField,
@@ -2016,6 +2018,7 @@ fn render_sort_dialog(
     let sort_new_label = "Sort new items:  ";
     let sort_on_label  = "  Sort on:       ";
     let order_label    = "  Order:         ";
+    let na_label       = "  Sort n/a's:    ";
     let cat_label      = "  Category:      ";
     let seq_label      = "  Sequence:      ";
     let vd             = " (View default)";
@@ -2036,6 +2039,10 @@ fn render_sort_dialog(
         rows.push(Line::from(vec![
             Span::raw(order_label),
             Span::styled(primary_order.label(), fs(active_field == SortField::PrimaryOrder)),
+        ]));
+        rows.push(Line::from(vec![
+            Span::raw(na_label),
+            Span::styled(primary_na.label(), fs(active_field == SortField::PrimaryNa)),
         ]));
     }
     if primary_on == SortOn::Category {
@@ -2061,6 +2068,10 @@ fn render_sort_dialog(
         rows.push(Line::from(vec![
             Span::raw(order_label),
             Span::styled(secondary_order.label(), fs(active_field == SortField::SecondaryOrder)),
+        ]));
+        rows.push(Line::from(vec![
+            Span::raw(na_label),
+            Span::styled(secondary_na.label(), fs(active_field == SortField::SecondaryNa)),
         ]));
     }
     if secondary_on == SortOn::Category {
@@ -2111,6 +2122,7 @@ fn render_sort_dialog(
                     SortField::SortNewItems => &["No automatic sorting", "On adding a new item", "On leaving a section"],
                     SortField::PrimaryOn | SortField::SecondaryOn => &["None", "Item text", "Category", "Category note"],
                     SortField::PrimaryOrder | SortField::SecondaryOrder => &["Ascending", "Descending"],
+                    SortField::PrimaryNa | SortField::SecondaryNa => &["Bottom of section", "Top of section"],
                     SortField::PrimarySequence | SortField::SecondarySequence =>
                         &["Category hierarchy", "Alphabetic", "Numeric", "Date"],
                     _ => &[],

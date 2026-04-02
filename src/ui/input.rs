@@ -449,10 +449,14 @@ fn handle_col_form(app: &mut App, code: KeyCode) {
 
 fn handle_col_choices(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Up    => app.col_choices_up(),
-        KeyCode::Down  => app.col_choices_down(),
-        KeyCode::Enter => app.col_choices_confirm(),
-        KeyCode::Esc   => app.col_choices_cancel(),
+        KeyCode::Up       => app.col_choices_up(),
+        KeyCode::Down     => app.col_choices_down(),
+        KeyCode::PageUp   => app.col_choices_pgup(10),
+        KeyCode::PageDown => app.col_choices_pgdn(10),
+        KeyCode::Home     => app.col_choices_home(),
+        KeyCode::End      => app.col_choices_end(),
+        KeyCode::Enter    => app.col_choices_confirm(),
+        KeyCode::Esc      => app.col_choices_cancel(),
         _ => {}
     }
 }
@@ -646,6 +650,10 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Up              => app.col_sub_pick_up(),
         KeyCode::Down            => app.col_sub_pick_down(),
+        KeyCode::PageUp          => app.col_sub_pick_pgup(10),
+        KeyCode::PageDown        => app.col_sub_pick_pgdn(10),
+        KeyCode::Home            => app.col_sub_pick_home(),
+        KeyCode::End             => app.col_sub_pick_end(),
         KeyCode::Char(' ')       => app.col_sub_pick_toggle(),
         KeyCode::Enter | KeyCode::Esc | KeyCode::F(3) => app.col_sub_pick_close(),
         _ => {}
@@ -696,10 +704,14 @@ fn handle_sec_form(app: &mut App, code: KeyCode) {
 
 fn handle_sec_choices(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Up    => app.sec_choices_up(),
-        KeyCode::Down  => app.sec_choices_down(),
-        KeyCode::Enter => app.sec_choices_confirm(),
-        KeyCode::Esc   => app.sec_choices_cancel(),
+        KeyCode::Up       => app.sec_choices_up(),
+        KeyCode::Down     => app.sec_choices_down(),
+        KeyCode::PageUp   => app.sec_choices_pgup(10),
+        KeyCode::PageDown => app.sec_choices_pgdn(10),
+        KeyCode::Home     => app.sec_choices_home(),
+        KeyCode::End      => app.sec_choices_end(),
+        KeyCode::Enter    => app.sec_choices_confirm(),
+        KeyCode::Esc      => app.sec_choices_cancel(),
         _ => {}
     }
 }
@@ -742,10 +754,14 @@ fn handle_view_add(app: &mut App, code: KeyCode) {
     // Picker sub-mode
     if matches!(app.view_mode, ViewMode::AddPick { .. }) {
         match code {
-            KeyCode::Up    => app.view_add_pick_up(),
-            KeyCode::Down  => app.view_add_pick_down(),
-            KeyCode::Enter => app.view_add_pick_confirm(),
-            KeyCode::Esc   => app.view_add_pick_cancel(),
+            KeyCode::Up       => app.view_add_pick_up(),
+            KeyCode::Down     => app.view_add_pick_down(),
+            KeyCode::PageUp   => app.view_add_pick_pgup(10),
+            KeyCode::PageDown => app.view_add_pick_pgdn(10),
+            KeyCode::Home     => app.view_add_pick_home(),
+            KeyCode::End      => app.view_add_pick_end(),
+            KeyCode::Enter    => app.view_add_pick_confirm(),
+            KeyCode::Esc      => app.view_add_pick_cancel(),
             _ => {}
         }
         return;
@@ -778,9 +794,13 @@ fn handle_vmgr(app: &mut App, code: KeyCode) {
 
 fn handle_vmgr_normal(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Up    => app.vmgr_cursor_up(),
-        KeyCode::Down  => app.vmgr_cursor_down(),
-        KeyCode::Enter => app.vmgr_select(),
+        KeyCode::Up       => app.vmgr_cursor_up(),
+        KeyCode::Down     => app.vmgr_cursor_down(),
+        KeyCode::PageUp   => app.vmgr_cursor_pgup(10),
+        KeyCode::PageDown => app.vmgr_cursor_pgdn(10),
+        KeyCode::Home     => app.vmgr_cursor_home(),
+        KeyCode::End      => app.vmgr_cursor_end(),
+        KeyCode::Enter    => app.vmgr_select(),
         KeyCode::F(2)  => app.vmgr_begin_rename(),
         KeyCode::F(4)  => app.vmgr_open_confirm_delete(),
         KeyCode::F(6)  => app.vmgr_begin_props(),
@@ -877,10 +897,14 @@ fn handle_sec_sort_dialog(app: &mut App, code: KeyCode) {
 
 fn handle_sec_sort_picker(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Up    => app.sec_sort_picker_up(),
-        KeyCode::Down  => app.sec_sort_picker_down(),
-        KeyCode::Enter => app.sec_sort_picker_confirm(),
-        KeyCode::Esc   => app.sec_sort_picker_cancel(),
+        KeyCode::Up       => app.sec_sort_picker_up(),
+        KeyCode::Down     => app.sec_sort_picker_down(),
+        KeyCode::PageUp   => app.sec_sort_picker_pgup(10),
+        KeyCode::PageDown => app.sec_sort_picker_pgdn(10),
+        KeyCode::Home     => app.sec_sort_picker_home(),
+        KeyCode::End      => app.sec_sort_picker_end(),
+        KeyCode::Enter    => app.sec_sort_picker_confirm(),
+        KeyCode::Esc      => app.sec_sort_picker_cancel(),
         _ => {}
     }
 }
