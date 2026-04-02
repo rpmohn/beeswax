@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FKeyMod, MenuState, Mode, PasswordPurpose, SaveState, SectionInsert, SectionMode};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FKeyMod, MenuState, Mode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -68,6 +68,12 @@ pub fn handle_event(app: &mut App, event: Event) {
     // Assignment Profile takes priority
     if matches!(app.assign_mode, AssignMode::Profile { .. }) {
         handle_assign_profile(app, code);
+        return;
+    }
+
+    // Section Properties dialog (and sort sub-dialogs) take priority
+    if matches!(app.sec_mode, SectionMode::Props { .. }) {
+        handle_sec_props(app, code);
         return;
     }
 
@@ -155,6 +161,18 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // View Add dialog takes priority
+    if matches!(app.view_mode, ViewMode::Add { .. } | ViewMode::AddPick { .. }) {
+        handle_view_add(app, code);
+        return;
+    }
+
+    // View Manager screen — handled here to avoid catch-all dirty marking for navigation
+    if matches!(app.screen, AppScreen::ViewMgr) {
+        handle_vmgr(app, code);
+        return;
+    }
+
     // Determine which handler to call without holding a borrow on app
     match app.screen {
         AppScreen::View => {
@@ -175,6 +193,7 @@ pub fn handle_event(app: &mut App, event: Event) {
             else if in_edit   { handle_catmgr_input(app, code) }
             else if in_create { handle_catmgr_input(app, code) }
         }
+        AppScreen::ViewMgr => {} // handled above as priority block
     }
     // Mark dirty after any key event that reached the main handlers.
     // (Over-marks navigation keys, which is acceptable per spec.)
@@ -270,8 +289,11 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::F(5)   => app.open_note(),
         KeyCode::F(6)   => {
-            if app.col_cursor == 0 && matches!(app.cursor, CursorPos::Item { .. }) {
-                app.item_open_props();
+            if app.col_cursor == 0 {
+                match app.cursor {
+                    CursorPos::SectionHead(_) => app.sec_open_props(),
+                    CursorPos::Item { .. }    => app.item_open_props(),
+                }
             } else {
                 app.col_open_props();
             }
@@ -286,6 +308,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 app.col_open_confirm_remove();
             }
         }
+        KeyCode::F(8)   => app.open_view_mgr(),
         KeyCode::F(9)   => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
@@ -709,6 +732,155 @@ fn handle_assign_profile(app: &mut App, code: KeyCode) {
         KeyCode::F(8)     => app.cat_search_next(),
         KeyCode::Backspace => app.cat_search_backspace(),
         KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
+        _ => {}
+    }
+}
+
+// ── View Add dialog ───────────────────────────────────────────────────────────
+
+fn handle_view_add(app: &mut App, code: KeyCode) {
+    // Picker sub-mode
+    if matches!(app.view_mode, ViewMode::AddPick { .. }) {
+        match code {
+            KeyCode::Up    => app.view_add_pick_up(),
+            KeyCode::Down  => app.view_add_pick_down(),
+            KeyCode::Enter => app.view_add_pick_confirm(),
+            KeyCode::Esc   => app.view_add_pick_cancel(),
+            _ => {}
+        }
+        return;
+    }
+    // Main dialog
+    match code {
+        KeyCode::Enter                        => app.view_add_confirm(),
+        KeyCode::Esc                          => app.view_add_cancel(),
+        KeyCode::Tab | KeyCode::Down          => app.view_add_tab(),
+        KeyCode::BackTab | KeyCode::Up        => app.view_add_tab(),
+        KeyCode::Left                         => app.view_add_cursor_left(),
+        KeyCode::Right                        => app.view_add_cursor_right(),
+        KeyCode::Backspace                    => app.view_add_backspace(),
+        KeyCode::F(3)                         => app.view_add_open_pick(),
+        KeyCode::Char(ch)                     => app.view_add_char(ch),
+        _ => {}
+    }
+}
+
+// ── View Manager handlers ─────────────────────────────────────────────────────
+
+fn handle_vmgr(app: &mut App, code: KeyCode) {
+    match &app.vmgr_state.mode {
+        ViewMgrMode::Rename { .. }        => handle_vmgr_rename(app, code),
+        ViewMgrMode::ConfirmDelete { .. } => handle_vmgr_delete(app, code),
+        ViewMgrMode::Props { .. }         => handle_vmgr_props(app, code),
+        ViewMgrMode::Normal               => handle_vmgr_normal(app, code),
+    }
+}
+
+fn handle_vmgr_normal(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up    => app.vmgr_cursor_up(),
+        KeyCode::Down  => app.vmgr_cursor_down(),
+        KeyCode::Enter => app.vmgr_select(),
+        KeyCode::F(2)  => app.vmgr_begin_rename(),
+        KeyCode::F(4)  => app.vmgr_open_confirm_delete(),
+        KeyCode::F(6)  => app.vmgr_begin_props(),
+        KeyCode::F(8) | KeyCode::Esc => app.close_view_mgr(),
+        KeyCode::F(9)  => { app.close_view_mgr(); app.toggle_catmgr(); }
+        KeyCode::F(10) => app.open_menu(),
+        _ => {}
+    }
+}
+
+fn handle_vmgr_rename(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter     => app.vmgr_rename_confirm(),
+        KeyCode::Esc       => app.vmgr_rename_cancel(),
+        KeyCode::Left      => app.vmgr_rename_left(),
+        KeyCode::Right     => app.vmgr_rename_right(),
+        KeyCode::Backspace => app.vmgr_rename_backspace(),
+        KeyCode::Char(ch)  => app.vmgr_rename_char(ch),
+        _ => {}
+    }
+}
+
+fn handle_vmgr_delete(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => app.vmgr_delete_confirm(),
+        KeyCode::Esc   | KeyCode::Char('n') | KeyCode::Char('N') => app.vmgr_delete_cancel(),
+        _ => {}
+    }
+}
+
+fn handle_vmgr_props(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter     => app.vmgr_props_confirm(),
+        KeyCode::Esc       => app.vmgr_props_cancel(),
+        KeyCode::Left      => app.vmgr_props_left(),
+        KeyCode::Right     => app.vmgr_props_right(),
+        KeyCode::Backspace => app.vmgr_props_backspace(),
+        KeyCode::Char(ch)  => app.vmgr_props_char(ch),
+        _ => {}
+    }
+}
+
+// ── Section Properties handlers ───────────────────────────────────────────────
+
+fn handle_sec_props(app: &mut App, code: KeyCode) {
+    // Sort picker is the innermost layer
+    let has_picker = matches!(
+        app.sec_mode,
+        SectionMode::Props { sort_state: SortState::Dialog { ref picker, .. }, .. }
+        if picker.is_some()
+    );
+    let has_sort = matches!(
+        app.sec_mode,
+        SectionMode::Props { sort_state: SortState::Dialog { .. }, .. }
+    );
+    if has_picker { handle_sec_sort_picker(app, code); return; }
+    if has_sort   { handle_sec_sort_dialog(app, code); return; }
+    handle_sec_props_normal(app, code);
+}
+
+fn handle_sec_props_normal(app: &mut App, code: KeyCode) {
+    let is_head = matches!(
+        app.sec_mode,
+        SectionMode::Props { active_field: SecPropsField::Head, .. }
+    );
+    let is_sorting = matches!(
+        app.sec_mode,
+        SectionMode::Props { active_field: SecPropsField::ItemSorting, .. }
+    );
+    match code {
+        KeyCode::Enter => app.sec_props_confirm(),
+        KeyCode::Esc   => app.sec_props_cancel(),
+        KeyCode::Tab | KeyCode::Down  => app.sec_props_tab(),
+        KeyCode::BackTab | KeyCode::Up => app.sec_props_tab(),
+        KeyCode::F(3) if is_sorting   => app.sec_open_sort_dialog(),
+        KeyCode::Left  if is_head     => app.sec_props_head_left(),
+        KeyCode::Right if is_head     => app.sec_props_head_right(),
+        KeyCode::Backspace if is_head => app.sec_props_head_backspace(),
+        KeyCode::Char(ch) if is_head  => app.sec_props_head_char(ch),
+        _ => {}
+    }
+}
+
+fn handle_sec_sort_dialog(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter  => app.sec_sort_confirm(),
+        KeyCode::Esc    => app.sec_sort_cancel(),
+        KeyCode::Tab | KeyCode::Down   => app.sec_sort_tab(),
+        KeyCode::BackTab | KeyCode::Up => app.sec_sort_tab_back(),
+        KeyCode::F(3) => app.sec_sort_open_picker(),
+        _ => {}
+    }
+}
+
+fn handle_sec_sort_picker(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up    => app.sec_sort_picker_up(),
+        KeyCode::Down  => app.sec_sort_picker_down(),
+        KeyCode::Enter => app.sec_sort_picker_confirm(),
+        KeyCode::Esc   => app.sec_sort_picker_cancel(),
         _ => {}
     }
 }

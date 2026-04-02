@@ -7,7 +7,7 @@ use argon2::Argon2;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Category, View};
+use crate::model::{Category, Item, View};
 
 // ── File format constants ──────────────────────────────────────────────────────
 
@@ -15,57 +15,145 @@ const MAGIC: &[u8; 4]   = b"BWX\0";
 const FLAG_PLAIN:     u8 = 0x00;
 const FLAG_ENCRYPTED: u8 = 0x01;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 3;
 
 // ── SaveData ──────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveData {
-    pub version:    u32,
-    pub categories: Vec<Category>,
-    pub view:       View,
-    pub next_id:    usize,
+    pub version:      u32,
+    pub categories:   Vec<Category>,
+    pub items:        Vec<Item>,   // global item pool shared across all views
+    pub views:        Vec<View>,   // views[current_view] is the active view
+    pub current_view: usize,
+    pub next_id:      usize,
 }
 
 // ── Migration ─────────────────────────────────────────────────────────────────
 
+/// v1 on-disk View — had items embedded.
+#[derive(serde::Deserialize)]
+struct ViewV1 {
+    id:         usize,
+    name:       String,
+    sections:   Vec<crate::model::Section>,
+    items:      Vec<Item>,
+    columns:    Vec<crate::model::Column>,
+    #[serde(default)]
+    left_count: usize,
+}
+
+#[derive(serde::Deserialize)]
+struct SaveDataV1 {
+    #[allow(dead_code)]
+    version:    u32,
+    categories: Vec<Category>,
+    view:       ViewV1,
+    next_id:    usize,
+}
+
+/// v2 on-disk View — also had items embedded.
+#[derive(serde::Deserialize)]
+struct SaveDataV2 {
+    #[allow(dead_code)]
+    version:      u32,
+    categories:   Vec<Category>,
+    views:        Vec<ViewV1>,
+    current_view: usize,
+    next_id:      usize,
+}
+
+fn view_v1_to_view(v: ViewV1) -> View {
+    View { id: v.id, name: v.name, sections: v.sections, columns: v.columns, left_count: v.left_count }
+}
+
 fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
     match version {
-        1 => serde_json::from_str(json).map_err(|_| LoadError::Corrupt),
+        1 => {
+            let v1: SaveDataV1 = serde_json::from_str(json).map_err(|_| LoadError::Corrupt)?;
+            let items = v1.view.items.clone();
+            Ok(SaveData {
+                version:      3,
+                categories:   v1.categories,
+                items,
+                views:        vec![view_v1_to_view(v1.view)],
+                current_view: 0,
+                next_id:      v1.next_id,
+            })
+        }
+        2 => {
+            let v2: SaveDataV2 = serde_json::from_str(json).map_err(|_| LoadError::Corrupt)?;
+            // Merge items from all views into the global pool (deduplicate by id).
+            let mut seen_ids = std::collections::HashSet::new();
+            let mut items: Vec<Item> = Vec::new();
+            for view in &v2.views {
+                for item in &view.items {
+                    if seen_ids.insert(item.id) {
+                        items.push(item.clone());
+                    }
+                }
+            }
+            let views: Vec<View> = v2.views.into_iter().map(view_v1_to_view).collect();
+            Ok(SaveData {
+                version:      3,
+                categories:   v2.categories,
+                items,
+                views,
+                current_view: v2.current_view,
+                next_id:      v2.next_id,
+            })
+        }
+        3 => serde_json::from_str(json).map_err(|_| LoadError::Corrupt),
         v => Err(LoadError::UnknownVersion(v)),
     }
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
 
+fn clone_view(view: &View) -> View {
+    View {
+        id:         view.id,
+        name:       view.name.clone(),
+        sections:   view.sections.iter().map(|s| crate::model::Section {
+            id:               s.id,
+            name:             s.name.clone(),
+            cat_id:           s.cat_id,
+            sort_new:         s.sort_new,
+            primary_on:       s.primary_on,   primary_order:    s.primary_order,
+            primary_cat_id:   s.primary_cat_id, primary_seq:   s.primary_seq,
+            secondary_on:     s.secondary_on, secondary_order:  s.secondary_order,
+            secondary_cat_id: s.secondary_cat_id, secondary_seq: s.secondary_seq,
+        }).collect(),
+        columns:    view.columns.iter().map(|c| crate::model::Column {
+            id:       c.id,
+            name:     c.name.clone(),
+            cat_id:   c.cat_id,
+            width:    c.width,
+            format:   c.format,
+            date_fmt: c.date_fmt.clone(),
+        }).collect(),
+        left_count: view.left_count,
+    }
+}
+
 pub fn save_plain(
-    path:       &Path,
-    categories: &[Category],
-    view:       &View,
-    next_id:    usize,
+    path:           &Path,
+    categories:     &[Category],
+    items:          &[Item],
+    view:           &View,
+    inactive_views: &[View],
+    next_id:        usize,
 ) -> io::Result<()> {
+    let views: Vec<View> = std::iter::once(view)
+        .chain(inactive_views.iter())
+        .map(clone_view)
+        .collect();
     let data = SaveData {
-        version:    SCHEMA_VERSION,
-        categories: categories.to_vec(),
-        view:       View {
-            id:         view.id,
-            name:       view.name.clone(),
-            sections:   view.sections.iter().map(|s| crate::model::Section {
-                id:     s.id,
-                name:   s.name.clone(),
-                cat_id: s.cat_id,
-            }).collect(),
-            items:      view.items.clone(),
-            columns:    view.columns.iter().map(|c| crate::model::Column {
-                id:       c.id,
-                name:     c.name.clone(),
-                cat_id:   c.cat_id,
-                width:    c.width,
-                format:   c.format,
-                date_fmt: c.date_fmt.clone(),
-            }).collect(),
-            left_count: view.left_count,
-        },
+        version:      SCHEMA_VERSION,
+        categories:   categories.to_vec(),
+        items:        items.to_vec(),
+        views,
+        current_view: 0,
         next_id,
     };
     let json = serde_json::to_string(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -79,34 +167,24 @@ pub fn save_plain(
 }
 
 pub fn save_encrypted(
-    path:       &Path,
-    password:   &str,
-    categories: &[Category],
-    view:       &View,
-    next_id:    usize,
+    path:           &Path,
+    password:       &str,
+    categories:     &[Category],
+    items:          &[Item],
+    view:           &View,
+    inactive_views: &[View],
+    next_id:        usize,
 ) -> io::Result<()> {
+    let views: Vec<View> = std::iter::once(view)
+        .chain(inactive_views.iter())
+        .map(clone_view)
+        .collect();
     let data = SaveData {
-        version:    SCHEMA_VERSION,
-        categories: categories.to_vec(),
-        view:       View {
-            id:         view.id,
-            name:       view.name.clone(),
-            sections:   view.sections.iter().map(|s| crate::model::Section {
-                id:     s.id,
-                name:   s.name.clone(),
-                cat_id: s.cat_id,
-            }).collect(),
-            items:      view.items.clone(),
-            columns:    view.columns.iter().map(|c| crate::model::Column {
-                id:       c.id,
-                name:     c.name.clone(),
-                cat_id:   c.cat_id,
-                width:    c.width,
-                format:   c.format,
-                date_fmt: c.date_fmt.clone(),
-            }).collect(),
-            left_count: view.left_count,
-        },
+        version:      SCHEMA_VERSION,
+        categories:   categories.to_vec(),
+        items:        items.to_vec(),
+        views,
+        current_view: 0,
         next_id,
     };
     let json = serde_json::to_string(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;

@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, FKeyMod, MenuState, Mode, SectionMode};
+use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, FKeyMod, MenuState, Mode, SectionMode, SortState, ViewMgrMode};
 
 /// Action labels for F1–F10 (index 0 = F1, index 9 = F10).
 pub struct FKeyLabels {
@@ -99,6 +99,13 @@ static EDIT_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["Compose", "MakeCat", "", "Delete", "",     "",       "Split","", "", ""],
 };
 
+pub static VIEWMGR_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Edit", "", "Delete", "", "Props", "", "To View", "Cat Mgr", "Menu"],
+    shift:  ["",     "",     "", "",       "", "",      "", "",        "",         ""   ],
+    ctrl:   ["",     "",     "", "",       "", "",      "", "",        "",         ""   ],
+    alt:    ["",     "",     "", "",       "", "",      "", "",        "",         ""   ],
+};
+
 /// Render the two-row, 10-section F-key bar into `area` (must be 2 rows tall).
 pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
     let def = if !matches!(app.menu, MenuState::Closed) {
@@ -109,6 +116,10 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &ASSIGN_FKEYS
     } else if matches!(app.sec_mode, SectionMode::Add { .. } | SectionMode::Choices { .. } | SectionMode::ConfirmRemove { .. }) {
         &MENU_FKEYS   // section dialogs are self-describing
+    } else if matches!(app.sec_mode, SectionMode::Props { sort_state: SortState::Dialog { .. }, .. }) {
+        &MENU_FKEYS   // sort dialog is self-describing
+    } else if matches!(app.sec_mode, SectionMode::Props { .. }) {
+        &MENU_FKEYS   // section props is self-describing
     } else if matches!(app.mode, Mode::ItemProps { .. }) {
         &ITEM_PROPS_FKEYS
     } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. }) {
@@ -127,10 +138,15 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &CATPROPS_FKEYS
     } else if matches!(app.mode, Mode::Edit { .. } | Mode::Create { .. }) {
         &EDIT_FKEYS
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Rename { .. } | ViewMgrMode::Props { .. }) {
+        &EDIT_FKEYS
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::ConfirmDelete { .. }) {
+        &MENU_FKEYS
     } else {
         match app.screen {
-            AppScreen::View   => &VIEW_FKEYS,
-            AppScreen::CatMgr => &CATMGR_FKEYS,
+            AppScreen::View    => &VIEW_FKEYS,
+            AppScreen::CatMgr  => &CATMGR_FKEYS,
+            AppScreen::ViewMgr => &VIEWMGR_FKEYS,
         }
     };
     let actions = match app.fkey_mod {

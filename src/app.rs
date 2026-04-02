@@ -1,5 +1,5 @@
 use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
-use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, Item, Section, View};
+use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, Item, Section, SortNewItems, SortOn, SortOrder, SortSeq, View};
 use crate::persist;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,9 +15,33 @@ pub enum FKeyMod { Normal, Shift, Ctrl, Alt }
 pub enum AppScreen {
     View,
     CatMgr,
+    ViewMgr,
 }
 
 // ── View-mode state ───────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ViewAddField { Name, Section }
+
+pub enum ViewMode {
+    Normal,
+    Add {
+        name_buf:     String,
+        name_cursor:  usize,
+        sec_buf:      String,
+        sec_cursor:   usize,
+        sec_cat_idx:  Option<usize>,   // Some = F3-picked index into flatten_cats
+        active_field: ViewAddField,
+    },
+    /// F3 category picker overlaid on the View Add dialog
+    AddPick {
+        name_buf:      String,
+        name_cursor:   usize,
+        sec_buf:       String,
+        sec_cursor:    usize,
+        picker_cursor: usize,
+    },
+}
 
 pub enum CursorPos {
     SectionHead(usize),
@@ -74,6 +98,20 @@ pub enum CatMode {
 pub struct CatMgrState {
     pub cursor: usize,
     pub mode:   CatMode,
+}
+
+// ── ViewMgr state ─────────────────────────────────────────────────────────────
+
+pub enum ViewMgrMode {
+    Normal,
+    Rename { buffer: String, cursor: usize },
+    ConfirmDelete { yes: bool },
+    Props  { buffer: String, cursor: usize },
+}
+
+pub struct ViewMgrState {
+    pub cursor: usize,
+    pub mode:   ViewMgrMode,
 }
 
 // ── Column state ──────────────────────────────────────────────────────────────
@@ -185,6 +223,40 @@ pub enum SectionInsert { Below, Above }
 #[derive(Clone, Copy, PartialEq)]
 pub enum SectionFormField { Category, Insert }
 
+// ── Section Properties state ──────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SecPropsField { Head, ItemSorting }
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SortField {
+    SortNewItems,
+    PrimaryOn, PrimaryOrder, PrimaryCategory, PrimarySequence,
+    SecondaryOn, SecondaryOrder, SecondaryCategory, SecondarySequence,
+}
+
+pub struct SortPicker {
+    pub cursor: usize,
+    pub target: SortField,
+}
+
+pub enum SortState {
+    Closed,
+    Dialog {
+        sort_new:         SortNewItems,
+        primary_on:       SortOn,
+        primary_order:    SortOrder,
+        primary_cat_id:   Option<usize>,
+        primary_seq:      SortSeq,
+        secondary_on:     SortOn,
+        secondary_order:  SortOrder,
+        secondary_cat_id: Option<usize>,
+        secondary_seq:    SortSeq,
+        active_field:     SortField,
+        picker:           Option<SortPicker>,
+    },
+}
+
 pub enum SectionMode {
     Normal,
     Add {
@@ -199,6 +271,13 @@ pub enum SectionMode {
         picker_cursor: usize,
     },
     ConfirmRemove { yes: bool },
+    Props {
+        sec_idx:      usize,
+        head_buf:     String,
+        head_cur:     usize,
+        active_field: SecPropsField,
+        sort_state:   SortState,
+    },
 }
 
 // ── Note state ────────────────────────────────────────────────────────────────
@@ -254,13 +333,19 @@ pub struct FlatCat {
 
 pub struct App {
     pub screen:      AppScreen,
+    // Global item pool (shared across all views)
+    pub items:       Vec<Item>,
     // View
     pub view:        View,
+    pub view_mode:   ViewMode,
+    pub inactive_views: Vec<View>,
     pub cursor:      CursorPos,
     pub mode:        Mode,
     // CatMgr
     pub categories:  Vec<Category>,
     pub cat_state:   CatMgrState,
+    // ViewMgr
+    pub vmgr_state:  ViewMgrState,
     // Column
     pub col_cursor:  usize,
     pub col_mode:    ColMode,
@@ -300,27 +385,105 @@ fn char_to_byte(s: &str, n: usize) -> usize {
 ///
 /// A section shows items whose `values` map contains a key that is `cat_id`
 /// or any descendant of `cat_id` in the category tree.
-pub fn section_item_indices(view: &View, sec_idx: usize, cats: &[Category]) -> Vec<usize> {
+pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &[Category]) -> Vec<usize> {
     if sec_idx >= view.sections.len() { return vec![]; }
+    let sec = &view.sections[sec_idx];
+
     let mut parent_map = HashMap::new();
     let mut name_map   = HashMap::new();
     build_cat_maps(cats, None, &mut parent_map, &mut name_map);
 
-    let is_under = |mut id: usize, target: usize| -> bool {
-        loop {
-            if id == target { return true; }
-            match parent_map.get(&id) {
-                Some(Some(p)) => id = *p,
-                _             => return false,
+    let cat_id = sec.cat_id;
+    let mut indices: Vec<usize> = items.iter().enumerate()
+        .filter(|(_, item)| item.values.keys().any(|&k| is_under_map(k, cat_id, &parent_map)))
+        .map(|(i, _)| i)
+        .collect();
+
+    if sec.primary_on != SortOn::None {
+        let flat = flatten_cats(cats);
+        let flat_order: HashMap<usize, usize> = flat.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
+
+        indices.sort_by(|&a, &b| {
+            let ka = item_sort_key(&items[a], sec.primary_on, sec.primary_cat_id, sec.primary_seq,
+                                   cat_id, &parent_map, &name_map, &flat_order, cats);
+            let kb = item_sort_key(&items[b], sec.primary_on, sec.primary_cat_id, sec.primary_seq,
+                                   cat_id, &parent_map, &name_map, &flat_order, cats);
+            let ord = ka.cmp(&kb);
+            let ord = if sec.primary_order == SortOrder::Descending { ord.reverse() } else { ord };
+            if ord != std::cmp::Ordering::Equal { return ord; }
+            if sec.secondary_on != SortOn::None {
+                let sa = item_sort_key(&items[a], sec.secondary_on, sec.secondary_cat_id, sec.secondary_seq,
+                                       cat_id, &parent_map, &name_map, &flat_order, cats);
+                let sb = item_sort_key(&items[b], sec.secondary_on, sec.secondary_cat_id, sec.secondary_seq,
+                                       cat_id, &parent_map, &name_map, &flat_order, cats);
+                let ord2 = sa.cmp(&sb);
+                if sec.secondary_order == SortOrder::Descending { ord2.reverse() } else { ord2 }
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        });
+    }
+
+    indices
+}
+
+fn is_under_map(mut id: usize, target: usize, parent_map: &HashMap<usize, Option<usize>>) -> bool {
+    loop {
+        if id == target { return true; }
+        match parent_map.get(&id) {
+            Some(Some(p)) => id = *p,
+            _             => return false,
+        }
+    }
+}
+
+/// Build a string sort key for one item under the given sort configuration.
+/// All keys are strings so comparisons are uniform; numeric/date keys are
+/// encoded as zero-padded or bit-pattern hex so lexicographic order is correct.
+fn item_sort_key(
+    item:       &Item,
+    sort_on:    SortOn,
+    sort_cat:   Option<usize>,
+    seq:        SortSeq,
+    sec_cat:    usize,
+    parent_map: &HashMap<usize, Option<usize>>,
+    name_map:   &HashMap<usize, String>,
+    flat_order: &HashMap<usize, usize>,
+    cats:       &[Category],
+) -> String {
+    match sort_on {
+        SortOn::None => String::new(),
+        SortOn::ItemText => item.text.to_lowercase(),
+        SortOn::Category => {
+            let target = sort_cat.unwrap_or(sec_cat);
+            let Some(mid) = item.values.keys().copied()
+                .find(|&k| is_under_map(k, target, parent_map))
+            else { return String::new(); };
+            match seq {
+                SortSeq::CategoryHierarchy =>
+                    format!("{:016}", flat_order.get(&mid).copied().unwrap_or(usize::MAX)),
+                SortSeq::Alphabetic =>
+                    name_map.get(&mid).cloned().unwrap_or_default().to_lowercase(),
+                SortSeq::Numeric => {
+                    let v = item.values.get(&mid).map(|s| s.as_str()).unwrap_or("");
+                    let n = v.trim().parse::<f64>().unwrap_or(0.0);
+                    // Encode float bits so lexicographic order == numeric order
+                    let bits = n.to_bits();
+                    let sortable: u64 = if n.is_sign_negative() { !bits } else { bits | (1u64 << 63) };
+                    format!("{:016x}", sortable)
+                }
+                SortSeq::Date =>
+                    // ISO-8601 value strings sort lexicographically
+                    item.values.get(&mid).cloned().unwrap_or_default(),
             }
         }
-    };
-
-    let cat_id = view.sections[sec_idx].cat_id;
-    view.items.iter().enumerate()
-        .filter(|(_, item)| item.values.keys().any(|&k| is_under(k, cat_id)))
-        .map(|(i, _)| i)
-        .collect()
+        SortOn::CategoryNote => {
+            let Some(mid) = item.values.keys().copied()
+                .find(|&k| is_under_map(k, sec_cat, parent_map))
+            else { return String::new(); };
+            cat_note_for_id(cats, mid).to_lowercase()
+        }
+    }
 }
 
 // ── Tree helpers (free functions) ─────────────────────────────────────────────
@@ -359,6 +522,36 @@ fn flatten_inner(cats: &[Category], depth: usize, prefix: &[usize], out: &mut Ve
         out.push(FlatCat { depth, path: path.clone(), id: cat.id, name: cat.name.clone(), kind: cat.kind });
         flatten_inner(&cat.children, depth + 1, &path, out);
     }
+}
+
+/// Compute the ordered list of visible SortField values for the sort dialog.
+fn sort_visible_fields(
+    primary_on:       SortOn,
+    primary_cat_id:   Option<usize>,
+    secondary_on:     SortOn,
+    secondary_cat_id: Option<usize>,
+) -> Vec<SortField> {
+    let mut f = vec![SortField::SortNewItems, SortField::PrimaryOn];
+    if primary_on != SortOn::None {
+        f.push(SortField::PrimaryOrder);
+    }
+    if primary_on == SortOn::Category {
+        f.push(SortField::PrimaryCategory);
+        if primary_cat_id.is_some() {
+            f.push(SortField::PrimarySequence);
+        }
+    }
+    f.push(SortField::SecondaryOn);
+    if secondary_on != SortOn::None {
+        f.push(SortField::SecondaryOrder);
+    }
+    if secondary_on == SortOn::Category {
+        f.push(SortField::SecondaryCategory);
+        if secondary_cat_id.is_some() {
+            f.push(SortField::SecondarySequence);
+        }
+    }
+    f
 }
 
 /// Remove and return the category at `path`.
@@ -960,15 +1153,19 @@ pub fn days_in_month(year: i32, month: u32) -> u32 {
 impl App {
     pub fn new() -> Self {
         let section = Section {
-            id:     1,
-            name:   "Initial Section".to_string(),
-            cat_id: 6,   // backed by the "Initial Section" standard category
+            id:               1,
+            name:             "Initial Section".to_string(),
+            cat_id:           6,
+            sort_new:         SortNewItems::OnLeavingSection,
+            primary_on:       SortOn::None,   primary_order:    SortOrder::Ascending,
+            primary_cat_id:   None,           primary_seq:      SortSeq::CategoryHierarchy,
+            secondary_on:     SortOn::None,   secondary_order:  SortOrder::Ascending,
+            secondary_cat_id: None,           secondary_seq:    SortSeq::CategoryHierarchy,
         };
         let view = View {
             id:         1,
             name:       "Initial View".to_string(),
             sections:   vec![section],
-            items:      Vec::new(),
             columns:    Vec::new(),
             left_count: 0,
         };
@@ -1005,11 +1202,15 @@ impl App {
 
         App {
             screen:     AppScreen::View,
+            items:      vec![],
             view,
+            view_mode:  ViewMode::Normal,
+            inactive_views: vec![],
             cursor:     CursorPos::SectionHead(0),
             mode:       Mode::Normal,
             categories: vec![main_cat],
             cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal },
+            vmgr_state:  ViewMgrState { cursor: 0, mode: ViewMgrMode::Normal },
             col_cursor:  0,
             col_mode:    ColMode::Normal,
             sub_row:     0,
@@ -1034,13 +1235,21 @@ impl App {
         path:     Option<PathBuf>,
         password: Option<String>,
     ) -> Self {
+        let mut all_views = data.views;
+        let idx = data.current_view.min(all_views.len().saturating_sub(1));
+        let view = all_views.remove(idx);
+        let inactive_views = all_views;
         App {
             screen:     AppScreen::View,
-            view:       data.view,
+            items:      data.items,
+            view,
+            view_mode:  ViewMode::Normal,
+            inactive_views,
             cursor:     CursorPos::SectionHead(0),
             mode:       Mode::Normal,
             categories: data.categories,
             cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal },
+            vmgr_state:  ViewMgrState { cursor: 0, mode: ViewMgrMode::Normal },
             col_cursor:  0,
             col_mode:    ColMode::Normal,
             sub_row:     0,
@@ -1061,13 +1270,177 @@ impl App {
 
     /// Resolve a (section, local_item_pos) cursor to a global index into `view.items`.
     fn global_item_idx(&self, sec: usize, local: usize) -> Option<usize> {
-        section_item_indices(&self.view, sec, &self.categories).get(local).copied()
+        section_item_indices(&self.items, &self.view, sec, &self.categories).get(local).copied()
     }
 
     fn alloc_id(&mut self) -> usize {
         let id = self.next_id;
         self.next_id += 1;
         id
+    }
+
+    // ── View Add dialog ───────────────────────────────────────────────────────
+
+    pub fn view_add_open(&mut self) {
+        self.view_mode = ViewMode::Add {
+            name_buf: String::new(), name_cursor: 0,
+            sec_buf:  String::new(), sec_cursor:  0,
+            sec_cat_idx: None,
+            active_field: ViewAddField::Name,
+        };
+    }
+    pub fn view_add_char(&mut self, ch: char) {
+        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, sec_cat_idx, active_field } = &mut self.view_mode {
+            if *active_field == ViewAddField::Name {
+                let b = char_to_byte(name_buf, *name_cursor);
+                name_buf.insert(b, ch); *name_cursor += 1;
+            } else {
+                *sec_cat_idx = None;
+                let b = char_to_byte(sec_buf, *sec_cursor);
+                sec_buf.insert(b, ch); *sec_cursor += 1;
+            }
+        }
+    }
+    pub fn view_add_backspace(&mut self) {
+        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, sec_cat_idx, active_field } = &mut self.view_mode {
+            if *active_field == ViewAddField::Name {
+                if *name_cursor > 0 {
+                    *name_cursor -= 1;
+                    let b = char_to_byte(name_buf, *name_cursor);
+                    name_buf.remove(b);
+                }
+            } else {
+                if *sec_cursor > 0 {
+                    *sec_cat_idx = None;
+                    *sec_cursor -= 1;
+                    let b = char_to_byte(sec_buf, *sec_cursor);
+                    sec_buf.remove(b);
+                }
+            }
+        }
+    }
+    pub fn view_add_cursor_left(&mut self) {
+        if let ViewMode::Add { name_cursor, sec_cursor, active_field, .. } = &mut self.view_mode {
+            if *active_field == ViewAddField::Name {
+                if *name_cursor > 0 { *name_cursor -= 1; }
+            } else {
+                if *sec_cursor > 0 { *sec_cursor -= 1; }
+            }
+        }
+    }
+    pub fn view_add_cursor_right(&mut self) {
+        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, active_field, .. } = &mut self.view_mode {
+            if *active_field == ViewAddField::Name {
+                if *name_cursor < name_buf.chars().count() { *name_cursor += 1; }
+            } else {
+                if *sec_cursor < sec_buf.chars().count() { *sec_cursor += 1; }
+            }
+        }
+    }
+    pub fn view_add_tab(&mut self) {
+        if let ViewMode::Add { active_field, .. } = &mut self.view_mode {
+            *active_field = match *active_field {
+                ViewAddField::Name    => ViewAddField::Section,
+                ViewAddField::Section => ViewAddField::Name,
+            };
+        }
+    }
+    pub fn view_add_open_pick(&mut self) {
+        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, sec_cat_idx, active_field } = &self.view_mode {
+            if *active_field != ViewAddField::Section { return; }
+            let flat = flatten_cats(&self.categories);
+            let cursor = sec_cat_idx.unwrap_or(0).min(flat.len().saturating_sub(1));
+            let (nb, nc, sb, sc) = (name_buf.clone(), *name_cursor, sec_buf.clone(), *sec_cursor);
+            self.view_mode = ViewMode::AddPick {
+                name_buf: nb, name_cursor: nc,
+                sec_buf: sb, sec_cursor: sc,
+                picker_cursor: cursor,
+            };
+        }
+    }
+    pub fn view_add_pick_up(&mut self) {
+        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
+            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        }
+    }
+    pub fn view_add_pick_down(&mut self) {
+        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
+            let max = flatten_cats(&self.categories).len().saturating_sub(1);
+            if *picker_cursor < max { *picker_cursor += 1; }
+        }
+    }
+    pub fn view_add_pick_confirm(&mut self) {
+        if let ViewMode::AddPick { name_buf, name_cursor, picker_cursor, .. } = &self.view_mode {
+            let flat = flatten_cats(&self.categories);
+            let idx  = *picker_cursor;
+            let (nb, nc) = (name_buf.clone(), *name_cursor);
+            let sec_name = flat.get(idx).map(|e| e.name.clone()).unwrap_or_default();
+            let sc = sec_name.chars().count();
+            self.view_mode = ViewMode::Add {
+                name_buf: nb, name_cursor: nc,
+                sec_buf: sec_name, sec_cursor: sc,
+                sec_cat_idx: Some(idx), active_field: ViewAddField::Section,
+            };
+        }
+    }
+    pub fn view_add_pick_cancel(&mut self) {
+        if let ViewMode::AddPick { name_buf, name_cursor, sec_buf, sec_cursor, .. } = &self.view_mode {
+            let (nb, nc, sb, sc) = (name_buf.clone(), *name_cursor, sec_buf.clone(), *sec_cursor);
+            self.view_mode = ViewMode::Add {
+                name_buf: nb, name_cursor: nc,
+                sec_buf: sb, sec_cursor: sc,
+                sec_cat_idx: None, active_field: ViewAddField::Section,
+            };
+        }
+    }
+    pub fn view_add_confirm(&mut self) {
+        let (name, sec_name, sec_cat_idx) = match &self.view_mode {
+            ViewMode::Add { name_buf, sec_buf, sec_cat_idx, .. } =>
+                (name_buf.trim().to_string(), sec_buf.trim().to_string(), *sec_cat_idx),
+            _ => return,
+        };
+        if name.is_empty() || sec_name.is_empty() { return; }
+
+        let cat_id: usize = {
+            let flat = flatten_cats(&self.categories);
+            let found = if let Some(idx) = sec_cat_idx {
+                flat.get(idx).map(|e| e.id)
+            } else {
+                let lower = sec_name.to_lowercase();
+                flat.iter().find(|e| e.name.to_lowercase() == lower).map(|e| e.id)
+            };
+            if let Some(id) = found { id }
+            else {
+                let new_id = self.alloc_id();
+                if let Some(root) = self.categories.first() {
+                    let root_id = root.id;
+                    add_child_to_cat(&mut self.categories, root_id, new_id, &sec_name);
+                }
+                new_id
+            }
+        };
+
+        self.view_mode = ViewMode::Normal;
+        let view_id = self.alloc_id();
+        let sec_id  = self.alloc_id();
+        let section = Section {
+            id: sec_id, name: sec_name, cat_id,
+            sort_new:         SortNewItems::OnLeavingSection,
+            primary_on:       SortOn::None,   primary_order:    SortOrder::Ascending,
+            primary_cat_id:   None,           primary_seq:      SortSeq::CategoryHierarchy,
+            secondary_on:     SortOn::None,   secondary_order:  SortOrder::Ascending,
+            secondary_cat_id: None,           secondary_seq:    SortSeq::CategoryHierarchy,
+        };
+        let new_view = View { id: view_id, name, sections: vec![section],
+                              columns: vec![], left_count: 0 };
+        let old = std::mem::replace(&mut self.view, new_view);
+        self.inactive_views.push(old);
+        self.cursor = CursorPos::SectionHead(0);
+        self.col_cursor = 0; self.col_mode = ColMode::Normal; self.sec_mode = SectionMode::Normal;
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+    pub fn view_add_cancel(&mut self) {
+        self.view_mode = ViewMode::Normal;
     }
 
     // ── Note ──────────────────────────────────────────────────────────────────
@@ -1097,7 +1470,7 @@ impl App {
                     let gi = self.global_item_idx(section, item);
                     let sub_cat_id = gi.and_then(|gi| {
                         let ids = item_col_assigned_cat_ids(
-                            &self.view.items[gi].values, col.cat_id, &self.categories,
+                            &self.items[gi].values, col.cat_id, &self.categories,
                         );
                         ids.get(self.sub_row).copied()
                     });
@@ -1126,7 +1499,7 @@ impl App {
     pub fn get_note_label(&self, target: &NoteTarget) -> String {
         let raw = match target {
             NoteTarget::Item(gi) => {
-                self.view.items.get(*gi).map(|i| i.text.as_str()).unwrap_or("item").to_string()
+                self.items.get(*gi).map(|i| i.text.as_str()).unwrap_or("item").to_string()
             }
             NoteTarget::Cat(cat_id) => {
                 find_cat_note_name(&self.categories, *cat_id)
@@ -1146,7 +1519,7 @@ impl App {
     pub fn get_note_content(&self, target: &NoteTarget) -> String {
         match target {
             NoteTarget::Item(gi) => {
-                self.view.items.get(*gi).map(|i| i.note.clone()).unwrap_or_default()
+                self.items.get(*gi).map(|i| i.note.clone()).unwrap_or_default()
             }
             NoteTarget::Cat(cat_id) => {
                 find_cat_note(&self.categories, *cat_id).unwrap_or_default()
@@ -1158,7 +1531,7 @@ impl App {
     pub fn apply_note(&mut self, target: NoteTarget, content: String) {
         match target {
             NoteTarget::Item(gi) => {
-                if let Some(item) = self.view.items.get_mut(gi) {
+                if let Some(item) = self.items.get_mut(gi) {
                     item.note = content;
                 }
             }
@@ -1193,8 +1566,9 @@ impl App {
             }
         }
         self.screen = match self.screen {
-            AppScreen::View   => AppScreen::CatMgr,
-            AppScreen::CatMgr => AppScreen::View,
+            AppScreen::View    => AppScreen::CatMgr,
+            AppScreen::CatMgr  => AppScreen::View,
+            AppScreen::ViewMgr => AppScreen::CatMgr,
         };
     }
 
@@ -1209,8 +1583,9 @@ impl App {
 
     fn current_menu_items(&self) -> &'static [crate::menu::TopItem] {
         match self.screen {
-            AppScreen::View   => VIEW_MENU,
-            AppScreen::CatMgr => CATMGR_MENU,
+            AppScreen::View    => VIEW_MENU,
+            AppScreen::CatMgr  => CATMGR_MENU,
+            AppScreen::ViewMgr => VIEW_MENU,
         }
     }
 
@@ -1218,7 +1593,11 @@ impl App {
         match action {
             MenuAction::Quit         => { self.trigger_quit(); }
             MenuAction::ReturnToView => {
-                if matches!(self.screen, AppScreen::CatMgr) { self.toggle_catmgr(); }
+                match self.screen {
+                    AppScreen::CatMgr  => { self.toggle_catmgr(); }
+                    AppScreen::ViewMgr => { self.close_view_mgr(); }
+                    AppScreen::View    => {}
+                }
             }
             MenuAction::ColumnAdd        => self.col_open_form(true,  ColFormField::Head),
             MenuAction::ColumnProperties => self.col_open_form(false, ColFormField::Head),
@@ -1227,6 +1606,7 @@ impl App {
             MenuAction::ColumnMove       => self.col_begin_move(),
             MenuAction::SectionAdd       => self.sec_open_add(SectionInsert::Below),
             MenuAction::SectionRemove    => self.sec_open_confirm_remove(),
+            MenuAction::ViewAdd          => self.view_add_open(),
             MenuAction::FileSave                => { self.handle_file_save(); }
             MenuAction::FileEnableEncryption
             | MenuAction::FileChangePassword
@@ -1371,7 +1751,7 @@ impl App {
             CursorPos::SectionHead(0) => CursorPos::SectionHead(0),
             CursorPos::SectionHead(s) => {
                 let prev = s - 1;
-                let n = section_item_indices(&self.view, prev, &self.categories).len();
+                let n = section_item_indices(&self.items, &self.view, prev, &self.categories).len();
                 if n == 0 { CursorPos::SectionHead(prev) }
                 else      { CursorPos::Item { section: prev, item: n - 1 } }
             }
@@ -1380,8 +1760,8 @@ impl App {
         };
         if self.col_cursor > 0 {
             if let CursorPos::Item { section: s, item: i } = new_cursor {
-                if let Some(gi) = section_item_indices(&self.view, s, &self.categories).get(i).copied() {
-                    let n = item_n_rows(&self.view.items[gi], &self.view.columns, &self.categories);
+                if let Some(gi) = section_item_indices(&self.items, &self.view, s, &self.categories).get(i).copied() {
+                    let n = item_n_rows(&self.items[gi], &self.view.columns, &self.categories);
                     self.sub_row = n.saturating_sub(1);
                 } else {
                     self.sub_row = 0;
@@ -1398,8 +1778,8 @@ impl App {
         if self.col_cursor > 0 {
             if let CursorPos::Item { section: s, item: i } = &self.cursor {
                 let (s, i) = (*s, *i);
-                if let Some(gi) = section_item_indices(&self.view, s, &self.categories).get(i).copied() {
-                    let n = item_n_rows(&self.view.items[gi], &self.view.columns, &self.categories);
+                if let Some(gi) = section_item_indices(&self.items, &self.view, s, &self.categories).get(i).copied() {
+                    let n = item_n_rows(&self.items[gi], &self.view.columns, &self.categories);
                     if self.sub_row + 1 < n {
                         self.sub_row += 1;
                         return;
@@ -1412,7 +1792,7 @@ impl App {
         self.cursor = match &self.cursor {
             CursorPos::SectionHead(s) => {
                 let s = *s;
-                let n = section_item_indices(&self.view, s, &self.categories).len();
+                let n = section_item_indices(&self.items, &self.view, s, &self.categories).len();
                 if n == 0 {
                     if s + 1 < num_sections { CursorPos::SectionHead(s + 1) }
                     else                    { CursorPos::SectionHead(s) }
@@ -1423,7 +1803,7 @@ impl App {
             CursorPos::Item { section, item } => {
                 let s = *section;
                 let i = *item;
-                let num_items = section_item_indices(&self.view, s, &self.categories).len();
+                let num_items = section_item_indices(&self.items, &self.view, s, &self.categories).len();
                 if i + 1 < num_items {
                     CursorPos::Item { section: s, item: i + 1 }
                 } else if s + 1 < num_sections {
@@ -1475,7 +1855,7 @@ impl App {
                 if col_idx < self.view.columns.len() {
                     let cat_id   = self.view.columns[col_idx].cat_id;
                     let gi       = self.global_item_idx(*section, *item).unwrap_or(usize::MAX);
-                    let original = self.view.items.get(gi)
+                    let original = self.items.get(gi)
                         .and_then(|it| it.values.get(&cat_id)).cloned().unwrap_or_default();
                     self.mode = Mode::Edit {
                         original,
@@ -1504,7 +1884,7 @@ impl App {
                 CursorPos::SectionHead(s)         => self.view.sections[*s].name.clone(),
                 CursorPos::Item { section, item } => {
                     let gi = self.global_item_idx(*section, *item).unwrap_or(usize::MAX);
-                    self.view.items.get(gi).map(|it| it.text.clone()).unwrap_or_default()
+                    self.items.get(gi).map(|it| it.text.clone()).unwrap_or_default()
                 }
             };
             (orig, true)
@@ -1520,7 +1900,7 @@ impl App {
                 CursorPos::Item { section, item } => {
                     let cat_id = self.view.columns[col - 1].cat_id;
                     let gi  = self.global_item_idx(*section, *item).unwrap_or(usize::MAX);
-                    let val = self.view.items.get(gi)
+                    let val = self.items.get(gi)
                         .and_then(|it| it.values.get(&cat_id)).cloned().unwrap_or_default();
                     (val, true)
                 }
@@ -1607,14 +1987,14 @@ impl App {
                 // Auto-assign item to the section's backing category.
                 values.entry(self.view.sections[sec_idx].cat_id).or_insert_with(String::new);
                 // Determine global insert position: after local item `insert_after`, or at end.
-                let indices = section_item_indices(&self.view, sec_idx, &self.categories);
+                let indices = section_item_indices(&self.items, &self.view, sec_idx, &self.categories);
                 let global_pos = match insert_after {
-                    Some(local) => indices.get(local).map(|&g| g + 1).unwrap_or(self.view.items.len()),
-                    None        => indices.first().copied().unwrap_or(self.view.items.len()),
+                    Some(local) => indices.get(local).map(|&g| g + 1).unwrap_or(self.items.len()),
+                    None        => indices.first().copied().unwrap_or(self.items.len()),
                 };
-                self.view.items.insert(global_pos, Item { id, text, values, cond_cats, note: String::new(), note_file: String::new() });
+                self.items.insert(global_pos, Item { id, text, values, cond_cats, note: String::new(), note_file: String::new() });
                 // Local index is position within section after insertion.
-                let new_local = section_item_indices(&self.view, sec_idx, &self.categories)
+                let new_local = section_item_indices(&self.items, &self.view, sec_idx, &self.categories)
                     .iter().position(|&g| g == global_pos).unwrap_or(0);
                 self.cursor = CursorPos::Item { section: sec_idx, item: new_local };
             }
@@ -1626,7 +2006,7 @@ impl App {
                         CursorPos::SectionHead(s) => { self.view.sections[*s].name = text; }
                         CursorPos::Item { section, item } => {
                             if let Some(gi) = self.global_item_idx(*section, *item) {
-                                self.view.items[gi].text = text;
+                                self.items[gi].text = text;
                             }
                         }
                     }
@@ -1664,9 +2044,9 @@ impl App {
                                 };
                                 if let Some(gi) = gi {
                                     if final_text.is_empty() {
-                                        self.view.items[gi].values.remove(&cat_id);
+                                        self.items[gi].values.remove(&cat_id);
                                     } else {
-                                        self.view.items[gi].values.insert(cat_id, final_text);
+                                        self.items[gi].values.insert(cat_id, final_text);
                                     }
                                 }
                             } else if !text.is_empty() {
@@ -1680,7 +2060,7 @@ impl App {
                                     }
                                 };
                                 if let Some(gi) = gi {
-                                    self.view.items[gi].values.insert(sub_id, String::new());
+                                    self.items[gi].values.insert(sub_id, String::new());
                                 }
                             }
                         }
@@ -1820,7 +2200,7 @@ impl App {
         if let Mode::ItemProps { gi, cursor, edit_buf } = &mut self.mode {
             if *cursor != 0 { return; }
             if edit_buf.is_some() { return; }
-            let text = self.view.items.get(*gi)
+            let text = self.items.get(*gi)
                 .map(|it| it.text.clone()).unwrap_or_default();
             let len = text.chars().count();
             *edit_buf = Some((text, len)); // cursor at end
@@ -1834,7 +2214,7 @@ impl App {
         };
         let trimmed = buf.trim().to_string();
         if !trimmed.is_empty() {
-            if let Some(item) = self.view.items.get_mut(gi) {
+            if let Some(item) = self.items.get_mut(gi) {
                 item.text = trimmed;
             }
         }
@@ -1886,7 +2266,7 @@ impl App {
     /// Build sorted assigned-category list: (cat_id, name, kind, stored_value).
     pub fn item_props_assigned(&self, gi: usize) -> Vec<(usize, String, CategoryKind, String)> {
         let flat = flatten_cats(&self.categories);
-        let item = match self.view.items.get(gi) { Some(it) => it, None => return vec![] };
+        let item = match self.items.get(gi) { Some(it) => it, None => return vec![] };
         let mut list: Vec<(usize, String, CategoryKind, String)> = item.values.keys()
             .filter_map(|id| flat.iter().find(|e| e.id == *id).map(|e|
                 (*id, e.name.clone(), e.kind, item.values[id].clone())
@@ -1998,7 +2378,7 @@ impl App {
         let list = self.item_props_assigned(gi);
         if let Some((cat_id, _, _, _)) = list.get(cur - 4) {
             let cat_id = *cat_id;
-            if let Some(item) = self.view.items.get_mut(gi) {
+            if let Some(item) = self.items.get_mut(gi) {
                 item.values.remove(&cat_id);
                 item.cond_cats.remove(&cat_id);
             }
@@ -2017,7 +2397,7 @@ impl App {
         };
         if s >= self.view.sections.len() { return; }
         let Some(gi) = self.global_item_idx(s, i) else { return; };
-        self.view.items.remove(gi);
+        self.items.remove(gi);
         // Move cursor to the item above, or the section head if none remain.
         self.cursor = if i > 0 {
             CursorPos::Item { section: s, item: i - 1 }
@@ -2664,7 +3044,7 @@ impl App {
             AssignMode::Normal => return,
         };
         let empty = std::collections::HashMap::new();
-        let item_vals = self.view.items.get(gi).map(|it| &it.values).unwrap_or(&empty);
+        let item_vals = self.items.get(gi).map(|it| &it.values).unwrap_or(&empty);
         let (new_cur, new_sub) = if sub {
             (cur, false)   // sub-row → its parent cat
         } else if cur > 0 {
@@ -2691,7 +3071,7 @@ impl App {
             AssignMode::Normal => return,
         };
         let empty = std::collections::HashMap::new();
-        let item_vals = self.view.items.get(gi).map(|it| &it.values).unwrap_or(&empty);
+        let item_vals = self.items.get(gi).map(|it| &it.values).unwrap_or(&empty);
         let (new_cur, new_sub) = if sub {
             ((cur + 1).min(len.saturating_sub(1)), false)
         } else {
@@ -2751,8 +3131,8 @@ impl App {
         let cats = flatten_cats(&self.categories);
         let Some(entry) = cats.get(cur) else { return };
         let cat_id = entry.id;
-        if gi >= self.view.items.len() { return; }
-        let item = &mut self.view.items[gi];
+        if gi >= self.items.len() { return; }
+        let item = &mut self.items[gi];
         if item.values.contains_key(&cat_id) {
             item.values.remove(&cat_id);
         } else {
@@ -2883,7 +3263,12 @@ impl App {
         self.view.sections.insert(insert_idx, Section {
             id,
             name,
-            cat_id: sec_cat,
+            cat_id:           sec_cat,
+            sort_new:         SortNewItems::OnLeavingSection,
+            primary_on:       SortOn::None,   primary_order:    SortOrder::Ascending,
+            primary_cat_id:   None,           primary_seq:      SortSeq::CategoryHierarchy,
+            secondary_on:     SortOn::None,   secondary_order:  SortOrder::Ascending,
+            secondary_cat_id: None,           secondary_seq:    SortSeq::CategoryHierarchy,
         });
         self.cursor = CursorPos::SectionHead(insert_idx);
     }
@@ -3014,6 +3399,286 @@ impl App {
             let insert       = *insert;
             let active_field = *active_field;
             self.sec_mode = SectionMode::Add { cat_idx, insert, active_field };
+        }
+    }
+
+    // ── Section Properties ────────────────────────────────────────────────────
+
+    pub fn sec_open_props(&mut self) {
+        let sec_idx = match self.cursor {
+            CursorPos::SectionHead(s) => s,
+            _ => return,
+        };
+        if sec_idx >= self.view.sections.len() { return; }
+        let name = self.view.sections[sec_idx].name.clone();
+        let head_cur = name.chars().count();
+        self.sec_mode = SectionMode::Props {
+            sec_idx,
+            head_buf:     name,
+            head_cur,
+            active_field: SecPropsField::Head,
+            sort_state:   SortState::Closed,
+        };
+    }
+
+    pub fn sec_props_tab(&mut self) {
+        if let SectionMode::Props { active_field, .. } = &mut self.sec_mode {
+            *active_field = match active_field {
+                SecPropsField::Head        => SecPropsField::ItemSorting,
+                SecPropsField::ItemSorting => SecPropsField::Head,
+            };
+        }
+    }
+
+    pub fn sec_props_head_char(&mut self, ch: char) {
+        if let SectionMode::Props { head_buf, head_cur, active_field: SecPropsField::Head, .. }
+            = &mut self.sec_mode
+        {
+            let byte = char_to_byte(head_buf, *head_cur);
+            head_buf.insert(byte, ch);
+            *head_cur += 1;
+        }
+    }
+
+    pub fn sec_props_head_backspace(&mut self) {
+        if let SectionMode::Props { head_buf, head_cur, active_field: SecPropsField::Head, .. }
+            = &mut self.sec_mode
+        {
+            if *head_cur > 0 {
+                *head_cur -= 1;
+                let byte = char_to_byte(head_buf, *head_cur);
+                head_buf.remove(byte);
+            }
+        }
+    }
+
+    pub fn sec_props_head_left(&mut self) {
+        if let SectionMode::Props { head_cur, active_field: SecPropsField::Head, .. }
+            = &mut self.sec_mode
+        {
+            if *head_cur > 0 { *head_cur -= 1; }
+        }
+    }
+
+    pub fn sec_props_head_right(&mut self) {
+        if let SectionMode::Props { head_buf, head_cur, active_field: SecPropsField::Head, .. }
+            = &mut self.sec_mode
+        {
+            if *head_cur < head_buf.chars().count() { *head_cur += 1; }
+        }
+    }
+
+    pub fn sec_props_confirm(&mut self) {
+        if let SectionMode::Props { sec_idx, ref head_buf, .. } = self.sec_mode {
+            let trimmed = head_buf.trim().to_string();
+            if !trimmed.is_empty() && sec_idx < self.view.sections.len() {
+                self.view.sections[sec_idx].name = trimmed;
+                if self.file_path.is_some() { self.dirty = true; }
+            }
+        }
+        self.sec_mode = SectionMode::Normal;
+    }
+
+    pub fn sec_props_cancel(&mut self) {
+        self.sec_mode = SectionMode::Normal;
+    }
+
+    // ── Sort dialog ───────────────────────────────────────────────────────────
+
+    pub fn sec_open_sort_dialog(&mut self) {
+        if let SectionMode::Props { sec_idx, ref mut sort_state, active_field: SecPropsField::ItemSorting, .. }
+            = self.sec_mode
+        {
+            if sec_idx < self.view.sections.len() {
+                let sec = &self.view.sections[sec_idx];
+                *sort_state = SortState::Dialog {
+                    sort_new:         sec.sort_new,
+                    primary_on:       sec.primary_on,
+                    primary_order:    sec.primary_order,
+                    primary_cat_id:   sec.primary_cat_id,
+                    primary_seq:      sec.primary_seq,
+                    secondary_on:     sec.secondary_on,
+                    secondary_order:  sec.secondary_order,
+                    secondary_cat_id: sec.secondary_cat_id,
+                    secondary_seq:    sec.secondary_seq,
+                    active_field:     SortField::SortNewItems,
+                    picker:           None,
+                };
+            }
+        }
+    }
+
+    pub fn sec_sort_tab(&mut self) {
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { active_field, primary_on, primary_cat_id, secondary_on, secondary_cat_id, .. }, ..
+        } = &mut self.sec_mode {
+            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id);
+            let pos = fields.iter().position(|f| f == active_field).unwrap_or(0);
+            *active_field = fields[(pos + 1) % fields.len()];
+        }
+    }
+
+    pub fn sec_sort_tab_back(&mut self) {
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { active_field, primary_on, primary_cat_id, secondary_on, secondary_cat_id, .. }, ..
+        } = &mut self.sec_mode {
+            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id);
+            let pos = fields.iter().position(|f| f == active_field).unwrap_or(0);
+            *active_field = if pos == 0 { *fields.last().unwrap_or(&SortField::SortNewItems) } else { fields[pos - 1] };
+        }
+    }
+
+    pub fn sec_sort_confirm(&mut self) {
+        if let SectionMode::Props {
+            sec_idx,
+            sort_state: SortState::Dialog {
+                sort_new, primary_on, primary_order, primary_cat_id, primary_seq,
+                secondary_on, secondary_order, secondary_cat_id, secondary_seq, ..
+            }, ..
+        } = self.sec_mode {
+            if sec_idx < self.view.sections.len() {
+                let sec = &mut self.view.sections[sec_idx];
+                sec.sort_new         = sort_new;
+                sec.primary_on       = primary_on;
+                sec.primary_order    = primary_order;
+                sec.primary_cat_id   = primary_cat_id;
+                sec.primary_seq      = primary_seq;
+                sec.secondary_on     = secondary_on;
+                sec.secondary_order  = secondary_order;
+                sec.secondary_cat_id = secondary_cat_id;
+                sec.secondary_seq    = secondary_seq;
+                if self.file_path.is_some() { self.dirty = true; }
+            }
+        }
+        if let SectionMode::Props { ref mut sort_state, .. } = self.sec_mode {
+            *sort_state = SortState::Closed;
+        }
+    }
+
+    pub fn sec_sort_cancel(&mut self) {
+        if let SectionMode::Props { ref mut sort_state, .. } = self.sec_mode {
+            *sort_state = SortState::Closed;
+        }
+    }
+
+    // ── Sort field picker ─────────────────────────────────────────────────────
+
+    pub fn sec_sort_open_picker(&mut self) {
+        // Precompute flat cats before borrowing sec_mode
+        let flat_cats = flatten_cats(&self.categories);
+        let (target, current_idx) = {
+            let SectionMode::Props {
+                sort_state: SortState::Dialog {
+                    active_field, primary_on, primary_order, primary_cat_id, primary_seq,
+                    secondary_on, secondary_order, secondary_cat_id, secondary_seq, ..
+                }, ..
+            } = &self.sec_mode else { return; };
+            match active_field {
+                SortField::SortNewItems    => (*active_field, 0),
+                SortField::PrimaryOn       => (*active_field, SortOn::ALL.iter().position(|&x| x == *primary_on).unwrap_or(0)),
+                SortField::PrimaryOrder    => (*active_field, SortOrder::ALL.iter().position(|&x| x == *primary_order).unwrap_or(0)),
+                SortField::PrimaryCategory => (*active_field, primary_cat_id.and_then(|id| flat_cats.iter().position(|e| e.id == id)).unwrap_or(0)),
+                SortField::PrimarySequence => (*active_field, SortSeq::ALL.iter().position(|&x| x == *primary_seq).unwrap_or(0)),
+                SortField::SecondaryOn       => (*active_field, SortOn::ALL.iter().position(|&x| x == *secondary_on).unwrap_or(0)),
+                SortField::SecondaryOrder    => (*active_field, SortOrder::ALL.iter().position(|&x| x == *secondary_order).unwrap_or(0)),
+                SortField::SecondaryCategory => (*active_field, secondary_cat_id.and_then(|id| flat_cats.iter().position(|e| e.id == id)).unwrap_or(0)),
+                SortField::SecondarySequence => (*active_field, SortSeq::ALL.iter().position(|&x| x == *secondary_seq).unwrap_or(0)),
+            }
+        };
+        if let SectionMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.sec_mode {
+            *picker = Some(SortPicker { cursor: current_idx, target });
+        }
+    }
+
+    pub fn sec_sort_picker_up(&mut self) {
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            if let Some(p) = picker {
+                if p.cursor > 0 { p.cursor -= 1; }
+            }
+        }
+    }
+
+    pub fn sec_sort_picker_down(&mut self) {
+        let flat_len = flatten_cats(&self.categories).len();
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            if let Some(p) = picker {
+                let max = match p.target {
+                    SortField::SortNewItems                               => SortNewItems::ALL.len(),
+                    SortField::PrimaryOn | SortField::SecondaryOn         => SortOn::ALL.len(),
+                    SortField::PrimaryOrder | SortField::SecondaryOrder   => SortOrder::ALL.len(),
+                    SortField::PrimaryCategory | SortField::SecondaryCategory => flat_len,
+                    SortField::PrimarySequence | SortField::SecondarySequence => SortSeq::ALL.len(),
+                };
+                if p.cursor + 1 < max { p.cursor += 1; }
+            }
+        }
+    }
+
+    pub fn sec_sort_picker_confirm(&mut self) {
+        let flat_cats = flatten_cats(&self.categories);
+        let (cursor, target) = {
+            let SectionMode::Props { sort_state: SortState::Dialog { picker, .. }, .. } = &self.sec_mode
+            else { return; };
+            match picker { Some(p) => (p.cursor, p.target), None => return }
+        };
+
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog {
+                ref mut sort_new, ref mut primary_on, ref mut primary_order,
+                ref mut primary_cat_id, ref mut primary_seq,
+                ref mut secondary_on, ref mut secondary_order,
+                ref mut secondary_cat_id, ref mut secondary_seq,
+                ref mut picker, ..
+            }, ..
+        } = self.sec_mode {
+            match target {
+                SortField::SortNewItems => {
+                    if let Some(&v) = SortNewItems::ALL.get(cursor) { *sort_new = v; }
+                }
+                SortField::PrimaryOn => {
+                    if let Some(&v) = SortOn::ALL.get(cursor) {
+                        if v != SortOn::Category { *primary_cat_id = None; }
+                        *primary_on = v;
+                    }
+                }
+                SortField::PrimaryOrder => {
+                    if let Some(&v) = SortOrder::ALL.get(cursor) { *primary_order = v; }
+                }
+                SortField::PrimaryCategory => {
+                    if let Some(e) = flat_cats.get(cursor) { *primary_cat_id = Some(e.id); }
+                }
+                SortField::PrimarySequence => {
+                    if let Some(&v) = SortSeq::ALL.get(cursor) { *primary_seq = v; }
+                }
+                SortField::SecondaryOn => {
+                    if let Some(&v) = SortOn::ALL.get(cursor) {
+                        if v != SortOn::Category { *secondary_cat_id = None; }
+                        *secondary_on = v;
+                    }
+                }
+                SortField::SecondaryOrder => {
+                    if let Some(&v) = SortOrder::ALL.get(cursor) { *secondary_order = v; }
+                }
+                SortField::SecondaryCategory => {
+                    if let Some(e) = flat_cats.get(cursor) { *secondary_cat_id = Some(e.id); }
+                }
+                SortField::SecondarySequence => {
+                    if let Some(&v) = SortSeq::ALL.get(cursor) { *secondary_seq = v; }
+                }
+            }
+            *picker = None;
+        }
+    }
+
+    pub fn sec_sort_picker_cancel(&mut self) {
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            *picker = None;
         }
     }
 
@@ -3449,7 +4114,7 @@ impl App {
         let val = match &self.cursor {
             CursorPos::Item { section, item } => {
                 let gi = self.global_item_idx(*section, *item).unwrap_or(usize::MAX);
-                self.view.items.get(gi)
+                self.items.get(gi)
                     .and_then(|it| it.values.get(&cat_id)).cloned().unwrap_or_default()
             }
             _ => String::new(),
@@ -3500,7 +4165,7 @@ impl App {
             _ => None,
         };
         let start = gi.and_then(|gi| {
-            let vals = &self.view.items[gi].values;
+            let vals = &self.items[gi].values;
             subs.iter().position(|(id, _, _)| vals.contains_key(id))
         }).unwrap_or(0);
         self.col_mode = ColMode::SubPick { col_idx, picker_cursor: start };
@@ -3541,7 +4206,7 @@ impl App {
             _ => return,
         };
         let Some(gi) = gi else { return };
-        let item = &mut self.view.items[gi];
+        let item = &mut self.items[gi];
 
         if cat_id == head_id {
             // Toggling the head: clear all descendant assignments, then toggle head.
@@ -3652,7 +4317,7 @@ impl App {
         let val = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, hour, min, sec);
         if let CursorPos::Item { section, item } = &self.cursor {
             if let Some(gi) = self.global_item_idx(*section, *item) {
-                self.view.items[gi].values.insert(cat_id, val);
+                self.items[gi].values.insert(cat_id, val);
             }
         }
     }
@@ -3699,7 +4364,7 @@ impl App {
         let val = format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", year, month, day, h, m, s);
         if let CursorPos::Item { section, item } = &self.cursor {
             if let Some(gi) = self.global_item_idx(*section, *item) {
-                self.view.items[gi].values.insert(cat_id, val);
+                self.items[gi].values.insert(cat_id, val);
             }
         }
     }
@@ -3770,9 +4435,9 @@ impl App {
             None    => return Ok(()),
         };
         let result = if let Some(pw) = &self.session_password.clone() {
-            persist::save_encrypted(&path, pw, &self.categories, &self.view, self.next_id)
+            persist::save_encrypted(&path, pw, &self.categories, &self.items, &self.view, &self.inactive_views, self.next_id)
         } else {
-            persist::save_plain(&path, &self.categories, &self.view, self.next_id)
+            persist::save_plain(&path, &self.categories, &self.items, &self.view, &self.inactive_views, self.next_id)
         };
         if result.is_ok() { self.dirty = false; }
         result
@@ -3946,5 +4611,200 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    // ── View Manager ──────────────────────────────────────────────────────────
+
+    pub fn open_view_mgr(&mut self) {
+        self.mode       = Mode::Normal;
+        self.vmgr_state = ViewMgrState { cursor: 0, mode: ViewMgrMode::Normal };
+        self.screen     = AppScreen::ViewMgr;
+    }
+
+    pub fn close_view_mgr(&mut self) {
+        self.vmgr_state.mode = ViewMgrMode::Normal;
+        self.screen = AppScreen::View;
+    }
+
+    pub fn vmgr_cursor_up(&mut self) {
+        if self.vmgr_state.cursor > 0 { self.vmgr_state.cursor -= 1; }
+    }
+
+    pub fn vmgr_cursor_down(&mut self) {
+        let count = 1 + self.inactive_views.len();
+        if self.vmgr_state.cursor + 1 < count { self.vmgr_state.cursor += 1; }
+    }
+
+    pub fn vmgr_select(&mut self) {
+        let idx = self.vmgr_state.cursor;
+        if idx > 0 && idx - 1 < self.inactive_views.len() {
+            let new_view = self.inactive_views.remove(idx - 1);
+            let old_view = std::mem::replace(&mut self.view, new_view);
+            self.inactive_views.insert(idx - 1, old_view);
+        }
+        self.cursor     = CursorPos::SectionHead(0);
+        self.col_cursor = 0;
+        self.mode       = Mode::Normal;
+        self.col_mode   = ColMode::Normal;
+        self.sec_mode   = SectionMode::Normal;
+        self.close_view_mgr();
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+
+    fn vmgr_view_name_at_cursor(&self) -> &str {
+        if self.vmgr_state.cursor == 0 {
+            &self.view.name
+        } else {
+            self.inactive_views
+                .get(self.vmgr_state.cursor - 1)
+                .map(|v| v.name.as_str())
+                .unwrap_or("")
+        }
+    }
+
+    fn vmgr_set_view_name_at_cursor(&mut self, name: String) {
+        if self.vmgr_state.cursor == 0 {
+            self.view.name = name;
+        } else if let Some(v) = self.inactive_views.get_mut(self.vmgr_state.cursor - 1) {
+            v.name = name;
+        }
+    }
+
+    // ── Rename (F2 — inline) ─────────────────────────────────────────────────
+
+    pub fn vmgr_begin_rename(&mut self) {
+        let name = self.vmgr_view_name_at_cursor().to_string();
+        let cursor = name.chars().count();
+        self.vmgr_state.mode = ViewMgrMode::Rename { buffer: name, cursor };
+    }
+
+    pub fn vmgr_rename_char(&mut self, ch: char) {
+        if let ViewMgrMode::Rename { buffer, cursor } = &mut self.vmgr_state.mode {
+            let byte = char_to_byte(buffer, *cursor);
+            buffer.insert(byte, ch);
+            *cursor += 1;
+        }
+    }
+
+    pub fn vmgr_rename_backspace(&mut self) {
+        if let ViewMgrMode::Rename { buffer, cursor } = &mut self.vmgr_state.mode {
+            if *cursor > 0 {
+                *cursor -= 1;
+                let byte = char_to_byte(buffer, *cursor);
+                buffer.remove(byte);
+            }
+        }
+    }
+
+    pub fn vmgr_rename_left(&mut self) {
+        if let ViewMgrMode::Rename { cursor, .. } = &mut self.vmgr_state.mode {
+            if *cursor > 0 { *cursor -= 1; }
+        }
+    }
+
+    pub fn vmgr_rename_right(&mut self) {
+        if let ViewMgrMode::Rename { buffer, cursor } = &mut self.vmgr_state.mode {
+            if *cursor < buffer.chars().count() { *cursor += 1; }
+        }
+    }
+
+    pub fn vmgr_rename_confirm(&mut self) {
+        if let ViewMgrMode::Rename { buffer, .. } = &self.vmgr_state.mode {
+            let name = buffer.trim().to_string();
+            if !name.is_empty() {
+                self.vmgr_set_view_name_at_cursor(name);
+                if self.file_path.is_some() { self.dirty = true; }
+            }
+        }
+        self.vmgr_state.mode = ViewMgrMode::Normal;
+    }
+
+    pub fn vmgr_rename_cancel(&mut self) {
+        self.vmgr_state.mode = ViewMgrMode::Normal;
+    }
+
+    // ── Props (F6 — dialog) ───────────────────────────────────────────────────
+
+    pub fn vmgr_begin_props(&mut self) {
+        let name = self.vmgr_view_name_at_cursor().to_string();
+        let cursor = name.chars().count();
+        self.vmgr_state.mode = ViewMgrMode::Props { buffer: name, cursor };
+    }
+
+    pub fn vmgr_props_char(&mut self, ch: char) {
+        if let ViewMgrMode::Props { buffer, cursor } = &mut self.vmgr_state.mode {
+            let byte = char_to_byte(buffer, *cursor);
+            buffer.insert(byte, ch);
+            *cursor += 1;
+        }
+    }
+
+    pub fn vmgr_props_backspace(&mut self) {
+        if let ViewMgrMode::Props { buffer, cursor } = &mut self.vmgr_state.mode {
+            if *cursor > 0 {
+                *cursor -= 1;
+                let byte = char_to_byte(buffer, *cursor);
+                buffer.remove(byte);
+            }
+        }
+    }
+
+    pub fn vmgr_props_left(&mut self) {
+        if let ViewMgrMode::Props { cursor, .. } = &mut self.vmgr_state.mode {
+            if *cursor > 0 { *cursor -= 1; }
+        }
+    }
+
+    pub fn vmgr_props_right(&mut self) {
+        if let ViewMgrMode::Props { buffer, cursor } = &mut self.vmgr_state.mode {
+            if *cursor < buffer.chars().count() { *cursor += 1; }
+        }
+    }
+
+    pub fn vmgr_props_confirm(&mut self) {
+        if let ViewMgrMode::Props { buffer, .. } = &self.vmgr_state.mode {
+            let name = buffer.trim().to_string();
+            if !name.is_empty() {
+                self.vmgr_set_view_name_at_cursor(name);
+                if self.file_path.is_some() { self.dirty = true; }
+            }
+        }
+        self.vmgr_state.mode = ViewMgrMode::Normal;
+    }
+
+    pub fn vmgr_props_cancel(&mut self) {
+        self.vmgr_state.mode = ViewMgrMode::Normal;
+    }
+
+    // ── Delete (F4) ───────────────────────────────────────────────────────────
+
+    pub fn vmgr_open_confirm_delete(&mut self) {
+        if 1 + self.inactive_views.len() <= 1 { return; }  // guard: can't delete last view
+        self.vmgr_state.mode = ViewMgrMode::ConfirmDelete { yes: false };
+    }
+
+    pub fn vmgr_delete_confirm(&mut self) {
+        let idx = self.vmgr_state.cursor;
+        if idx == 0 {
+            // promote first inactive view to active, delete the current active view
+            let new_view = self.inactive_views.remove(0);
+            self.view = new_view;
+            self.cursor     = CursorPos::SectionHead(0);
+            self.col_cursor = 0;
+            self.mode       = Mode::Normal;
+            self.col_mode   = ColMode::Normal;
+            self.sec_mode   = SectionMode::Normal;
+            self.vmgr_state.cursor = 0;
+        } else {
+            self.inactive_views.remove(idx - 1);
+            let count = 1 + self.inactive_views.len();
+            if self.vmgr_state.cursor >= count { self.vmgr_state.cursor = count - 1; }
+        }
+        self.vmgr_state.mode = ViewMgrMode::Normal;
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+
+    pub fn vmgr_delete_cancel(&mut self) {
+        self.vmgr_state.mode = ViewMgrMode::Normal;
     }
 }

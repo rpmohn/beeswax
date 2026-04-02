@@ -12,8 +12,9 @@ use crate::menu::{SubItem, SubSubItem, TopItem, CATMGR_MENU, VIEW_MENU};
 /// Call this instead of the normal title bar when `app.menu != Closed`.
 pub fn render_bar(frame: &mut Frame, area: Rect, app: &App) {
     let items: &'static [TopItem] = match app.screen {
-        AppScreen::View   => VIEW_MENU,
-        AppScreen::CatMgr => CATMGR_MENU,
+        AppScreen::View    => VIEW_MENU,
+        AppScreen::CatMgr  => CATMGR_MENU,
+        AppScreen::ViewMgr => VIEW_MENU,
     };
 
     let (row1, row2) = match app.menu {

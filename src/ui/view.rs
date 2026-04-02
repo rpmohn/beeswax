@@ -7,9 +7,10 @@ use ratatui::{
 };
 use crate::app::{App, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
                  CursorPos, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
-                 SectionFormField, SectionInsert, SectionMode,
-                 TimeField, cat_note_indicator, col_autocomplete_match,
+                 SecPropsField, SectionFormField, SectionInsert, SectionMode, SortField, SortState,
+                 TimeField, ViewAddField, ViewMode, cat_note_indicator, col_autocomplete_match,
                  col_display_values, flatten_cats, format_date_value, section_item_indices};
+use crate::model::{SortNewItems, SortOn, SortOrder, SortSeq};
 use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
 use super::{cursor_split, fkeys, menu, title_bar_top};
@@ -166,9 +167,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
 
         // ── Item rows ────────────────────────────────────────────────────
-        let sec_item_indices = section_item_indices(&app.view, s_idx, &app.categories);
+        let sec_item_indices = section_item_indices(&app.items, &app.view, s_idx, &app.categories);
         for (i_idx, &gi) in sec_item_indices.iter().enumerate() {
-            let item = &app.view.items[gi];
+            let item = &app.items[gi];
             let cursor_on_item = matches!(
                 &app.cursor,
                 CursorPos::Item { section: si, item: ii } if *si == s_idx && *ii == i_idx
@@ -871,9 +872,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Current item: global index and its assigned values.
         let (item_text, item_vals, cond_cats) = match &app.cursor {
             CursorPos::Item { section, item } => {
-                let gi = section_item_indices(&app.view, *section, &app.categories)
+                let gi = section_item_indices(&app.items, &app.view, *section, &app.categories)
                     .get(*item).copied();
-                let it = gi.and_then(|gi| app.view.items.get(gi));
+                let it = gi.and_then(|gi| app.items.get(gi));
                 (
                     it.map(|i| i.text.as_str()).unwrap_or(""),
                     it.map(|i| &i.values),
@@ -951,7 +952,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let rev = Style::default().add_modifier(Modifier::REVERSED);
         let dim = Style::default().add_modifier(Modifier::DIM);
 
-        let item = match app.view.items.get(gi) { Some(it) => it, None => return };
+        let item = match app.items.get(gi) { Some(it) => it, None => return };
 
         // Build sorted assigned list.
         let assigned = app.item_props_assigned(gi);
@@ -1191,7 +1192,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let empty_vals  = std::collections::HashMap::new();
         let empty_conds = std::collections::HashSet::new();
-        let item        = app.view.items.get(gi);
+        let item        = app.items.get(gi);
         let item_vals   = item.map(|it| &it.values).unwrap_or(&empty_vals);
         let cond_cats   = item.map(|it| &it.cond_cats).unwrap_or(&empty_conds);
 
@@ -1290,7 +1291,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Some((*cat_idx, *insert, *active_field, None::<usize>)),
         SectionMode::Choices { cat_idx, insert, active_field, picker_cursor } =>
             Some((*cat_idx, *insert, *active_field, Some(*picker_cursor))),
-        SectionMode::Normal | SectionMode::ConfirmRemove { .. } => None,
+        SectionMode::Normal | SectionMode::ConfirmRemove { .. } | SectionMode::Props { .. } => None,
     };
     if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
         let cats       = flatten_cats(&app.categories);
@@ -1662,4 +1663,473 @@ pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from("  \u{2500}\u{2500}\u{2500} ENTER to confirm, ESC to cancel \u{2500}\u{2500}\u{2500}"));
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── View Add dialog ───────────────────────────────────────────────────────────
+
+pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
+    let (name_buf, name_cur, sec_buf, sec_cur, active_field, pick_cur) = match &app.view_mode {
+        ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, active_field, .. } =>
+            (name_buf.as_str(), *name_cursor, sec_buf.as_str(), *sec_cursor,
+             *active_field, None::<usize>),
+        ViewMode::AddPick { name_buf, name_cursor, sec_buf, sec_cursor, picker_cursor } =>
+            (name_buf.as_str(), *name_cursor, sec_buf.as_str(), *sec_cursor,
+             ViewAddField::Section, Some(*picker_cursor)),
+        _ => return,
+    };
+
+    let dlg = centered_rect(62, 19, area);
+    frame.render_widget(Clear, dlg);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title_top(Line::from(" View Add ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
+    frame.render_widget(block.clone(), dlg);
+    let inner = block.inner(dlg);
+
+    let name_label = "  View name: ";
+    let sec_label  = "  Sections:  ";
+    let field_w    = 22usize;
+    let rev        = Style::default().add_modifier(Modifier::REVERSED);
+
+    let name_line: Line = if active_field == ViewAddField::Name {
+        let (left, hi, right) = super::cursor_split(name_buf, name_cur);
+        let pad = " ".repeat(field_w.saturating_sub(name_buf.chars().count()));
+        Line::from(vec![
+            Span::raw(name_label),
+            Span::raw(left),
+            Span::styled(hi, rev),
+            Span::raw(right),
+            Span::raw(pad),
+            Span::raw("  Type:          Standard"),
+        ])
+    } else {
+        Line::from(format!("{}{}  Type:          Standard",
+            name_label, pad_or_trunc(name_buf, field_w)))
+    };
+
+    let sec_line: Line = if active_field == ViewAddField::Section {
+        let (left, hi, right) = super::cursor_split(sec_buf, sec_cur);
+        let pad = " ".repeat(field_w.saturating_sub(sec_buf.chars().count()));
+        Line::from(vec![
+            Span::raw(sec_label),
+            Span::raw(left),
+            Span::styled(hi, rev),
+            Span::raw(right),
+            Span::raw(pad),
+            Span::raw("  F3 to pick"),
+        ])
+    } else {
+        Line::from(format!("{}{}  F3 to pick",
+            sec_label, pad_or_trunc(sec_buf, field_w)))
+    };
+
+    let mut lines: Vec<Line> = vec![Line::from(""), name_line, sec_line];
+    lines.extend([
+        Line::from("  Item sorting:  ..."),
+        Line::from("  Section sorting:  None"),
+        Line::from(""),
+        Line::from("  Hide empty sections:  No"),
+        Line::from("  Hide done items:      No"),
+        Line::from("  Hide dependent items: No"),
+        Line::from("  Hide inherited items: No"),
+        Line::from("  Hide column heads:    No"),
+        Line::from("  Section separators:   No"),
+        Line::from("  Number items:         No          Filter:"),
+        Line::from(""),
+        Line::from("  View statistics:  ..."),
+        Line::from(""),
+        Line::from("  View protection:  Global (No protection)"),
+    ]);
+    frame.render_widget(Paragraph::new(lines), inner);
+
+    // Picker overlay
+    if let Some(pc) = pick_cur {
+        let cats = flatten_cats(&app.categories);
+        let picker_h = (cats.len().min(10) + 2) as u16;
+        let picker_rect = centered_rect(40, picker_h, area);
+        frame.render_widget(Clear, picker_rect);
+        let pb = Block::default().borders(Borders::ALL).title(" Choose Category ");
+        frame.render_widget(pb.clone(), picker_rect);
+        let pi = pb.inner(picker_rect);
+        let visible = pi.height as usize;
+        let start = if pc >= visible { pc - visible + 1 } else { 0 };
+        let pick_lines: Vec<Line<'static>> = cats.iter().enumerate()
+            .skip(start).take(visible)
+            .map(|(i, e)| {
+                let indent = "  ".repeat(e.depth);
+                let label  = format!("{}{}", indent, e.name);
+                let style  = if i == pc { rev } else { Style::default() };
+                Line::from(Span::styled(label, style))
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(pick_lines), pi);
+    }
+}
+
+// ── Section Properties dialog ─────────────────────────────────────────────────
+
+pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
+    let (sec_idx, head_buf, head_cur, active_field, sort_state) = match &app.sec_mode {
+        SectionMode::Props { sec_idx, head_buf, head_cur, active_field, sort_state } =>
+            (*sec_idx, head_buf.as_str(), *head_cur, *active_field, sort_state),
+        _ => return,
+    };
+
+    let dlg = centered_rect(64, 10, area);
+    frame.render_widget(Clear, dlg);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title_top(Line::from(" Section Properties ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
+    frame.render_widget(block.clone(), dlg);
+    let inner = block.inner(dlg);
+
+    let rev = Style::default().add_modifier(Modifier::REVERSED);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let iw  = inner.width as usize;
+
+    // Left column width (labels + field): ~36 chars. Right column: Columns list.
+    let left_w  = 38usize;
+    let right_x = left_w;
+
+    // ── Section head field ──
+    let head_label = "Section head:  ";
+    let field_w    = left_w.saturating_sub(head_label.len()).min(22);
+    let head_field: Line = if active_field == SecPropsField::Head {
+        let (left, hi, right) = super::cursor_split(head_buf, head_cur);
+        let pad = field_w.saturating_sub(head_buf.chars().count());
+        Line::from(vec![
+            Span::raw(head_label),
+            Span::styled(left, rev),
+            Span::styled(hi, rev),
+            Span::styled(right, rev),
+            Span::styled(" ".repeat(pad), rev),
+        ])
+    } else {
+        let displayed: String = head_buf.chars().take(field_w).collect();
+        let pad = field_w.saturating_sub(displayed.chars().count());
+        Line::from(format!("{}{}{}", head_label, displayed, " ".repeat(pad)))
+    };
+
+    // ── Item sorting field ──
+    let sort_label = "Item sorting:       ";
+    let sort_val   = if sec_idx < app.view.sections.len() {
+        let sec = &app.view.sections[sec_idx];
+        if sec.primary_on == SortOn::None && sec.secondary_on == SortOn::None {
+            "..."
+        } else {
+            sec.primary_on.label()
+        }
+    } else { "..." };
+
+    // ── Columns list (right side) ──
+    let col_header = "Columns:";
+    let mut col_names: Vec<String> = vec!["<Items>".to_string()];
+    col_names.extend(app.view.columns.iter().map(|c| c.name.clone()));
+
+    // Build lines: merge left and right.
+    // Row 0: blank
+    // Row 1: head field | "Columns:"
+    // Row 2..col_end: blank (left) | col names
+    // Row after cols: sort field
+    // Row: stats (dim)
+    // blank
+    // Row: filter label (dim)
+    // blank
+
+    let pad_to = |s: &str, w: usize| -> String {
+        let n = s.chars().count();
+        if n < w { format!("{}{}", s, " ".repeat(w - n)) } else { s.chars().take(w).collect() }
+    };
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from("")); // row 0 blank
+
+    // Row 1: head + "Columns:"
+    {
+        let left_str = head_field;
+        // We'll overlay; use a combined line approach
+        // Actually build merged spans
+        let right_str = if 0 < col_names.len() { col_header } else { "" };
+        // Pad left spans to left_w, then append right
+        // Simplification: render left and right as separate paragraphs in sub-rects
+        // For now build a single line with padding
+        lines.push(Line::from(vec![
+            Span::raw(""), // placeholder — we'll render with sub-rects below
+        ]));
+        let _ = right_str;
+        let _ = left_str;
+    }
+
+    // We'll use a sub-rect approach instead. Let's just build a clean Paragraph.
+    // Reset and use Layout splitting.
+    let use_layout = true;
+    let _ = use_layout;
+
+    // Simpler: build each row as a padded String with both columns concatenated.
+    let mut final_lines: Vec<Line> = Vec::new();
+    final_lines.push(Line::from("")); // blank
+
+    // Row 1: head | Columns:
+    {
+        let left_part = if active_field == SecPropsField::Head {
+            let (left, hi, right) = super::cursor_split(head_buf, head_cur);
+            let used = head_label.len() + head_buf.chars().count();
+            let pad = left_w.saturating_sub(used);
+            vec![
+                Span::raw(head_label),
+                Span::styled(left, rev),
+                Span::styled(hi, rev),
+                Span::styled(right, rev),
+                Span::styled(" ".repeat(pad), rev),
+            ]
+        } else {
+            let displayed: String = head_buf.chars().take(field_w).collect();
+            let padded = pad_to(&format!("{}{}", head_label, displayed), left_w);
+            vec![Span::raw(padded)]
+        };
+        let mut spans = left_part;
+        if !col_names.is_empty() {
+            spans.push(Span::raw(col_header));
+        }
+        final_lines.push(Line::from(spans));
+    }
+
+    // Rows for column names (starting from index 0 = "<Items>")
+    for (ci, cname) in col_names.iter().enumerate() {
+        let left_part = match ci {
+            0 => pad_to("", left_w),
+            1 => {
+                // "Item sorting:" row — row 3
+                let sort_str = format!("{}{}", sort_label, sort_val);
+                if active_field == SecPropsField::ItemSorting {
+                    // handled below as styled span
+                    pad_to(&sort_str, left_w)
+                } else {
+                    pad_to(&sort_str, left_w)
+                }
+            }
+            2 => pad_to("Section statistics: ...", left_w),
+            _ => pad_to("", left_w),
+        };
+        let name_display: String = cname.chars().take(iw.saturating_sub(right_x + 2)).collect();
+
+        if ci == 1 && active_field == SecPropsField::ItemSorting {
+            // Sort field row with reverse styling
+            let left_str = format!("{}", sort_label);
+            let padded_left = pad_to(&left_str, left_w);
+            let pad_needed = left_w.saturating_sub(left_str.len());
+            final_lines.push(Line::from(vec![
+                Span::raw(sort_label),
+                Span::styled(sort_val, rev),
+                Span::raw(" ".repeat(pad_needed.saturating_sub(sort_val.len()))),
+                Span::raw(format!("  {}", name_display)),
+            ]));
+            let _ = padded_left;
+        } else if ci == 2 {
+            final_lines.push(Line::from(vec![
+                Span::styled(format!("{:<width$}", "Section statistics: ...", width = left_w), dim),
+                Span::raw(format!("  {}", name_display)),
+            ]));
+        } else {
+            let right_part = format!("  {}", name_display);
+            final_lines.push(Line::from(format!("{}{}", left_part, right_part)));
+        }
+    }
+
+    // If cols < 3, fill remaining left-side rows
+    let col_rows_filled = col_names.len();
+    if col_rows_filled <= 1 {
+        // Item sorting row
+        let sort_str = format!("{}{}", sort_label, sort_val);
+        if active_field == SecPropsField::ItemSorting {
+            final_lines.push(Line::from(vec![
+                Span::raw(sort_label),
+                Span::styled(sort_val, rev),
+            ]));
+        } else {
+            final_lines.push(Line::from(sort_str));
+        }
+    }
+    if col_rows_filled <= 2 {
+        final_lines.push(Line::from(Span::styled("Section statistics: ...", dim)));
+    }
+
+    // blank + Filter
+    final_lines.push(Line::from(""));
+    final_lines.push(Line::from(Span::styled("Filter:", dim)));
+    final_lines.push(Line::from(""));
+
+    frame.render_widget(Paragraph::new(final_lines), inner);
+    let _ = lines; // unused above
+
+    // ── Sort dialog overlay ───────────────────────────────────────────────────
+    if let SortState::Dialog {
+        sort_new, primary_on, primary_order, primary_cat_id, primary_seq,
+        secondary_on, secondary_order, secondary_cat_id, secondary_seq,
+        active_field: sf, picker,
+    } = sort_state {
+        render_sort_dialog(
+            frame, app, area,
+            *sort_new,
+            *primary_on, *primary_order, *primary_cat_id, *primary_seq,
+            *secondary_on, *secondary_order, *secondary_cat_id, *secondary_seq,
+            *sf, picker.as_ref(),
+        );
+    }
+}
+
+fn render_sort_dialog(
+    frame:            &mut Frame,
+    app:              &App,
+    area:             Rect,
+    sort_new:         SortNewItems,
+    primary_on:       SortOn,
+    primary_order:    SortOrder,
+    primary_cat_id:   Option<usize>,
+    primary_seq:      SortSeq,
+    secondary_on:     SortOn,
+    secondary_order:  SortOrder,
+    secondary_cat_id: Option<usize>,
+    secondary_seq:    SortSeq,
+    active_field:     SortField,
+    picker:           Option<&crate::app::SortPicker>,
+) {
+    let flat_cats = flatten_cats(&app.categories);
+    let cat_name = |id: usize| -> &str {
+        flat_cats.iter().find(|e| e.id == id).map(|e| e.name.as_str()).unwrap_or("?")
+    };
+
+    let dlg = centered_rect(64, 20, area);
+    frame.render_widget(Clear, dlg);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title_top(Line::from(" Item Sorting in Current Section ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
+    frame.render_widget(block.clone(), dlg);
+    let inner = block.inner(dlg);
+
+    let rev = Style::default().add_modifier(Modifier::REVERSED);
+    let fs  = |active: bool| if active { rev } else { Style::default() };
+
+    let sort_new_label = "Sort new items:  ";
+    let sort_on_label  = "  Sort on:       ";
+    let order_label    = "  Order:         ";
+    let cat_label      = "  Category:      ";
+    let seq_label      = "  Sequence:      ";
+    let vd             = " (View default)";
+
+    let mut rows: Vec<Line> = Vec::new();
+    rows.push(Line::from(""));
+    rows.push(Line::from(vec![
+        Span::raw(sort_new_label),
+        Span::styled(sort_new.label(), fs(active_field == SortField::SortNewItems)),
+    ]));
+    rows.push(Line::from(""));
+    rows.push(Line::from(format!("Primary sort key{}", vd)));
+    rows.push(Line::from(vec![
+        Span::raw(sort_on_label),
+        Span::styled(primary_on.label(), fs(active_field == SortField::PrimaryOn)),
+    ]));
+    if primary_on != SortOn::None {
+        rows.push(Line::from(vec![
+            Span::raw(order_label),
+            Span::styled(primary_order.label(), fs(active_field == SortField::PrimaryOrder)),
+        ]));
+    }
+    if primary_on == SortOn::Category {
+        let display = primary_cat_id.map(cat_name).unwrap_or("(choose)");
+        rows.push(Line::from(vec![
+            Span::raw(cat_label),
+            Span::styled(display, fs(active_field == SortField::PrimaryCategory)),
+        ]));
+        if let Some(_) = primary_cat_id {
+            rows.push(Line::from(vec![
+                Span::raw(seq_label),
+                Span::styled(primary_seq.label(), fs(active_field == SortField::PrimarySequence)),
+            ]));
+        }
+    }
+    rows.push(Line::from(""));
+    rows.push(Line::from(format!("Secondary sort key{}", vd)));
+    rows.push(Line::from(vec![
+        Span::raw(sort_on_label),
+        Span::styled(secondary_on.label(), fs(active_field == SortField::SecondaryOn)),
+    ]));
+    if secondary_on != SortOn::None {
+        rows.push(Line::from(vec![
+            Span::raw(order_label),
+            Span::styled(secondary_order.label(), fs(active_field == SortField::SecondaryOrder)),
+        ]));
+    }
+    if secondary_on == SortOn::Category {
+        let display = secondary_cat_id.map(cat_name).unwrap_or("(choose)");
+        rows.push(Line::from(vec![
+            Span::raw(cat_label),
+            Span::styled(display, fs(active_field == SortField::SecondaryCategory)),
+        ]));
+        if let Some(_) = secondary_cat_id {
+            rows.push(Line::from(vec![
+                Span::raw(seq_label),
+                Span::styled(secondary_seq.label(), fs(active_field == SortField::SecondarySequence)),
+            ]));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(rows), inner);
+
+    // ── Sort picker overlay ───────────────────────────────────────────────────
+    if let Some(p) = picker {
+        match p.target {
+            SortField::PrimaryCategory | SortField::SecondaryCategory => {
+                // Category picker — scrollable flat list
+                let visible = 10usize;
+                let h = (visible.min(flat_cats.len()) + 2) as u16;
+                let w = 36u16;
+                let pick_rect = centered_rect(w, h, area);
+                frame.render_widget(Clear, pick_rect);
+                let pick_block = Block::default().borders(Borders::ALL).title(" Choose Category ");
+                frame.render_widget(pick_block.clone(), pick_rect);
+                let pick_inner = pick_block.inner(pick_rect);
+                let vis = pick_inner.height as usize;
+                let start = if p.cursor >= vis { p.cursor - vis + 1 } else { 0 };
+                let pick_lines: Vec<Line> = flat_cats.iter().enumerate()
+                    .skip(start).take(vis)
+                    .map(|(i, e)| {
+                        let indent = "  ".repeat(e.depth);
+                        let label  = format!("{}{}", indent, e.name);
+                        let style  = if i == p.cursor { rev } else { Style::default() };
+                        Line::from(Span::styled(label, style))
+                    })
+                    .collect();
+                frame.render_widget(Paragraph::new(pick_lines), pick_inner);
+            }
+            _ => {
+                // Simple choices list
+                let choices: &[&str] = match p.target {
+                    SortField::SortNewItems => &["No automatic sorting", "On adding a new item", "On leaving a section"],
+                    SortField::PrimaryOn | SortField::SecondaryOn => &["None", "Item text", "Category", "Category note"],
+                    SortField::PrimaryOrder | SortField::SecondaryOrder => &["Ascending", "Descending"],
+                    SortField::PrimarySequence | SortField::SecondarySequence =>
+                        &["Category hierarchy", "Alphabetic", "Numeric", "Date"],
+                    _ => &[],
+                };
+                let h = (choices.len() as u16) + 2;
+                let w = choices.iter().map(|s| s.len()).max().unwrap_or(10) as u16 + 4;
+                let pick_rect = centered_rect(w, h, area);
+                frame.render_widget(Clear, pick_rect);
+                let pick_block = Block::default().borders(Borders::ALL).title(" Choices ");
+                frame.render_widget(pick_block.clone(), pick_rect);
+                let pick_inner = pick_block.inner(pick_rect);
+                let pick_lines: Vec<Line> = choices.iter().enumerate()
+                    .map(|(i, label)| {
+                        let style = if i == p.cursor { rev } else { Style::default() };
+                        Line::from(Span::styled(*label, style))
+                    })
+                    .collect();
+                frame.render_widget(Paragraph::new(pick_lines), pick_inner);
+            }
+        }
+    }
 }

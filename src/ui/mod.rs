@@ -4,6 +4,7 @@ pub mod input;
 pub mod menu;
 pub mod render;
 pub mod view;
+pub mod viewmgr;
 
 /// Build the first line of the two-line title bar: " BEESWAX 0.1" left,
 /// current local date/time right-aligned with one trailing space.
