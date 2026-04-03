@@ -14,4 +14,5 @@ pub fn render(frame: &mut Frame, app: &App) {
     view::render_password_entry_dialog(frame, app, area);
     view::render_view_add_dialog(frame, app, area);
     view::render_sec_props_dialog(frame, app, area);
+    catmgr::render_cat_props_modal(frame, app, area);
 }

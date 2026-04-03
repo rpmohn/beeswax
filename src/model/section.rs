@@ -21,8 +21,10 @@ impl SortOn {
 
 #[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum SortNewItems {
-    NoAutoSort,
-    OnAddingItem,
+    #[serde(rename = "NoAutoSort")]
+    OnDemand,
+    #[serde(rename = "OnAddingItem")]
+    WhenEntered,
     #[default]
     OnLeavingSection,
 }
@@ -30,13 +32,13 @@ pub enum SortNewItems {
 impl SortNewItems {
     pub fn label(self) -> &'static str {
         match self {
-            SortNewItems::NoAutoSort       => "No automatic sorting",
-            SortNewItems::OnAddingItem     => "On adding a new item",
+            SortNewItems::OnDemand         => "On demand",
+            SortNewItems::WhenEntered      => "When item is entered",
             SortNewItems::OnLeavingSection => "On leaving a section",
         }
     }
     pub const ALL: [SortNewItems; 3] = [
-        SortNewItems::NoAutoSort, SortNewItems::OnAddingItem, SortNewItems::OnLeavingSection,
+        SortNewItems::OnDemand, SortNewItems::WhenEntered, SortNewItems::OnLeavingSection,
     ];
 }
 

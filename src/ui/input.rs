@@ -109,7 +109,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // Sub-category picker (F3 on standard column) takes priority
     if matches!(app.col_mode, ColMode::SubPick { .. }) {
-        handle_col_sub_pick(app, code);
+        handle_col_sub_pick(app, code, modifiers);
         return;
     }
 
@@ -264,6 +264,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('l') => app.col_quick_add(ColPos::Left),
             KeyCode::Char('d') => app.sec_open_add(SectionInsert::Below),
             KeyCode::Char('u') => app.sec_open_add(SectionInsert::Above),
+            KeyCode::Char('s') => app.sec_sort_now(),
             KeyCode::F(4)      => app.item_remove(),   // discard without confirmation
             _ => {}
         }
@@ -276,6 +277,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Right => app.cursor_col_right(),
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2) | KeyCode::Enter => app.begin_edit(),
+        KeyCode::F(4)   => app.item_mark_done(),
         KeyCode::F(3)   => {
             if app.col_cursor == 0 {
                 app.assign_open();
@@ -646,7 +648,17 @@ fn handle_item_confirm_delete(app: &mut App, code: KeyCode) {
 
 // ── Sub-category picker handler ───────────────────────────────────────────────
 
-fn handle_col_sub_pick(app: &mut App, code: KeyCode) {
+fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // If a cat inline edit/create is in progress, route text input there.
+    if matches!(app.cat_state.mode, CatMode::Edit { .. } | CatMode::Create { .. }) {
+        handle_catmgr_input(app, code);
+        return;
+    }
+    // If cat props dialog is open, route to its handler.
+    if matches!(app.cat_state.mode, CatMode::Props { .. }) {
+        handle_catmgr_props(app, code, modifiers);
+        return;
+    }
     match code {
         KeyCode::Up              => app.col_sub_pick_up(),
         KeyCode::Down            => app.col_sub_pick_down(),
@@ -655,6 +667,9 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode) {
         KeyCode::Home            => app.col_sub_pick_home(),
         KeyCode::End             => app.col_sub_pick_end(),
         KeyCode::Char(' ')       => app.col_sub_pick_toggle(),
+        KeyCode::F(2)            => app.col_sub_pick_begin_edit(),
+        KeyCode::F(6)            => app.col_sub_pick_open_props(),
+        KeyCode::Insert          => app.col_sub_pick_begin_create(),
         KeyCode::Enter | KeyCode::Esc | KeyCode::F(3) => app.col_sub_pick_close(),
         _ => {}
     }

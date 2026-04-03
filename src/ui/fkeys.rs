@@ -93,6 +93,13 @@ static CHOICES_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "", "",        "", "", "", "", "", "", ""],
 };
 
+static SUB_PICK_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Edit", "", "", "", "Props", "", "", "", ""],
+    shift:  ["",     "",     "", "", "", "",      "", "", "", ""],
+    ctrl:   ["",     "",     "", "", "", "",      "", "", "", ""],
+    alt:    ["",     "",     "", "", "", "",      "", "", "", ""],
+};
+
 static CATPROPS_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "Edit", "Choices", "", "", "Props", "", "Default", "", ""],
     shift:  ["",     "",     "",        "", "", "",      "", "",         "", ""],
@@ -148,6 +155,14 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &SET_TIME_FKEYS
     } else if matches!(app.col_mode, ColMode::Form { .. } | ColMode::Choices { .. } | ColMode::Props { .. }) {
         &COL_FORM_FKEYS
+    } else if matches!(app.col_mode, ColMode::SubPick { .. }) {
+        if matches!(app.cat_state.mode, CatMode::Edit { .. } | CatMode::Create { .. }) {
+            &EDIT_FKEYS
+        } else if matches!(app.cat_state.mode, CatMode::Props { .. }) {
+            &CATPROPS_FKEYS
+        } else {
+            &SUB_PICK_FKEYS
+        }
     } else if matches!(app.cat_state.mode, CatMode::Props { .. }) {
         &CATPROPS_FKEYS
     } else if matches!(app.mode, Mode::Edit { .. } | Mode::Create { .. }) {

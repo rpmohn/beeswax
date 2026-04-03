@@ -18,6 +18,7 @@ use super::{cursor_split, fkeys, menu, title_bar_top};
 const SECTION_PREFIX:    &str = " ";
 const ITEM_PREFIX:       &str = "    \u{2022} ";   // bullet  •
 const ITEM_NOTE_PREFIX:  &str = "    \u{266A} ";   // musical eighth note ♪ (single note indicator)
+const ITEM_DONE_PREFIX:  &str = "    \u{203C} ";   // double exclamation mark ‼
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -79,6 +80,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         None
     };
+
+    let done_cat_id: Option<usize> = flatten_cats(&app.categories)
+        .iter().find(|c| c.name == "Done").map(|c| c.id);
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -175,7 +179,8 @@ pub fn render(frame: &mut Frame, app: &App) {
                 CursorPos::Item { section: si, item: ii } if *si == s_idx && *ii == i_idx
             );
 
-            let item_pfx   = if item.note.is_empty() { ITEM_PREFIX } else { ITEM_NOTE_PREFIX };
+            let is_done    = done_cat_id.map(|id| item.values.contains_key(&id)).unwrap_or(false);
+            let item_pfx   = if is_done { ITEM_DONE_PREFIX } else if item.note.is_empty() { ITEM_PREFIX } else { ITEM_NOTE_PREFIX };
             let pfx_w      = item_pfx.chars().count();
             let max_text_w = main_col_w.saturating_sub(pfx_w);
             let item_text: String = item.text.chars().take(max_text_w).collect();
@@ -895,7 +900,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         let visible = flat_subs.len().min(16);
         let start   = if picker_cursor >= visible { picker_cursor - visible + 1 } else { 0 };
 
-        let box_h    = (visible + 3) as u16;   // border×2 + header + rows (no inline help)
+        let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
+        let box_h    = (visible + 3 + if in_create { 1 } else { 0 }) as u16;
         let box_w    = 50u16;
         let dlg_rect = centered_rect(box_w, box_h, area);
         frame.render_widget(Clear, dlg_rect);
@@ -931,14 +937,32 @@ pub fn render(frame: &mut Frame, app: &App) {
             let rel_depth = e.depth.saturating_sub(head_depth);
             let indent    = "  ".repeat(rel_depth);
             let highlighted = i == picker_cursor;
-            cat_lines.push(Line::from(vec![
-                Span::raw(format!(" {}\u{2502}{} {}", marker, type_ind, indent)),
-                if highlighted {
-                    Span::styled(e.name.clone(), rev)
-                } else {
-                    Span::raw(e.name.clone())
-                },
-            ]));
+            let pfx = Span::raw(format!(" {}\u{2502}{} {}", marker, type_ind, indent));
+            if highlighted {
+                match &app.cat_state.mode {
+                    CatMode::Edit { buffer, cursor: buf_cur } => {
+                        let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                        cat_lines.push(Line::from(vec![
+                            pfx,
+                            Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                        ]));
+                    }
+                    CatMode::Create { buffer, cursor: buf_cur, .. } => {
+                        // Cursor row shown plain; new input row injected after it.
+                        cat_lines.push(Line::from(vec![pfx, Span::raw(e.name.clone())]));
+                        let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                        cat_lines.push(Line::from(vec![
+                            Span::raw(format!("   \u{2502}  {}", indent)),
+                            Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                        ]));
+                    }
+                    _ => {
+                        cat_lines.push(Line::from(vec![pfx, Span::styled(e.name.clone(), rev)]));
+                    }
+                }
+            } else {
+                cat_lines.push(Line::from(vec![pfx, Span::raw(e.name.clone())]));
+            }
         }
 
         frame.render_widget(Paragraph::new(cat_lines), inner);
@@ -2119,7 +2143,7 @@ fn render_sort_dialog(
             _ => {
                 // Simple choices list
                 let choices: &[&str] = match p.target {
-                    SortField::SortNewItems => &["No automatic sorting", "On adding a new item", "On leaving a section"],
+                    SortField::SortNewItems => &[SortNewItems::OnDemand.label(), SortNewItems::WhenEntered.label(), SortNewItems::OnLeavingSection.label()],
                     SortField::PrimaryOn | SortField::SecondaryOn => &["None", "Item text", "Category", "Category note"],
                     SortField::PrimaryOrder | SortField::SecondaryOrder => &["Ascending", "Descending"],
                     SortField::PrimaryNa | SortField::SecondaryNa => &["Bottom of section", "Top of section"],

@@ -174,6 +174,15 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(lines), body_inner);
 
     // ── Category Properties modal ─────────────────────────────────────────────
+    render_cat_props_modal(frame, app, area);
+
+    // ── F-key bar ─────────────────────────────────────────────────────────────
+    fkeys::render_fkey_bar(frame, chunks[2], app);
+}
+
+/// Render the Category Properties modal centered on `area`.
+/// No-op unless `app.cat_state.mode` is `CatMode::Props`.
+pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
     if let CatMode::Props {
         name_buf, short_name_buf, also_match_buf, note_file_buf,
         excl_children, match_cat_name, match_short_name,
@@ -345,9 +354,6 @@ pub fn render(frame: &mut Frame, app: &App) {
             inner,
         );
     }
-
-    // ── F-key bar ─────────────────────────────────────────────────────────────
-    fkeys::render_fkey_bar(frame, chunks[2], app);
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

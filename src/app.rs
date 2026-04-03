@@ -387,7 +387,25 @@ fn char_to_byte(s: &str, n: usize) -> usize {
 ///
 /// A section shows items whose `values` map contains a key that is `cat_id`
 /// or any descendant of `cat_id` in the category tree.
+/// Items are returned in their current physical (insertion) order.
 pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &[Category]) -> Vec<usize> {
+    if sec_idx >= view.sections.len() { return vec![]; }
+    let sec = &view.sections[sec_idx];
+
+    let mut parent_map = HashMap::new();
+    build_cat_maps(cats, None, &mut parent_map, &mut HashMap::new());
+
+    let cat_id = sec.cat_id;
+    items.iter().enumerate()
+        .filter(|(_, item)| item.values.keys().any(|&k| is_under_map(k, cat_id, &parent_map)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Like `section_item_indices` but applies the section's sort criteria.
+/// Used by `apply_section_sort` to determine the desired order before
+/// physically reordering items.
+fn section_item_indices_sorted(items: &[Item], view: &View, sec_idx: usize, cats: &[Category]) -> Vec<usize> {
     if sec_idx >= view.sections.len() { return vec![]; }
     let sec = &view.sections[sec_idx];
 
@@ -407,7 +425,6 @@ pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &
 
         indices.sort_by(|&a, &b| {
             use std::cmp::Ordering;
-            // n/a placement: n/a items go to top or bottom independent of sort direction
             let na_a = item_is_na(&items[a], sec.primary_on, sec.primary_cat_id, cat_id, &parent_map);
             let na_b = item_is_na(&items[b], sec.primary_on, sec.primary_cat_id, cat_id, &parent_map);
             match (na_a, na_b) {
@@ -1809,6 +1826,10 @@ impl App {
             self.sub_row -= 1;
             return;
         }
+        let old_sec = match &self.cursor {
+            CursorPos::SectionHead(s)       => *s,
+            CursorPos::Item { section, .. } => *section,
+        };
         let new_cursor = match &self.cursor {
             CursorPos::SectionHead(0) => CursorPos::SectionHead(0),
             CursorPos::SectionHead(s) => {
@@ -1820,6 +1841,17 @@ impl App {
             CursorPos::Item { section, item: 0 } => CursorPos::SectionHead(*section),
             CursorPos::Item { section, item }    => CursorPos::Item { section: *section, item: item - 1 },
         };
+        let new_sec = match &new_cursor {
+            CursorPos::SectionHead(s)       => *s,
+            CursorPos::Item { section, .. } => *section,
+        };
+        if new_sec != old_sec {
+            if let Some(sec) = self.view.sections.get(old_sec) {
+                if sec.sort_new == SortNewItems::OnLeavingSection {
+                    self.apply_section_sort(old_sec);
+                }
+            }
+        }
         if self.col_cursor > 0 {
             if let CursorPos::Item { section: s, item: i } = new_cursor {
                 if let Some(gi) = section_item_indices(&self.items, &self.view, s, &self.categories).get(i).copied() {
@@ -1851,7 +1883,11 @@ impl App {
         }
         self.sub_row = 0;
         let num_sections = self.view.sections.len();
-        self.cursor = match &self.cursor {
+        let old_sec = match &self.cursor {
+            CursorPos::SectionHead(s)       => *s,
+            CursorPos::Item { section, .. } => *section,
+        };
+        let new_cursor = match &self.cursor {
             CursorPos::SectionHead(s) => {
                 let s = *s;
                 let n = section_item_indices(&self.items, &self.view, s, &self.categories).len();
@@ -1875,6 +1911,18 @@ impl App {
                 }
             }
         };
+        let new_sec = match &new_cursor {
+            CursorPos::SectionHead(s)       => *s,
+            CursorPos::Item { section, .. } => *section,
+        };
+        if new_sec != old_sec {
+            if let Some(sec) = self.view.sections.get(old_sec) {
+                if sec.sort_new == SortNewItems::OnLeavingSection {
+                    self.apply_section_sort(old_sec);
+                }
+            }
+        }
+        self.cursor = new_cursor;
     }
 
     // ── View buffer cursor ────────────────────────────────────────────────────
@@ -2130,6 +2178,16 @@ impl App {
                 }
             }
             Mode::Normal | Mode::ConfirmDeleteItem { .. } | Mode::ItemProps { .. } => {}
+        }
+        // Apply sort immediately if section is configured for WhenEntered.
+        let sec_idx = match &self.cursor {
+            CursorPos::SectionHead(s)       => *s,
+            CursorPos::Item { section, .. } => *section,
+        };
+        if sec_idx < self.view.sections.len()
+            && self.view.sections[sec_idx].sort_new == SortNewItems::WhenEntered
+        {
+            self.apply_section_sort(sec_idx);
         }
     }
 
@@ -2452,6 +2510,68 @@ impl App {
     }
 
     /// Remove the currently focused item from its section and adjust the cursor.
+    /// Toggle the "Done" timestamp on the current item.
+    pub fn item_mark_done(&mut self) {
+        let CursorPos::Item { section, item } = self.cursor else { return; };
+        let Some(gi) = self.global_item_idx(section, item) else { return; };
+        let flat = flatten_cats(&self.categories);
+        let Some(done) = flat.iter().find(|c| c.name == "Done") else { return; };
+        let done_id = done.id;
+        if self.items[gi].values.remove(&done_id).is_none() {
+            self.items[gi].values.insert(done_id, now_datetime_string());
+        }
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+
+    // ── Section sort ──────────────────────────────────────────────────────────
+
+    /// Physically reorder the items belonging to `sec_idx` according to the
+    /// section's sort criteria.  Items at other sections are unaffected.
+    /// The cursor is updated to follow the item it was on (by item ID).
+    pub fn apply_section_sort(&mut self, sec_idx: usize) {
+        if sec_idx >= self.view.sections.len() { return; }
+        if self.view.sections[sec_idx].primary_on == SortOn::None { return; }
+
+        // Natural (physical) order of global indices for this section.
+        let natural = section_item_indices(&self.items, &self.view, sec_idx, &self.categories);
+        if natural.len() < 2 { return; }
+
+        // Desired order according to sort criteria.
+        let sorted = section_item_indices_sorted(&self.items, &self.view, sec_idx, &self.categories);
+
+        // Save the ID of the item under the cursor so we can restore it.
+        let cursor_item_id = match &self.cursor {
+            CursorPos::Item { section, item } if *section == sec_idx => {
+                natural.get(*item).map(|&gi| self.items[gi].id)
+            }
+            _ => None,
+        };
+
+        // Rearrange: copy items in `sorted` order into the slots `natural` occupies.
+        let sorted_items: Vec<Item> = sorted.iter().map(|&gi| self.items[gi].clone()).collect();
+        for (slot, item) in natural.iter().zip(sorted_items) {
+            self.items[*slot] = item;
+        }
+
+        // Restore cursor position.
+        if let Some(id) = cursor_item_id {
+            let new_natural = section_item_indices(&self.items, &self.view, sec_idx, &self.categories);
+            if let Some(new_local) = new_natural.iter().position(|&gi| self.items[gi].id == id) {
+                self.cursor = CursorPos::Item { section: sec_idx, item: new_local };
+            }
+        }
+    }
+
+    /// Sort the current section immediately (Alt-S, "On demand").
+    pub fn sec_sort_now(&mut self) {
+        let sec_idx = match &self.cursor {
+            CursorPos::SectionHead(s)        => *s,
+            CursorPos::Item { section, .. }  => *section,
+        };
+        self.apply_section_sort(sec_idx);
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+
     pub fn item_remove(&mut self) {
         let (s, i) = match self.cursor {
             CursorPos::Item { section, item } => (section, item),
@@ -4379,6 +4499,38 @@ impl App {
         };
         if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
             if len > 0 { *picker_cursor = len - 1; }
+        }
+    }
+
+    /// Sync `cat_state.cursor` to the flat-cats index of the category at `picker_cursor`.
+    fn col_sub_pick_sync_cursor(&mut self) -> bool {
+        let (col_idx, picker_cursor) = match &self.col_mode {
+            ColMode::SubPick { col_idx, picker_cursor } => (*col_idx, *picker_cursor),
+            _ => return false,
+        };
+        let subs = self.col_sub_cat_list(col_idx);
+        let Some(&(cat_id, _, _)) = subs.get(picker_cursor) else { return false; };
+        let flat = flatten_cats(&self.categories);
+        let Some(flat_idx) = flat.iter().position(|e| e.id == cat_id) else { return false; };
+        self.cat_state.cursor = flat_idx;
+        true
+    }
+    pub fn col_sub_pick_begin_edit(&mut self) {
+        if self.col_sub_pick_sync_cursor() { self.cat_begin_edit(); }
+    }
+    pub fn col_sub_pick_open_props(&mut self) {
+        if self.col_sub_pick_sync_cursor() { self.cat_open_props(); }
+    }
+    /// Ins — add new sibling below cursor; on the head row, add as child instead.
+    pub fn col_sub_pick_begin_create(&mut self) {
+        let picker_cursor = match &self.col_mode {
+            ColMode::SubPick { picker_cursor, .. } => *picker_cursor,
+            _ => return,
+        };
+        if self.col_sub_pick_sync_cursor() {
+            // picker_cursor == 0 is the column head; creating a sibling would leave the subtree,
+            // so create as child instead.
+            self.cat_begin_create(picker_cursor == 0);
         }
     }
 
