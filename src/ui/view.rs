@@ -6,11 +6,11 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use crate::app::{App, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
-                 CursorPos, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
+                 CursorPos, FilterState, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
                  SecPropsField, SectionFormField, SectionInsert, SectionMode, SortField, SortState,
                  TimeField, ViewAddField, ViewMode, cat_note_indicator, col_autocomplete_match,
                  col_display_values, flatten_cats, format_date_value, section_item_indices};
-use crate::model::{SortNewItems, SortOn, SortOrder, SortSeq};
+use crate::model::{FilterOp, SortNewItems, SortOn, SortOrder, SortSeq};
 use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
 use super::{cursor_split, fkeys, menu, title_bar_top};
@@ -1794,13 +1794,13 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
 // ── Section Properties dialog ─────────────────────────────────────────────────
 
 pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
-    let (sec_idx, head_buf, head_cur, active_field, sort_state) = match &app.sec_mode {
-        SectionMode::Props { sec_idx, head_buf, head_cur, active_field, sort_state } =>
-            (*sec_idx, head_buf.as_str(), *head_cur, *active_field, sort_state),
+    let (sec_idx, head_buf, head_cur, active_field, sort_state, filter_state, filter_scroll) = match &app.sec_mode {
+        SectionMode::Props { sec_idx, head_buf, head_cur, active_field, sort_state, filter_state, filter_scroll } =>
+            (*sec_idx, head_buf.as_str(), *head_cur, *active_field, sort_state, filter_state, *filter_scroll),
         _ => return,
     };
 
-    let dlg = centered_rect(64, 10, area);
+    let dlg = centered_rect(64, 11, area);
     frame.render_widget(Clear, dlg);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1980,13 +1980,102 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
         final_lines.push(Line::from(Span::styled("Section statistics: ...", dim)));
     }
 
-    // blank + Filter
-    final_lines.push(Line::from(""));
-    final_lines.push(Line::from(Span::styled("Filter:", dim)));
-    final_lines.push(Line::from(""));
+    // ── Filter field — label (never highlighted), then up to 2 entry lines ──
+    let filter_entry_w = left_w.saturating_sub(2); // 2 chars for "▲ " / "▼ " / "  "
+
+    let filter_entries: Vec<String> = if sec_idx < app.view.sections.len() {
+        let all_cats = flatten_cats(&app.categories);
+        app.view.sections[sec_idx].filter.iter().map(|f| {
+            let name = all_cats.iter().find(|c| c.id == f.cat_id)
+                .map(|c| c.name.as_str()).unwrap_or("?");
+            if f.op == FilterOp::Exclude { format!("-{}", name) } else { name.to_string() }
+        }).collect()
+    } else { vec![] };
+
+    let total = filter_entries.len();
+    let start = filter_scroll.min(if total > 2 { total - 2 } else { 0 });
+    let row1_raw = filter_entries.get(start    ).map(|s| s.as_str()).unwrap_or("");
+    let row2_raw = filter_entries.get(start + 1).map(|s| s.as_str()).unwrap_or("");
+    let row1_str: String = row1_raw.chars().take(filter_entry_w).collect();
+    let row2_str: String = row2_raw.chars().take(filter_entry_w).collect();
+    let pad1 = filter_entry_w.saturating_sub(row1_str.chars().count());
+    let pad2 = filter_entry_w.saturating_sub(row2_str.chars().count());
+    // Scroll arrows: ▲ on line 1 if entries exist above, ▼ on line 2 if entries exist below.
+    let arrow1 = if start > 0              { "\u{25B2}" } else { " " }; // ▲
+    let arrow2 = if start + 2 < total      { "\u{25BC}" } else { " " }; // ▼
+
+    let is_active = active_field == SecPropsField::Filter;
+
+    // Label line — never highlighted.
+    final_lines.push(Line::from("Filter:"));
+    // Entry line 1.
+    final_lines.push(Line::from(if is_active {
+        vec![
+            Span::raw(format!("{} ", arrow1)),
+            Span::styled(format!("{}{}", row1_str, " ".repeat(pad1)), rev),
+        ]
+    } else {
+        vec![Span::raw(format!("{} {}", arrow1, row1_str))]
+    }));
+    // Entry line 2.
+    final_lines.push(Line::from(if is_active {
+        vec![
+            Span::raw(format!("{} ", arrow2)),
+            Span::styled(format!("{}{}", row2_str, " ".repeat(pad2)), rev),
+        ]
+    } else {
+        vec![Span::raw(format!("{} {}", arrow2, row2_str))]
+    }));
 
     frame.render_widget(Paragraph::new(final_lines), inner);
     let _ = lines; // unused above
+
+    // ── Filter picker overlay ─────────────────────────────────────────────────
+    if let FilterState::Open { cursor, entries } = filter_state {
+        let cursor = *cursor;
+        let all_cats = flatten_cats(&app.categories);
+        let max_vis  = 20usize;
+        let visible  = all_cats.len().min(max_vis);
+        let start    = if cursor >= visible { cursor - visible + 1 } else { 0 };
+
+        let box_h = (visible + 2) as u16;
+        let box_w = 62u16;
+        let dlg_rect = centered_rect(box_w, box_h, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title_top(Line::from(" Filter ").alignment(Alignment::Center))
+            .title_bottom(Line::from(" Press ENTER to accept ").alignment(Alignment::Center));
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+
+        let inner_w = inner.width as usize;
+        let mut cat_lines: Vec<Line> = Vec::new();
+        for (i, cat) in all_cats.iter().enumerate().skip(start).take(visible) {
+            let marker = match entries.get(&cat.id).copied() {
+                None                    => ' ',
+                Some(FilterOp::Include) => '+',
+                Some(FilterOp::Exclude) => '-',
+            };
+            let note_ind = cat_note_indicator(&app.categories, cat.id);
+            let kind_ind = match cat.kind {
+                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
+                CategoryKind::Date      => "*",
+                CategoryKind::Numeric   => "#",
+                CategoryKind::Unindexed => "\u{25A1}",
+            };
+            let indent  = "  ".repeat(cat.depth);
+            let name_w  = inner_w.saturating_sub(6 + indent.len());
+            let name: String = cat.name.chars().take(name_w).collect();
+            let row_text = format!(" {} \u{2502}{}{} {}", marker, indent, kind_ind, name);
+            if i == cursor {
+                cat_lines.push(Line::from(Span::styled(row_text, rev)));
+            } else {
+                cat_lines.push(Line::from(row_text));
+            }
+        }
+        frame.render_widget(Paragraph::new(cat_lines), inner);
+    }
 
     // ── Sort dialog overlay ───────────────────────────────────────────────────
     if let SortState::Dialog {

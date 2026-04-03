@@ -97,6 +97,15 @@ impl SortNa {
     pub const ALL: [SortNa; 2] = [SortNa::Bottom, SortNa::Top];
 }
 
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum FilterOp { Include, Exclude }
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct FilterEntry {
+    pub cat_id: usize,
+    pub op:     FilterOp,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Section {
     pub id:     usize,
@@ -113,4 +122,5 @@ pub struct Section {
     #[serde(default)] pub secondary_na:      SortNa,
     #[serde(default)] pub secondary_cat_id:  Option<usize>,
     #[serde(default)] pub secondary_seq:     SortSeq,
+    #[serde(default)] pub filter:            Vec<FilterEntry>,
 }

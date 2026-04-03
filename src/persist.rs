@@ -123,6 +123,7 @@ fn clone_view(view: &View) -> View {
             primary_cat_id:   s.primary_cat_id, primary_seq:   s.primary_seq,
             secondary_on:     s.secondary_on, secondary_order: s.secondary_order, secondary_na: s.secondary_na,
             secondary_cat_id: s.secondary_cat_id, secondary_seq: s.secondary_seq,
+            filter:           s.filter.clone(),
         }).collect(),
         columns:    view.columns.iter().map(|c| crate::model::Column {
             id:       c.id,

@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, FKeyMod, MenuState, Mode, SecPropsField, SectionMode, SortState, ViewMgrMode};
+use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, FilterState, FKeyMod, MenuState, Mode, SecPropsField, SectionMode, SortState, ViewMgrMode};
 
 /// Action labels for F1–F10 (index 0 = F1, index 9 = F10).
 pub struct FKeyLabels {
@@ -133,12 +133,16 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &MENU_FKEYS   // self-describing dialogs
     } else if matches!(app.sec_mode, SectionMode::Add { .. }) {
         &CHOICES_FKEYS   // F3 = Choices (category picker)
+    } else if matches!(app.sec_mode, SectionMode::Props { filter_state: FilterState::Open { .. }, .. }) {
+        &MENU_FKEYS   // filter picker is self-describing
     } else if matches!(app.sec_mode, SectionMode::Props { sort_state: SortState::Dialog { picker: Some(_), .. }, .. }) {
         &MENU_FKEYS   // sort field picker is self-describing
     } else if matches!(app.sec_mode, SectionMode::Props { sort_state: SortState::Dialog { .. }, .. }) {
         &CHOICES_FKEYS   // F3 = Choices (sort field picker)
     } else if matches!(app.sec_mode, SectionMode::Props { active_field: SecPropsField::ItemSorting, .. }) {
         &CHOICES_FKEYS   // F3 = Choices (opens sort dialog)
+    } else if matches!(app.sec_mode, SectionMode::Props { active_field: SecPropsField::Filter, .. }) {
+        &CHOICES_FKEYS   // F3 = Choices (opens filter picker)
     } else if matches!(app.sec_mode, SectionMode::Props { .. }) {
         &MENU_FKEYS   // Head field — no F3
     } else if matches!(app.mode, Mode::ItemProps { .. }) {

@@ -1,5 +1,5 @@
 use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
-use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, Item, Section, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
+use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, FilterEntry, FilterOp, Item, Section, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
 use crate::persist;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -226,7 +226,15 @@ pub enum SectionFormField { Category, Insert }
 // ── Section Properties state ──────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum SecPropsField { Head, ItemSorting }
+pub enum SecPropsField { Head, ItemSorting, Filter }
+
+pub enum FilterState {
+    Closed,
+    Open {
+        cursor:  usize,
+        entries: HashMap<usize, FilterOp>,  // cat_id → Include/Exclude
+    },
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum SortField {
@@ -274,11 +282,13 @@ pub enum SectionMode {
     },
     ConfirmRemove { yes: bool },
     Props {
-        sec_idx:      usize,
-        head_buf:     String,
-        head_cur:     usize,
-        active_field: SecPropsField,
-        sort_state:   SortState,
+        sec_idx:       usize,
+        head_buf:      String,
+        head_cur:      usize,
+        active_field:  SecPropsField,
+        sort_state:    SortState,
+        filter_state:  FilterState,
+        filter_scroll: usize,
     },
 }
 
@@ -396,10 +406,12 @@ pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &
     build_cat_maps(cats, None, &mut parent_map, &mut HashMap::new());
 
     let cat_id = sec.cat_id;
-    items.iter().enumerate()
+    let mut indices: Vec<usize> = items.iter().enumerate()
         .filter(|(_, item)| item.values.keys().any(|&k| is_under_map(k, cat_id, &parent_map)))
         .map(|(i, _)| i)
-        .collect()
+        .collect();
+    apply_section_filter(&mut indices, items, sec, &parent_map);
+    indices
 }
 
 /// Like `section_item_indices` but applies the section's sort criteria.
@@ -418,6 +430,7 @@ fn section_item_indices_sorted(items: &[Item], view: &View, sec_idx: usize, cats
         .filter(|(_, item)| item.values.keys().any(|&k| is_under_map(k, cat_id, &parent_map)))
         .map(|(i, _)| i)
         .collect();
+    apply_section_filter(&mut indices, items, sec, &parent_map);
 
     if sec.primary_on != SortOn::None {
         let flat = flatten_cats(cats);
@@ -460,6 +473,29 @@ fn section_item_indices_sorted(items: &[Item], view: &View, sec_idx: usize, cats
     }
 
     indices
+}
+
+/// Apply a section's include/exclude filter rules to a list of global indices.
+fn apply_section_filter(
+    indices:    &mut Vec<usize>,
+    items:      &[Item],
+    sec:        &Section,
+    parent_map: &HashMap<usize, Option<usize>>,
+) {
+    if sec.filter.is_empty() { return; }
+    let has_includes = sec.filter.iter().any(|f| f.op == FilterOp::Include);
+    if has_includes {
+        indices.retain(|&gi| {
+            sec.filter.iter()
+                .filter(|f| f.op == FilterOp::Include)
+                .any(|f| items[gi].values.keys().any(|&k| is_under_map(k, f.cat_id, parent_map)))
+        });
+    }
+    indices.retain(|&gi| {
+        !sec.filter.iter()
+            .filter(|f| f.op == FilterOp::Exclude)
+            .any(|f| items[gi].values.keys().any(|&k| is_under_map(k, f.cat_id, parent_map)))
+    });
 }
 
 fn is_under_map(mut id: usize, target: usize, parent_map: &HashMap<usize, Option<usize>>) -> bool {
@@ -1218,6 +1254,7 @@ impl App {
             primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
             secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
             secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
+            filter:           vec![],
         };
         let view = View {
             id:         1,
@@ -1509,6 +1546,7 @@ impl App {
             primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
             secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
             secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
+            filter:           vec![],
         };
         let new_view = View { id: view_id, name, sections: vec![section],
                               columns: vec![], left_count: 0 };
@@ -3481,6 +3519,7 @@ impl App {
             primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
             secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
             secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
+            filter:           vec![],
         });
         self.cursor = CursorPos::SectionHead(insert_idx);
     }
@@ -3650,8 +3689,10 @@ impl App {
             sec_idx,
             head_buf:     name,
             head_cur,
-            active_field: SecPropsField::Head,
-            sort_state:   SortState::Closed,
+            active_field:  SecPropsField::Head,
+            sort_state:    SortState::Closed,
+            filter_state:  FilterState::Closed,
+            filter_scroll: 0,
         };
     }
 
@@ -3659,8 +3700,28 @@ impl App {
         if let SectionMode::Props { active_field, .. } = &mut self.sec_mode {
             *active_field = match active_field {
                 SecPropsField::Head        => SecPropsField::ItemSorting,
-                SecPropsField::ItemSorting => SecPropsField::Head,
+                SecPropsField::ItemSorting => SecPropsField::Filter,
+                SecPropsField::Filter      => SecPropsField::Head,
             };
+        }
+    }
+
+    pub fn sec_filter_list_up(&mut self) {
+        if let SectionMode::Props { filter_scroll, .. } = &mut self.sec_mode {
+            if *filter_scroll > 0 { *filter_scroll -= 1; }
+        }
+    }
+
+    pub fn sec_filter_list_down(&mut self) {
+        let (sec_idx, filter_scroll) = match &self.sec_mode {
+            SectionMode::Props { sec_idx, filter_scroll, .. } => (*sec_idx, *filter_scroll),
+            _ => return,
+        };
+        let count = self.view.sections.get(sec_idx).map(|s| s.filter.len()).unwrap_or(0);
+        if count > 2 && filter_scroll + 2 < count {
+            if let SectionMode::Props { filter_scroll: fs, .. } = &mut self.sec_mode {
+                *fs += 1;
+            }
         }
     }
 
@@ -3715,6 +3776,112 @@ impl App {
 
     pub fn sec_props_cancel(&mut self) {
         self.sec_mode = SectionMode::Normal;
+    }
+
+    // ── Filter picker ─────────────────────────────────────────────────────────
+
+    pub fn sec_open_filter_picker(&mut self) {
+        let sec_idx = match &self.sec_mode {
+            SectionMode::Props { sec_idx, active_field: SecPropsField::Filter, .. } => *sec_idx,
+            _ => return,
+        };
+        let entries: HashMap<usize, FilterOp> = if sec_idx < self.view.sections.len() {
+            self.view.sections[sec_idx].filter.iter().map(|e| (e.cat_id, e.op)).collect()
+        } else {
+            HashMap::new()
+        };
+        if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
+            *filter_state = FilterState::Open { cursor: 0, entries };
+        }
+    }
+
+    pub fn sec_filter_picker_up(&mut self) {
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+            if *cursor > 0 { *cursor -= 1; }
+        }
+    }
+
+    pub fn sec_filter_picker_down(&mut self) {
+        let count = flatten_cats(&self.categories).len();
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+            if *cursor + 1 < count { *cursor += 1; }
+        }
+    }
+
+    pub fn sec_filter_picker_pgup(&mut self, n: usize) {
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+            *cursor = cursor.saturating_sub(n);
+        }
+    }
+
+    pub fn sec_filter_picker_pgdn(&mut self, n: usize) {
+        let count = flatten_cats(&self.categories).len();
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+            *cursor = (*cursor + n).min(count.saturating_sub(1));
+        }
+    }
+
+    pub fn sec_filter_picker_home(&mut self) {
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+            *cursor = 0;
+        }
+    }
+
+    pub fn sec_filter_picker_end(&mut self) {
+        let count = flatten_cats(&self.categories).len();
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+            *cursor = count.saturating_sub(1);
+        }
+    }
+
+    /// Cycle the filter status of the category at the cursor: (none) → Include → Exclude → (none).
+    pub fn sec_filter_picker_toggle(&mut self) {
+        let cat_id = {
+            let flat = flatten_cats(&self.categories);
+            match &self.sec_mode {
+                SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } => {
+                    flat.get(*cursor).map(|c| c.id)
+                }
+                _ => None,
+            }
+        };
+        let Some(cat_id) = cat_id else { return; };
+        if let SectionMode::Props { filter_state: FilterState::Open { entries, .. }, .. } = &mut self.sec_mode {
+            match entries.get(&cat_id).copied() {
+                None                     => { entries.insert(cat_id, FilterOp::Include); }
+                Some(FilterOp::Include)  => { entries.insert(cat_id, FilterOp::Exclude); }
+                Some(FilterOp::Exclude)  => { entries.remove(&cat_id); }
+            }
+        }
+    }
+
+    /// Confirm the filter picker: write working entries to the section.
+    pub fn sec_filter_picker_confirm(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        let (sec_idx, entries) = match &self.sec_mode {
+            SectionMode::Props {
+                sec_idx,
+                filter_state: FilterState::Open { entries, .. }, ..
+            } => (*sec_idx, entries.clone()),
+            _ => return,
+        };
+        if sec_idx < self.view.sections.len() {
+            // Rebuild in flat-cats order for deterministic serialization.
+            let new_filter: Vec<FilterEntry> = flat.iter()
+                .filter_map(|c| entries.get(&c.id).map(|&op| FilterEntry { cat_id: c.id, op }))
+                .collect();
+            self.view.sections[sec_idx].filter = new_filter;
+            if self.file_path.is_some() { self.dirty = true; }
+        }
+        if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
+            *filter_state = FilterState::Closed;
+        }
+    }
+
+    pub fn sec_filter_picker_cancel(&mut self) {
+        if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
+            *filter_state = FilterState::Closed;
+        }
     }
 
     // ── Sort dialog ───────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FKeyMod, MenuState, Mode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FilterState, FKeyMod, MenuState, Mode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -861,7 +861,13 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode) {
 // ── Section Properties handlers ───────────────────────────────────────────────
 
 fn handle_sec_props(app: &mut App, code: KeyCode) {
-    // Sort picker is the innermost layer
+    // Filter picker is outermost (it has no sub-layer).
+    let has_filter = matches!(
+        app.sec_mode,
+        SectionMode::Props { filter_state: FilterState::Open { .. }, .. }
+    );
+    if has_filter { handle_sec_filter_picker(app, code); return; }
+    // Sort picker is the innermost layer of the sort dialog.
     let has_picker = matches!(
         app.sec_mode,
         SectionMode::Props { sort_state: SortState::Dialog { ref picker, .. }, .. }
@@ -885,16 +891,38 @@ fn handle_sec_props_normal(app: &mut App, code: KeyCode) {
         app.sec_mode,
         SectionMode::Props { active_field: SecPropsField::ItemSorting, .. }
     );
+    let is_filter = matches!(
+        app.sec_mode,
+        SectionMode::Props { active_field: SecPropsField::Filter, .. }
+    );
     match code {
         KeyCode::Enter => app.sec_props_confirm(),
         KeyCode::Esc   => app.sec_props_cancel(),
+        KeyCode::Up   if is_filter => app.sec_filter_list_up(),
+        KeyCode::Down if is_filter => app.sec_filter_list_down(),
         KeyCode::Tab | KeyCode::Down  => app.sec_props_tab(),
         KeyCode::BackTab | KeyCode::Up => app.sec_props_tab(),
         KeyCode::F(3) if is_sorting   => app.sec_open_sort_dialog(),
+        KeyCode::F(3) if is_filter    => app.sec_open_filter_picker(),
         KeyCode::Left  if is_head     => app.sec_props_head_left(),
         KeyCode::Right if is_head     => app.sec_props_head_right(),
         KeyCode::Backspace if is_head => app.sec_props_head_backspace(),
         KeyCode::Char(ch) if is_head  => app.sec_props_head_char(ch),
+        _ => {}
+    }
+}
+
+fn handle_sec_filter_picker(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up       => app.sec_filter_picker_up(),
+        KeyCode::Down     => app.sec_filter_picker_down(),
+        KeyCode::PageUp   => app.sec_filter_picker_pgup(10),
+        KeyCode::PageDown => app.sec_filter_picker_pgdn(10),
+        KeyCode::Home     => app.sec_filter_picker_home(),
+        KeyCode::End      => app.sec_filter_picker_end(),
+        KeyCode::Char(' ') => app.sec_filter_picker_toggle(),
+        KeyCode::Enter    => app.sec_filter_picker_confirm(),
+        KeyCode::Esc      => app.sec_filter_picker_cancel(),
         _ => {}
     }
 }
