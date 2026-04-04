@@ -69,10 +69,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     // Each added column occupies col.width + 1 chars (the +1 is the '·' prefix).
     let total_body_w = body_inner.width as usize;
     let added_w: usize = app.view.columns.iter().map(|c| c.width + 1).sum();
-    let main_col_w = total_body_w.saturating_sub(added_w);
     let lc = app.view.left_count;
     let left_cols  = &app.view.columns[..lc];
     let right_cols = &app.view.columns[lc..];
+    // Reserve 1 extra char for the gap between the main column and right columns.
+    let right_gap = if right_cols.is_empty() { 0 } else { 1 };
+    let main_col_w = total_body_w.saturating_sub(added_w + right_gap);
 
     // Determine which column index (0-based into view.columns) is active.
     // active_col is Some(i) when col_cursor > 0 and col_cursor-1 == i.
@@ -114,8 +116,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                                         left_active, left_head_edit, None, "");
 
         // Main column content
-        let pfx_w      = SECTION_PREFIX.chars().count();
+        // When left columns exist, indent section header to align with item text.
+        let sec_indent = if lc > 0 {
+            ITEM_PREFIX.chars().count().saturating_sub(SECTION_PREFIX.chars().count())
+        } else { 0 };
+        let pfx_w      = SECTION_PREFIX.chars().count() + sec_indent;
         let max_name_w = main_col_w.saturating_sub(pfx_w);
+        let ind = " ".repeat(sec_indent);
         let (mut head_spans, head_used): (Vec<Span<'static>>, usize) = if cursor_on_head {
             match &app.mode {
                 Mode::Normal => {
@@ -126,12 +133,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                     } else {
                         Style::default().add_modifier(Modifier::BOLD)
                     };
-                    (vec![Span::raw(sec_prefix), Span::styled(name, style)], w)
+                    (vec![Span::raw(ind), Span::raw(sec_prefix), Span::styled(name, style)], w)
                 }
                 Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
                     let (left, hi, right) = cursor_split(buffer, *cursor);
                     let w = pfx_w + buffer.chars().count();
                     (vec![
+                        Span::raw(ind),
                         Span::raw(sec_prefix),
                         Span::styled(left,  Style::default().add_modifier(Modifier::BOLD)),
                         Span::styled(hi,    Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)),
@@ -141,14 +149,14 @@ pub fn render(frame: &mut Frame, app: &App) {
                 _ => {
                     let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
-                    (vec![Span::raw(sec_prefix),
+                    (vec![Span::raw(ind), Span::raw(sec_prefix),
                           Span::styled(name, Style::default().add_modifier(Modifier::BOLD))], w)
                 }
             }
         } else {
             let name: String = sec_display_name.chars().take(max_name_w).collect();
             let w = pfx_w + name.chars().count();
-            (vec![Span::raw(sec_prefix),
+            (vec![Span::raw(ind), Span::raw(sec_prefix),
                   Span::styled(name, Style::default().add_modifier(Modifier::BOLD))], w)
         };
         if head_used < main_col_w {
@@ -164,6 +172,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let mut row = left_head_spans;
         row.extend(head_spans);
+        if !right_cols.is_empty() { row.push(Span::raw(" ")); }
         row.extend(right_head_spans);
         lines.push(Line::from(row));
 
@@ -176,6 +185,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}");
                 spans.extend(input_row_spans(buffer, *cursor));
                 if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
+                if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
                 spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}"));
                 lines.push(Line::from(spans));
             }
@@ -316,6 +326,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
                 let mut row = left_item_spans;
                 row.extend(item_spans);
+                if !right_cols.is_empty() { row.push(Span::raw(" ")); }
                 row.extend(right_item_spans);
                 lines.push(Line::from(row));
             }
@@ -329,6 +340,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}");
                     spans.extend(input_row_spans(buffer, *cursor));
                     if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
+                    if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
                     spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}"));
                     lines.push(Line::from(spans));
                 }
@@ -1496,6 +1508,7 @@ fn col_cells(
             let cell = pad_or_trunc(&display_val, text_w);
             spans.push(Span::raw(cell));
         }
+        spans.push(Span::raw(" "));
     }
     spans
 }
