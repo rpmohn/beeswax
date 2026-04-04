@@ -44,11 +44,18 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Title bar / Menu bar (2 lines) ───────────────────────────────────────
     if matches!(app.menu, MenuState::Closed) {
-        let second_line = if let Some(buf) = &app.cat_search {
+        let left = if let Some(buf) = &app.cat_search {
             format!(" Search for: {}", buf)
         } else {
             " Category Manager".to_string()
         };
+        // Ctrl+Arrow hints right-aligned on the second line, beneath the timestamp
+        let hint = "^\u{2190}Prm ^\u{2192}Dem ^\u{2191}Up ^\u{2193}Dwn ";
+        let w = area.width as usize;
+        let hint_w = hint.chars().count();
+        let left_w = left.chars().count();
+        let pad = w.saturating_sub(left_w + hint_w);
+        let second_line = format!("{}{}{}", left, " ".repeat(pad), hint);
         let title = Paragraph::new(vec![
             Line::from(Span::raw(title_bar_top(area.width))),
             Line::from(Span::raw(second_line)),
@@ -103,7 +110,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             // ── Category row ─────────────────────────────────────────────
             let line = if cursor_here {
                 match &app.cat_state.mode {
-                    CatMode::Normal => Line::from(vec![
+                    CatMode::Normal | CatMode::Move => Line::from(vec![
                         Span::raw(ind),
                         Span::raw(kchar),
                         Span::raw(" "),

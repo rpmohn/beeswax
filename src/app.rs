@@ -70,6 +70,8 @@ pub enum CatPropsField {
 
 pub enum CatMode {
     Normal,
+    /// Category reorder mode (Alt+F10): Up/Down swap with adjacent siblings.
+    Move,
     Edit   { buffer: String, cursor: usize },
     /// `as_child`: insert below as child (Alt-R) vs sibling (INS)
     Create { buffer: String, cursor: usize, as_child: bool },
@@ -498,6 +500,16 @@ pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &
     indices
 }
 
+/// Like `section_item_indices` but respects `view.hide_done_items`.
+/// Use this everywhere cursor positions / render need to agree on which items are visible.
+pub fn visible_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &[Category]) -> Vec<usize> {
+    let all = section_item_indices(items, view, sec_idx, cats);
+    if !view.hide_done_items { return all; }
+    let done_id = flatten_cats(cats).iter().find(|c| c.name == "Done").map(|c| c.id);
+    let Some(did) = done_id else { return all; };
+    all.into_iter().filter(|&gi| !items[gi].values.contains_key(&did)).collect()
+}
+
 /// Like `section_item_indices` but applies the section's sort criteria.
 /// Used by `apply_section_sort` to determine the desired order before
 /// physically reordering items.
@@ -732,6 +744,29 @@ fn sort_visible_fields(
 }
 
 /// Remove and return the category at `path`.
+/// Swap the category at `path` with its previous (go_up=true) or next (go_up=false) sibling.
+/// The entire subtree moves with the category. Returns true if a swap was performed.
+fn swap_cat_in_tree(cats: &mut Vec<Category>, path: &[usize], go_up: bool) -> bool {
+    match path {
+        [] => false,
+        [i] => {
+            let i = *i;
+            if go_up {
+                if i == 0 { return false; }
+                cats.swap(i, i - 1); true
+            } else {
+                if i + 1 >= cats.len() { return false; }
+                cats.swap(i, i + 1); true
+            }
+        }
+        [first, rest @ ..] => {
+            if let Some(cat) = cats.get_mut(*first) {
+                swap_cat_in_tree(&mut cat.children, rest, go_up)
+            } else { false }
+        }
+    }
+}
+
 fn take_cat(cats: &mut Vec<Category>, path: &[usize]) -> Category {
     let (&head, tail) = path.split_first().expect("empty path");
     if tail.is_empty() {
@@ -1451,8 +1486,25 @@ impl App {
     }
 
     /// Resolve a (section, local_item_pos) cursor to a global index into `view.items`.
+    /// Uses the visible item list so cursor indices always match what is rendered.
     fn global_item_idx(&self, sec: usize, local: usize) -> Option<usize> {
-        section_item_indices(&self.items, &self.view, sec, &self.categories).get(local).copied()
+        visible_item_indices(&self.items, &self.view, sec, &self.categories).get(local).copied()
+    }
+
+    /// First section index >= `from` that is not hidden by `hide_empty_sections`.
+    fn next_visible_section_fwd(&self, from: usize) -> Option<usize> {
+        (from..self.view.sections.len()).find(|&s|
+            !self.view.hide_empty_sections
+                || !visible_item_indices(&self.items, &self.view, s, &self.categories).is_empty()
+        )
+    }
+
+    /// Last section index <= `from` that is not hidden by `hide_empty_sections`.
+    fn next_visible_section_bwd(&self, from: usize) -> Option<usize> {
+        (0..=from).rev().find(|&s|
+            !self.view.hide_empty_sections
+                || !visible_item_indices(&self.items, &self.view, s, &self.categories).is_empty()
+        )
     }
 
     fn alloc_id(&mut self) -> usize {
@@ -1817,6 +1869,7 @@ impl App {
             MenuAction::ColumnMove       => self.col_begin_move(),
             MenuAction::SectionAdd       => self.sec_open_add(SectionInsert::Below),
             MenuAction::SectionRemove    => self.sec_open_confirm_remove(),
+            MenuAction::CategoryMove     => self.cat_begin_move(),
             MenuAction::ViewAdd          => self.view_add_open(),
             MenuAction::ViewProperties   => self.open_view_props(),
             MenuAction::FileSave                => { self.handle_file_save(); }
@@ -1964,12 +2017,19 @@ impl App {
             CursorPos::Item { section, .. } => *section,
         };
         let new_cursor = match &self.cursor {
-            CursorPos::SectionHead(0) => CursorPos::SectionHead(0),
             CursorPos::SectionHead(s) => {
-                let prev = s - 1;
-                let n = section_item_indices(&self.items, &self.view, prev, &self.categories).len();
-                if n == 0 { CursorPos::SectionHead(prev) }
-                else      { CursorPos::Item { section: prev, item: n - 1 } }
+                let s = *s;
+                if s == 0 { CursorPos::SectionHead(0) }
+                else {
+                    match self.next_visible_section_bwd(s - 1) {
+                        Some(prev) => {
+                            let n = visible_item_indices(&self.items, &self.view, prev, &self.categories).len();
+                            if n == 0 { CursorPos::SectionHead(prev) }
+                            else      { CursorPos::Item { section: prev, item: n - 1 } }
+                        }
+                        None => CursorPos::SectionHead(s),
+                    }
+                }
             }
             CursorPos::Item { section, item: 0 } => CursorPos::SectionHead(*section),
             CursorPos::Item { section, item }    => CursorPos::Item { section: *section, item: item - 1 },
@@ -1987,7 +2047,7 @@ impl App {
         }
         if self.col_cursor > 0 {
             if let CursorPos::Item { section: s, item: i } = new_cursor {
-                if let Some(gi) = section_item_indices(&self.items, &self.view, s, &self.categories).get(i).copied() {
+                if let Some(gi) = visible_item_indices(&self.items, &self.view, s, &self.categories).get(i).copied() {
                     let n = item_n_rows(&self.items[gi], &self.view.columns, &self.categories);
                     self.sub_row = n.saturating_sub(1);
                 } else {
@@ -2005,7 +2065,7 @@ impl App {
         if self.col_cursor > 0 {
             if let CursorPos::Item { section: s, item: i } = &self.cursor {
                 let (s, i) = (*s, *i);
-                if let Some(gi) = section_item_indices(&self.items, &self.view, s, &self.categories).get(i).copied() {
+                if let Some(gi) = visible_item_indices(&self.items, &self.view, s, &self.categories).get(i).copied() {
                     let n = item_n_rows(&self.items[gi], &self.view.columns, &self.categories);
                     if self.sub_row + 1 < n {
                         self.sub_row += 1;
@@ -2015,7 +2075,6 @@ impl App {
             }
         }
         self.sub_row = 0;
-        let num_sections = self.view.sections.len();
         let old_sec = match &self.cursor {
             CursorPos::SectionHead(s)       => *s,
             CursorPos::Item { section, .. } => *section,
@@ -2023,10 +2082,12 @@ impl App {
         let new_cursor = match &self.cursor {
             CursorPos::SectionHead(s) => {
                 let s = *s;
-                let n = section_item_indices(&self.items, &self.view, s, &self.categories).len();
+                let n = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
                 if n == 0 {
-                    if s + 1 < num_sections { CursorPos::SectionHead(s + 1) }
-                    else                    { CursorPos::SectionHead(s) }
+                    match self.next_visible_section_fwd(s + 1) {
+                        Some(next) => CursorPos::SectionHead(next),
+                        None       => CursorPos::SectionHead(s),
+                    }
                 } else {
                     CursorPos::Item { section: s, item: 0 }
                 }
@@ -2034,13 +2095,14 @@ impl App {
             CursorPos::Item { section, item } => {
                 let s = *section;
                 let i = *item;
-                let num_items = section_item_indices(&self.items, &self.view, s, &self.categories).len();
-                if i + 1 < num_items {
+                let num_visible = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
+                if i + 1 < num_visible {
                     CursorPos::Item { section: s, item: i + 1 }
-                } else if s + 1 < num_sections {
-                    CursorPos::SectionHead(s + 1)
                 } else {
-                    CursorPos::Item { section: s, item: i }
+                    match self.next_visible_section_fwd(s + 1) {
+                        Some(next) => CursorPos::SectionHead(next),
+                        None       => CursorPos::Item { section: s, item: i },
+                    }
                 }
             }
         };
@@ -2069,7 +2131,8 @@ impl App {
     pub fn cursor_home(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
         self.sub_row = 0;
-        self.cursor = CursorPos::SectionHead(0);
+        let first = self.next_visible_section_fwd(0).unwrap_or(0);
+        self.cursor = CursorPos::SectionHead(first);
     }
 
     pub fn cursor_end(&mut self) {
@@ -2077,8 +2140,9 @@ impl App {
         self.sub_row = 0;
         let num_sections = self.view.sections.len();
         if num_sections == 0 { return; }
-        let last_sec = num_sections - 1;
-        let n = section_item_indices(&self.items, &self.view, last_sec, &self.categories).len();
+        let last_sec = self.next_visible_section_bwd(num_sections - 1)
+            .unwrap_or(num_sections - 1);
+        let n = visible_item_indices(&self.items, &self.view, last_sec, &self.categories).len();
         self.cursor = if n == 0 {
             CursorPos::SectionHead(last_sec)
         } else {
@@ -4306,7 +4370,7 @@ impl App {
             CatMode::Edit { cursor, .. } | CatMode::Create { cursor, .. } => {
                 if *cursor > 0 { *cursor -= 1; }
             }
-            CatMode::Normal | CatMode::Props { .. } => {}
+            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => {}
         }
     }
 
@@ -4316,7 +4380,7 @@ impl App {
                 let len = buffer.chars().count();
                 if *cursor < len { *cursor += 1; }
             }
-            CatMode::Normal | CatMode::Props { .. } => {}
+            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => {}
         }
     }
 
@@ -4343,7 +4407,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal | CatMode::Props { .. } => return,
+            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => return,
         };
         let byte_pos = char_to_byte(buffer, *cursor);
         buffer.insert(byte_pos, ch);
@@ -4354,7 +4418,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal | CatMode::Props { .. } => return,
+            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => return,
         };
         if *cursor > 0 {
             *cursor -= 1;
@@ -4367,7 +4431,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal | CatMode::Props { .. } => return,
+            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => return,
         };
         let len = buffer.chars().count();
         if *cursor < len {
@@ -4414,7 +4478,7 @@ impl App {
                     }
                 }
             }
-            CatMode::Normal | CatMode::Props { .. } => {}
+            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => {}
         }
     }
 
@@ -4675,6 +4739,46 @@ impl App {
         let new_flat = flatten_cats(&self.categories);
         if let Some(pos) = new_flat.iter().position(|e| e.id == cat_id) {
             self.cat_state.cursor = pos;
+        }
+    }
+
+    // ── Category Move (Alt+F10) ───────────────────────────────────────────────
+
+    pub fn cat_begin_move(&mut self) {
+        if matches!(self.cat_state.mode, CatMode::Normal) {
+            self.cat_state.mode = CatMode::Move;
+        }
+    }
+
+    pub fn cat_move_confirm(&mut self) {
+        self.cat_state.mode = CatMode::Normal;
+    }
+
+    pub fn cat_move_up(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        let Some(entry) = flat.get(self.cat_state.cursor) else { return };
+        let id = entry.id;
+        let path = entry.path.clone();
+        if swap_cat_in_tree(&mut self.categories, &path, true) {
+            let new_flat = flatten_cats(&self.categories);
+            if let Some(pos) = new_flat.iter().position(|f| f.id == id) {
+                self.cat_state.cursor = pos;
+            }
+            if self.file_path.is_some() { self.dirty = true; }
+        }
+    }
+
+    pub fn cat_move_down(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        let Some(entry) = flat.get(self.cat_state.cursor) else { return };
+        let id = entry.id;
+        let path = entry.path.clone();
+        if swap_cat_in_tree(&mut self.categories, &path, false) {
+            let new_flat = flatten_cats(&self.categories);
+            if let Some(pos) = new_flat.iter().position(|f| f.id == id) {
+                self.cat_state.cursor = pos;
+            }
+            if self.file_path.is_some() { self.dirty = true; }
         }
     }
 

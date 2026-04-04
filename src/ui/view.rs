@@ -9,7 +9,8 @@ use crate::app::{App, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField,
                  CursorPos, FilterState, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
                  SecPropsField, SectionFormField, SectionInsert, SectionMode, SortField, SortState,
                  TimeField, ViewAddField, ViewMode, cat_note_indicator, col_autocomplete_match,
-                 col_display_values, flatten_cats, format_date_value, section_item_indices};
+                 col_display_values, flatten_cats, format_date_value, section_item_indices,
+                 visible_item_indices};
 use crate::model::{FilterOp, SortNewItems, SortOn, SortOrder, SortSeq};
 use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
@@ -86,7 +87,17 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    for (s_idx, section) in app.view.sections.iter().enumerate() {
+    // Precompute which sections are visible (non-empty when hide_empty_sections is on).
+    let visible_sections: Vec<usize> = if app.view.hide_empty_sections {
+        (0..app.view.sections.len())
+            .filter(|&s| !visible_item_indices(&app.items, &app.view, s, &app.categories).is_empty())
+            .collect()
+    } else {
+        (0..app.view.sections.len()).collect()
+    };
+
+    for (display_pos, &s_idx) in visible_sections.iter().enumerate() {
+        let section = &app.view.sections[s_idx];
         let cursor_on_head = matches!(&app.cursor, CursorPos::SectionHead(i) if *i == s_idx);
 
         // ── Section head row ─────────────────────────────────────────────
@@ -171,7 +182,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
 
         // ── Item rows ────────────────────────────────────────────────────
-        let sec_item_indices = section_item_indices(&app.items, &app.view, s_idx, &app.categories);
+        let sec_item_indices = visible_item_indices(&app.items, &app.view, s_idx, &app.categories);
         for (i_idx, &gi) in sec_item_indices.iter().enumerate() {
             let item = &app.items[gi];
             let cursor_on_item = matches!(
@@ -325,7 +336,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
 
         // Blank line between sections
-        if s_idx + 1 < app.view.sections.len() {
+        if display_pos + 1 < visible_sections.len() {
             lines.push(Line::from(""));
         }
     }

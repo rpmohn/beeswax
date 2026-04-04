@@ -191,10 +191,12 @@ pub fn handle_event(app: &mut App, event: Event) {
         }
         AppScreen::CatMgr => {
             let in_props  = matches!(app.cat_state.mode, CatMode::Props { .. });
+            let in_move   = matches!(app.cat_state.mode, CatMode::Move);
             let in_normal = matches!(app.cat_state.mode, CatMode::Normal);
             let in_edit   = matches!(app.cat_state.mode, CatMode::Edit   { .. });
             let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
             if      in_props  { handle_catmgr_props(app, code, modifiers) }
+            else if in_move   { handle_catmgr_move(app, code) }
             else if in_normal { handle_catmgr_normal(app, code, modifiers) }
             else if in_edit   { handle_catmgr_input(app, code) }
             else if in_create { handle_catmgr_input(app, code) }
@@ -348,9 +350,25 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::ALT) {
         match code {
             KeyCode::Char('r') => app.cat_begin_create(true),   // child
+            KeyCode::F(10)     => app.cat_begin_move(),
             _ => {}
         }
         return;
+    }
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            // Standard terminals: Ctrl+Arrow with CONTROL modifier
+            KeyCode::Up    => { app.cat_move_up();   return; }
+            KeyCode::Down  => { app.cat_move_down(); return; }
+            KeyCode::Left  => { app.cat_promote();   return; }
+            KeyCode::Right => { app.cat_demote();    return; }
+            // CSI-u terminals: Ctrl+Arrow encoded as Ctrl+U/D/L/R (codepoints 85/68/76/82)
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.cat_move_up();   return; }
+            KeyCode::Char('d') | KeyCode::Char('D') => { app.cat_move_down(); return; }
+            KeyCode::Char('l') | KeyCode::Char('L') => { app.cat_promote();   return; }
+            KeyCode::Char('r') | KeyCode::Char('R') => { app.cat_demote();    return; }
+            _ => {}
+        }
     }
     // Search mode: search keys handled here; any other key clears search and falls through.
     if app.cat_search.is_some() {
@@ -379,8 +397,6 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(2) | KeyCode::Enter => app.cat_begin_edit(),
         KeyCode::F(5)   => app.open_note(),
         KeyCode::F(6)   => app.cat_open_props(),
-        KeyCode::F(7)   => app.cat_promote(),
-        KeyCode::F(8)   => app.cat_demote(),
         KeyCode::Esc | KeyCode::F(9) => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Delete => app.cat_delete(),
@@ -431,6 +447,15 @@ fn handle_catmgr_input(app: &mut App, code: KeyCode) {
         KeyCode::Left      => app.cat_edit_cursor_left(),
         KeyCode::Right     => app.cat_edit_cursor_right(),
         KeyCode::Char(ch)  => app.cat_input_char(ch),
+        _ => {}
+    }
+}
+
+fn handle_catmgr_move(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up           => app.cat_move_up(),
+        KeyCode::Down         => app.cat_move_down(),
+        KeyCode::Enter | KeyCode::Esc | KeyCode::F(10) => app.cat_move_confirm(),
         _ => {}
     }
 }
@@ -579,6 +604,11 @@ fn handle_col_calendar(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Left      => app.col_calendar_left(),
         KeyCode::Right if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
         KeyCode::Right     => app.col_calendar_right(),
+        // CSI-u terminals encode Ctrl+Arrow as Ctrl+letter (L=Left, R=Right)
+        KeyCode::Char('l') | KeyCode::Char('L')
+            if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_prev(),
+        KeyCode::Char('r') | KeyCode::Char('R')
+            if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
         KeyCode::PageUp   if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_prev(),
         KeyCode::PageDown if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
         KeyCode::PageUp    => app.col_calendar_pgup(),

@@ -13,6 +13,7 @@ pub enum MenuAction {
     SectionRemove,
     ViewAdd,
     ViewProperties,
+    CategoryMove,
     FileSave,
     FileEnableEncryption,
     FileChangePassword,
@@ -133,9 +134,10 @@ pub static VIEW_MENU: &[TopItem] = &[
 // ── Category Manager screen sub-menus ─────────────────────────────────────────
 
 static CATMGR_CAT_SUB: &[SubItem] = &[
-    SubItem { label: "Properties",  description: "View or change category properties",      action: MenuAction::Noop, children: None },
-    SubItem { label: "Add",         description: "Add a new category",                      action: MenuAction::Noop, children: None },
-    SubItem { label: "Discard",     description: "Discard the current category",            action: MenuAction::Noop, children: None },
+    SubItem { label: "Properties",  description: "View or change category properties",      action: MenuAction::Noop,         children: None },
+    SubItem { label: "Add",         description: "Add a new category",                      action: MenuAction::Noop,         children: None },
+    SubItem { label: "Discard",     description: "Discard the current category",            action: MenuAction::Noop,         children: None },
+    SubItem { label: "Move",        description: "Move the selected category up or down",   action: MenuAction::CategoryMove, children: None },
 ];
 
 static CATMGR_PRINT_SUB: &[SubItem] = &[

@@ -23,10 +23,17 @@ pub static VIEW_FKEYS: FKeyLabels = FKeyLabels {
 };
 
 pub static CATMGR_FKEYS: FKeyLabels = FKeyLabels {
-    normal: ["Help", "Edit", "",  "",  "Note", "Props", "Prm (\u{2190})", "Dem (\u{2192})", "To View", "Menu"],
-    shift:  ["",     "",     "",  "",  "",     "",      "",               "",               "",         ""   ],
-    ctrl:   ["",     "",     "",  "",  "",     "",      "",               "",               "",         ""   ],
-    alt:    ["",     "",     "",  "",  "",     "",      "",               "",               "",         ""   ],
+    normal: ["Help", "Edit", "",  "",  "Note", "Props", "", "", "To View", "Menu"],
+    shift:  ["",     "",     "",  "",  "",     "",      "", "", "",         ""   ],
+    ctrl:   ["",     "",     "",  "",  "",     "",      "", "", "",         ""   ],
+    alt:    ["",     "",     "",  "",  "",     "",      "", "", "",        "Move"],
+};
+
+static CATMGR_MOVE_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["", "", "", "", "", "", "", "", "", "Done"],
+    shift:  ["", "", "", "", "", "", "", "", "", ""],
+    ctrl:   ["", "", "", "", "", "", "", "", "", ""],
+    alt:    ["", "", "", "", "", "", "", "", "", ""],
 };
 
 static COL_FORM_FKEYS: FKeyLabels = FKeyLabels {
@@ -174,6 +181,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             &SUB_PICK_FKEYS
         }
+    } else if matches!(app.cat_state.mode, CatMode::Move) {
+        &CATMGR_MOVE_FKEYS
     } else if matches!(app.cat_state.mode, CatMode::Props { .. }) {
         &CATPROPS_FKEYS
     } else if matches!(app.mode, Mode::Edit { .. } | Mode::Create { .. }) {
