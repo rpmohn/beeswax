@@ -12,7 +12,7 @@ use super::cursor_split;
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    // Draw the View screen as background.
+    // Draw the View screen as background (its title bar shows Ctrl hints).
     super::view::render(frame, app);
 
     // ── ViewMgr popup ─────────────────────────────────────────────────────────
@@ -35,13 +35,19 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── View list ─────────────────────────────────────────────────────────────
     let cursor = app.vmgr_state.cursor;
-    let all_views = std::iter::once(&app.view).chain(app.inactive_views.iter());
+    let voi    = app.view_order_idx;
+    let count  = 1 + app.inactive_views.len();
     let mut lines: Vec<Line> = Vec::new();
 
     lines.push(Line::from(""));  // top padding
 
-    for (i, view) in all_views.enumerate() {
-        let marker = if i == 0 { ">" } else { " " };
+    for i in 0..count {
+        let view = if i == voi { &app.view }
+                   else {
+                       let ii = if i < voi { i } else { i - 1 };
+                       &app.inactive_views[ii]
+                   };
+        let marker = if i == voi { ">" } else { " " };
         let cursor_here = i == cursor;
 
         let line = if cursor_here {
@@ -76,13 +82,11 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── ConfirmDelete overlay ─────────────────────────────────────────────────
     if let ViewMgrMode::ConfirmDelete { yes } = &app.vmgr_state.mode {
-        let view_name = if cursor == 0 {
+        let view_name = if cursor == voi {
             app.view.name.as_str()
         } else {
-            app.inactive_views
-                .get(cursor - 1)
-                .map(|v| v.name.as_str())
-                .unwrap_or("")
+            let ii = if cursor < voi { cursor } else { cursor - 1 };
+            app.inactive_views.get(ii).map(|v| v.name.as_str()).unwrap_or("")
         };
 
         let modal_rect = centered_rect(48, 7, area);
@@ -140,8 +144,12 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
     // The view being edited
     let v_cursor = app.vmgr_state.cursor;
-    let view_ref = if v_cursor == 0 { &app.view }
-                   else { app.inactive_views.get(v_cursor - 1).unwrap_or(&app.view) };
+    let voi      = app.view_order_idx;
+    let view_ref = if v_cursor == voi { &app.view }
+                   else {
+                       let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
+                       app.inactive_views.get(ii).unwrap_or(&app.view)
+                   };
 
     let dlg = centered_rect(64, 19, area);
     frame.render_widget(Clear, dlg);
@@ -275,7 +283,6 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let left_str = if active_field == ViewPropsField::ItemSorting {
             let full = format!("{}{}", label, val);
             let padded = pad_to(&full, left_w);
-            // return highlighted left, then right
             let (right_text, hi) = right_slot(1);
             let right_span = if hi {
                 Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
@@ -286,9 +293,6 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled(padded, rev),
                 right_span,
             ]));
-            // skip normal push below
-            // Use a sentinel: push empty line and pop
-            // Actually let's just use a flag
             String::new()
         } else {
             pad_to(&format!("{}{}", label, val), left_w)
@@ -352,7 +356,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         rows.push(row_with_right(format!("{:<w$}", "", w = left_w), 3));
     }
 
-    // Row 5–11: Yes/No fields, right column continues
+    // Row 5-11: Yes/No fields, right column continues
     let bool_fields: &[(_, _, ViewPropsField)] = &[
         ("Hide empty sections:   ", hes,  ViewPropsField::HideEmptySections),
         ("Hide done items:       ", hdi,  ViewPropsField::HideDoneItems),
@@ -365,14 +369,12 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     for (row_offset, (label, val, field)) in bool_fields.iter().enumerate() {
         let slot = 4 + row_offset;
         let (right_text, right_hi) = right_slot(slot);
-        // For "Number items:" show "Filter:" on the right if the sections list is done
         let right_str = if *field == ViewPropsField::NumberItems && right_text.is_empty() {
             "Filter:".to_string()
         } else {
             right_text
         };
         if active_field == *field {
-            // Left side highlighted; right side may be highlighted independently.
             let val_str = yn(*val);
             let used = label.chars().count() + val_str.chars().count();
             let pad = left_w.saturating_sub(used);

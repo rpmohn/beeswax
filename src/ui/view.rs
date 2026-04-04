@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
-use crate::app::{App, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
                  CursorPos, FilterState, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
                  SecPropsField, SectionFormField, SectionInsert, SectionMode, SortField, SortState,
                  TimeField, ViewAddField, ViewMode, cat_note_indicator, col_autocomplete_match,
@@ -47,6 +47,12 @@ pub fn render(frame: &mut Frame, app: &App) {
                     _ => " Press F2 to edit. Del to remove assignment.",
                 }.to_string()
             }
+        } else if matches!(app.screen, AppScreen::ViewMgr) {
+            let left = format!(" View: {}", app.view.name);
+            let hint = "^\u{2191}Up ^\u{2193}Dwn ";
+            let w = area.width as usize;
+            let pad = w.saturating_sub(left.chars().count() + hint.chars().count());
+            format!("{}{}{}", left, " ".repeat(pad), hint)
         } else {
             format!(" View: {}", app.view.name)
         };

@@ -436,7 +436,9 @@ pub struct App {
     // View
     pub view:        View,
     pub view_mode:   ViewMode,
-    pub inactive_views: Vec<View>,
+    pub inactive_views:   Vec<View>,
+    /// Index of `view` (the active view) in the combined ordered list [inactive[..voi], view, inactive[voi..]].
+    pub view_order_idx:   usize,
     pub cursor:      CursorPos,
     pub mode:        Mode,
     // CatMgr
@@ -1423,6 +1425,7 @@ impl App {
             view,
             view_mode:  ViewMode::Normal,
             inactive_views: vec![],
+            view_order_idx: 0,
             cursor:     CursorPos::SectionHead(0),
             mode:       Mode::Normal,
             categories: vec![main_cat],
@@ -1462,6 +1465,7 @@ impl App {
             view,
             view_mode:  ViewMode::Normal,
             inactive_views,
+            view_order_idx: idx,
             cursor:     CursorPos::SectionHead(0),
             mode:       Mode::Normal,
             categories: data.categories,
@@ -5176,9 +5180,9 @@ impl App {
             None    => return Ok(()),
         };
         let result = if let Some(pw) = &self.session_password.clone() {
-            persist::save_encrypted(&path, pw, &self.categories, &self.items, &self.view, &self.inactive_views, self.next_id)
+            persist::save_encrypted(&path, pw, &self.categories, &self.items, &self.view, &self.inactive_views, self.view_order_idx, self.next_id)
         } else {
-            persist::save_plain(&path, &self.categories, &self.items, &self.view, &self.inactive_views, self.next_id)
+            persist::save_plain(&path, &self.categories, &self.items, &self.view, &self.inactive_views, self.view_order_idx, self.next_id)
         };
         if result.is_ok() { self.dirty = false; }
         result
@@ -5358,7 +5362,7 @@ impl App {
 
     pub fn open_view_mgr(&mut self) {
         self.mode       = Mode::Normal;
-        self.vmgr_state = ViewMgrState { cursor: 0, mode: ViewMgrMode::Normal };
+        self.vmgr_state = ViewMgrState { cursor: self.view_order_idx, mode: ViewMgrMode::Normal };
         self.screen     = AppScreen::ViewMgr;
     }
 
@@ -5390,12 +5394,62 @@ impl App {
         if count > 0 { self.vmgr_state.cursor = count - 1; }
     }
 
+    pub fn vmgr_move_up(&mut self) {
+        let p   = self.vmgr_state.cursor;
+        let voi = self.view_order_idx;
+        if p == 0 { return; }
+        if p == voi {
+            // Active view moves up — just shift the boundary
+            self.view_order_idx -= 1;
+        } else if p == voi + 1 {
+            // View right after active swaps with active — active shifts down
+            self.view_order_idx += 1;
+        } else if p < voi {
+            // Both p and p-1 are before active → swap inactive[p-1] and inactive[p]
+            self.inactive_views.swap(p - 1, p);
+        } else {
+            // Both p and p-1 are after active (p > voi+1) → swap inactive[p-2] and inactive[p-1]
+            self.inactive_views.swap(p - 2, p - 1);
+        }
+        self.vmgr_state.cursor -= 1;
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+
+    pub fn vmgr_move_down(&mut self) {
+        let p     = self.vmgr_state.cursor;
+        let voi   = self.view_order_idx;
+        let count = 1 + self.inactive_views.len();
+        if p + 1 >= count { return; }
+        if p == voi {
+            // Active view moves down — shift boundary
+            self.view_order_idx += 1;
+        } else if p + 1 == voi {
+            // View right before active swaps with active — active shifts up
+            self.view_order_idx -= 1;
+        } else if p < voi {
+            // Both p and p+1 before active → swap inactive[p] and inactive[p+1]
+            self.inactive_views.swap(p, p + 1);
+        } else {
+            // Both p and p+1 after active (p > voi) → swap inactive[p-1] and inactive[p]
+            self.inactive_views.swap(p - 1, p);
+        }
+        self.vmgr_state.cursor += 1;
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+
     pub fn vmgr_select(&mut self) {
         let idx = self.vmgr_state.cursor;
-        if idx > 0 && idx - 1 < self.inactive_views.len() {
-            let new_view = self.inactive_views.remove(idx - 1);
-            let old_view = std::mem::replace(&mut self.view, new_view);
-            self.inactive_views.insert(idx - 1, old_view);
+        let voi = self.view_order_idx;
+        if idx != voi {
+            // Which inactive slot holds the selected view?
+            let inact_from = Self::vmgr_inact_idx(idx, voi);
+            let new_view  = self.inactive_views.remove(inact_from);
+            let old_view  = std::mem::replace(&mut self.view, new_view);
+            // Re-insert old active view at the position where active previously lived.
+            // After the remove, if inact_from < voi then voi shifts left by one.
+            let insert_at = if inact_from < voi { voi - 1 } else { voi };
+            self.inactive_views.insert(insert_at, old_view);
+            self.view_order_idx = idx;
         }
         self.cursor     = CursorPos::SectionHead(0);
         self.col_cursor = 0;
@@ -5406,21 +5460,31 @@ impl App {
         if self.file_path.is_some() { self.dirty = true; }
     }
 
+    /// Map an ordered display index to an `inactive_views` index.
+    /// Panics if `ordered_idx == view_order_idx` (that's `self.view`, not inactive).
+    fn vmgr_inact_idx(ordered_idx: usize, voi: usize) -> usize {
+        if ordered_idx < voi { ordered_idx } else { ordered_idx - 1 }
+    }
+
     fn vmgr_view_name_at_cursor(&self) -> &str {
-        if self.vmgr_state.cursor == 0 {
+        let c = self.vmgr_state.cursor;
+        let voi = self.view_order_idx;
+        if c == voi {
             &self.view.name
         } else {
             self.inactive_views
-                .get(self.vmgr_state.cursor - 1)
+                .get(Self::vmgr_inact_idx(c, voi))
                 .map(|v| v.name.as_str())
                 .unwrap_or("")
         }
     }
 
     fn vmgr_set_view_name_at_cursor(&mut self, name: String) {
-        if self.vmgr_state.cursor == 0 {
+        let c   = self.vmgr_state.cursor;
+        let voi = self.view_order_idx;
+        if c == voi {
             self.view.name = name;
-        } else if let Some(v) = self.inactive_views.get_mut(self.vmgr_state.cursor - 1) {
+        } else if let Some(v) = self.inactive_views.get_mut(Self::vmgr_inact_idx(c, voi)) {
             v.name = name;
         }
     }
@@ -5481,8 +5545,10 @@ impl App {
     // ── Props (F6 — dialog) ───────────────────────────────────────────────────
 
     fn vmgr_view_ref(&self) -> &View {
-        if self.vmgr_state.cursor == 0 { &self.view }
-        else { self.inactive_views.get(self.vmgr_state.cursor - 1).unwrap_or(&self.view) }
+        let c = self.vmgr_state.cursor;
+        let voi = self.view_order_idx;
+        if c == voi { &self.view }
+        else { self.inactive_views.get(Self::vmgr_inact_idx(c, voi)).unwrap_or(&self.view) }
     }
 
     pub fn vmgr_begin_props(&mut self) {
@@ -5512,7 +5578,7 @@ impl App {
 
     /// Open View Properties for the active (current) view — used by menu.
     pub fn open_view_props(&mut self) {
-        self.vmgr_state.cursor = 0;
+        self.vmgr_state.cursor = self.view_order_idx;
         self.vmgr_begin_props();
     }
 
@@ -5605,8 +5671,9 @@ impl App {
         };
         self.vmgr_state.mode = ViewMgrMode::Normal;
         if name.is_empty() { return; }
-        let view = if idx == 0 { &mut self.view }
-                   else { match self.inactive_views.get_mut(idx - 1) { Some(v) => v, None => return } };
+        let voi = self.view_order_idx;
+        let view = if idx == voi { &mut self.view }
+                   else { match self.inactive_views.get_mut(Self::vmgr_inact_idx(idx, voi)) { Some(v) => v, None => return } };
         view.name                = name;
         view.hide_empty_sections  = hes;
         view.hide_done_items      = hdi;
@@ -5624,7 +5691,7 @@ impl App {
                     let c = a.name.to_lowercase().cmp(&b.name.to_lowercase());
                     if sso == SortOrder::Descending { c.reverse() } else { c }
                 });
-                if idx == 0 { self.cursor = CursorPos::SectionHead(0); self.mode = Mode::Normal; }
+                if idx == voi { self.cursor = CursorPos::SectionHead(0); self.mode = Mode::Normal; }
             }
             SectionSortMethod::CategoryOrder => {
                 let flat = flatten_cats(&self.categories);
@@ -5635,7 +5702,7 @@ impl App {
                     let c = pos_of(a).cmp(&pos_of(b));
                     if sso == SortOrder::Descending { c.reverse() } else { c }
                 });
-                if idx == 0 { self.cursor = CursorPos::SectionHead(0); self.mode = Mode::Normal; }
+                if idx == voi { self.cursor = CursorPos::SectionHead(0); self.mode = Mode::Normal; }
             }
             _ => {}
         }
@@ -5654,8 +5721,9 @@ impl App {
 
     pub fn vmgr_props_sec_down(&mut self) {
         let v_idx = self.vmgr_state.cursor;
-        let sec_count = if v_idx == 0 { self.view.sections.len() }
-                        else { self.inactive_views.get(v_idx - 1).map(|v| v.sections.len()).unwrap_or(0) };
+        let voi   = self.view_order_idx;
+        let sec_count = if v_idx == voi { self.view.sections.len() }
+                        else { self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)).map(|v| v.sections.len()).unwrap_or(0) };
         if let ViewMgrMode::Props { sec_cursor, .. } = &mut self.vmgr_state.mode {
             if *sec_cursor + 1 < sec_count { *sec_cursor += 1; }
         }
@@ -5750,8 +5818,9 @@ impl App {
 
     pub fn vmgr_open_item_sort(&mut self) {
         let v_idx = self.vmgr_state.cursor;
-        let view_ref = if v_idx == 0 { &self.view }
-                       else { self.inactive_views.get(v_idx - 1).unwrap_or(&self.view) };
+        let voi   = self.view_order_idx;
+        let view_ref = if v_idx == voi { &self.view }
+                       else { self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)).unwrap_or(&self.view) };
         let (sn, po, poor, pna, pcid, pseq, so, soor, sna, scid, sseq) =
             if let Some(sec) = view_ref.sections.first() {
                 (sec.sort_new, sec.primary_on, sec.primary_order, sec.primary_na,
@@ -5810,8 +5879,9 @@ impl App {
         };
         let (sn, po, poor, pna, pcid, pseq, so, soor, sna, scid, sseq) = vals;
         // Apply to every section in the view at cursor.
-        let view = if v_idx == 0 { &mut self.view }
-                   else { match self.inactive_views.get_mut(v_idx - 1) { Some(v) => v, None => return } };
+        let voi = self.view_order_idx;
+        let view = if v_idx == voi { &mut self.view }
+                   else { match self.inactive_views.get_mut(Self::vmgr_inact_idx(v_idx, voi)) { Some(v) => v, None => return } };
         for sec in &mut view.sections {
             sec.sort_new         = sn;
             sec.primary_on       = po;   sec.primary_order    = poor;  sec.primary_na    = pna;
@@ -5955,18 +6025,25 @@ impl App {
 
     pub fn vmgr_delete_confirm(&mut self) {
         let idx = self.vmgr_state.cursor;
-        if idx == 0 {
-            // promote first inactive view to active, delete the current active view
-            let new_view = self.inactive_views.remove(0);
+        let voi = self.view_order_idx;
+        if idx == voi {
+            // Deleting the active view — promote the neighbor (prefer next, else prev).
+            let promote_inact = if voi < self.inactive_views.len() { voi } else { voi - 1 };
+            let new_view = self.inactive_views.remove(promote_inact);
             self.view = new_view;
             self.cursor     = CursorPos::SectionHead(0);
             self.col_cursor = 0;
             self.mode       = Mode::Normal;
             self.col_mode   = ColMode::Normal;
             self.sec_mode   = SectionMode::Normal;
-            self.vmgr_state.cursor = 0;
+            // After removing promote_inact, the ordered position of the new active view:
+            self.view_order_idx = promote_inact.min(self.inactive_views.len());
+            self.vmgr_state.cursor = self.view_order_idx;
         } else {
-            self.inactive_views.remove(idx - 1);
+            let inact_idx = Self::vmgr_inact_idx(idx, voi);
+            self.inactive_views.remove(inact_idx);
+            // If the removed view was before the active view, active shifts left.
+            if idx < voi { self.view_order_idx -= 1; }
             let count = 1 + self.inactive_views.len();
             if self.vmgr_state.cursor >= count { self.vmgr_state.cursor = count - 1; }
         }

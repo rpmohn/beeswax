@@ -175,7 +175,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // View Manager screen — handled here to avoid catch-all dirty marking for navigation
     if matches!(app.screen, AppScreen::ViewMgr) {
-        handle_vmgr(app, code);
+        handle_vmgr(app, code, modifiers);
         return;
     }
 
@@ -838,16 +838,26 @@ fn handle_view_add(app: &mut App, code: KeyCode) {
 
 // ── View Manager handlers ─────────────────────────────────────────────────────
 
-fn handle_vmgr(app: &mut App, code: KeyCode) {
+fn handle_vmgr(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match &app.vmgr_state.mode {
         ViewMgrMode::Rename { .. }        => handle_vmgr_rename(app, code),
         ViewMgrMode::ConfirmDelete { .. } => handle_vmgr_delete(app, code),
         ViewMgrMode::Props { .. }         => handle_vmgr_props(app, code),
-        ViewMgrMode::Normal               => handle_vmgr_normal(app, code),
+        ViewMgrMode::Normal               => handle_vmgr_normal(app, code, modifiers),
     }
 }
 
-fn handle_vmgr_normal(app: &mut App, code: KeyCode) {
+fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Up    => { app.vmgr_move_up();   return; }
+            KeyCode::Down  => { app.vmgr_move_down(); return; }
+            // CSI-u: Ctrl+Up/Down encoded as Ctrl+U/D
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_move_up();   return; }
+            KeyCode::Char('d') | KeyCode::Char('D') => { app.vmgr_move_down(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Up       => app.vmgr_cursor_up(),
         KeyCode::Down     => app.vmgr_cursor_down(),

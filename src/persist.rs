@@ -157,18 +157,20 @@ pub fn save_plain(
     items:          &[Item],
     view:           &View,
     inactive_views: &[View],
+    view_order_idx: usize,
     next_id:        usize,
 ) -> io::Result<()> {
-    let views: Vec<View> = std::iter::once(view)
-        .chain(inactive_views.iter())
-        .map(clone_view)
-        .collect();
+    let voi = view_order_idx.min(inactive_views.len());
+    let mut views: Vec<View> = Vec::with_capacity(1 + inactive_views.len());
+    views.extend(inactive_views[..voi].iter().map(clone_view));
+    views.push(clone_view(view));
+    views.extend(inactive_views[voi..].iter().map(clone_view));
     let data = SaveData {
         version:      SCHEMA_VERSION,
         categories:   categories.to_vec(),
         items:        items.to_vec(),
         views,
-        current_view: 0,
+        current_view: voi,
         next_id,
     };
     let json = serde_json::to_string(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -188,18 +190,20 @@ pub fn save_encrypted(
     items:          &[Item],
     view:           &View,
     inactive_views: &[View],
+    view_order_idx: usize,
     next_id:        usize,
 ) -> io::Result<()> {
-    let views: Vec<View> = std::iter::once(view)
-        .chain(inactive_views.iter())
-        .map(clone_view)
-        .collect();
+    let voi = view_order_idx.min(inactive_views.len());
+    let mut views: Vec<View> = Vec::with_capacity(1 + inactive_views.len());
+    views.extend(inactive_views[..voi].iter().map(clone_view));
+    views.push(clone_view(view));
+    views.extend(inactive_views[voi..].iter().map(clone_view));
     let data = SaveData {
         version:      SCHEMA_VERSION,
         categories:   categories.to_vec(),
         items:        items.to_vec(),
         views,
-        current_view: 0,
+        current_view: voi,
         next_id,
     };
     let json = serde_json::to_string(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
