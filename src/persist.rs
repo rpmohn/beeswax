@@ -64,7 +64,12 @@ struct SaveDataV2 {
 }
 
 fn view_v1_to_view(v: ViewV1) -> View {
-    View { id: v.id, name: v.name, sections: v.sections, columns: v.columns, left_count: v.left_count }
+    View { id: v.id, name: v.name, sections: v.sections, columns: v.columns, left_count: v.left_count,
+           hide_empty_sections: false, hide_done_items: false, hide_dependent_items: false,
+           hide_inherited_items: false, hide_column_heads: false, section_separators: false,
+           number_items: false,
+           section_sort_method: crate::model::SectionSortMethod::None,
+           section_sort_order:  crate::model::SortOrder::Ascending }
 }
 
 fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
@@ -133,7 +138,16 @@ fn clone_view(view: &View) -> View {
             format:   c.format,
             date_fmt: c.date_fmt.clone(),
         }).collect(),
-        left_count: view.left_count,
+        left_count:            view.left_count,
+        hide_empty_sections:   view.hide_empty_sections,
+        hide_done_items:       view.hide_done_items,
+        hide_dependent_items:  view.hide_dependent_items,
+        hide_inherited_items:  view.hide_inherited_items,
+        hide_column_heads:     view.hide_column_heads,
+        section_separators:    view.section_separators,
+        number_items:          view.number_items,
+        section_sort_method:   view.section_sort_method,
+        section_sort_order:    view.section_sort_order,
     }
 }
 

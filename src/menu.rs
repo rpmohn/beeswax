@@ -12,6 +12,7 @@ pub enum MenuAction {
     SectionAdd,
     SectionRemove,
     ViewAdd,
+    ViewProperties,
     FileSave,
     FileEnableEncryption,
     FileChangePassword,
@@ -84,7 +85,7 @@ static SECTION_SUB: &[SubSubItem] = &[
 ];
 
 static VIEW_SUB: &[SubItem] = &[
-    SubItem { label: "Properties",  description: "View or change view properties",          action: MenuAction::Noop, children: None },
+    SubItem { label: "Properties",  description: "View or change view properties",          action: MenuAction::ViewProperties, children: None },
     SubItem { label: "Add",         description: "Add a new view",                          action: MenuAction::ViewAdd, children: None },
     SubItem { label: "Browse",      description: "Browse and select among all views",       action: MenuAction::Noop, children: None },
     SubItem { label: "Discard",     description: "Discard the current view",                action: MenuAction::Noop, children: None },

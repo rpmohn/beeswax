@@ -1,5 +1,5 @@
 use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
-use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, FilterEntry, FilterOp, Item, Section, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
+use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, FilterEntry, FilterOp, Item, Section, SectionSortMethod, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
 use crate::persist;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -102,11 +102,95 @@ pub struct CatMgrState {
 
 // ── ViewMgr state ─────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ViewPropsField {
+    Name,
+    Sections,
+    ItemSorting,
+    SectionSorting,
+    SectionSortOrder,   // only in tab order when section_sort_method != None
+    HideEmptySections,
+    HideDoneItems,
+    HideDependentItems,
+    HideInheritedItems,
+    HideColumnHeads,
+    SectionSeparators,
+    NumberItems,
+    ViewStatistics,
+    ViewProtection,
+}
+
+impl ViewPropsField {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Name               => Self::Sections,
+            Self::Sections           => Self::ItemSorting,
+            Self::ItemSorting        => Self::SectionSorting,
+            Self::SectionSorting     => Self::SectionSortOrder,
+            Self::SectionSortOrder   => Self::HideEmptySections,
+            Self::HideEmptySections  => Self::HideDoneItems,
+            Self::HideDoneItems      => Self::HideDependentItems,
+            Self::HideDependentItems => Self::HideInheritedItems,
+            Self::HideInheritedItems => Self::HideColumnHeads,
+            Self::HideColumnHeads    => Self::SectionSeparators,
+            Self::SectionSeparators  => Self::NumberItems,
+            Self::NumberItems        => Self::ViewStatistics,
+            Self::ViewStatistics     => Self::ViewProtection,
+            Self::ViewProtection     => Self::Name,
+        }
+    }
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Name               => Self::ViewProtection,
+            Self::Sections           => Self::Name,
+            Self::ItemSorting        => Self::Sections,
+            Self::SectionSorting     => Self::ItemSorting,
+            Self::SectionSortOrder   => Self::SectionSorting,
+            Self::HideEmptySections  => Self::SectionSortOrder,
+            Self::HideDoneItems      => Self::HideEmptySections,
+            Self::HideDependentItems => Self::HideDoneItems,
+            Self::HideInheritedItems => Self::HideDependentItems,
+            Self::HideColumnHeads    => Self::HideInheritedItems,
+            Self::SectionSeparators  => Self::HideColumnHeads,
+            Self::NumberItems        => Self::SectionSeparators,
+            Self::ViewStatistics     => Self::NumberItems,
+            Self::ViewProtection     => Self::ViewStatistics,
+        }
+    }
+    pub fn is_bool(self) -> bool {
+        matches!(self,
+            Self::HideEmptySections | Self::HideDoneItems | Self::HideDependentItems |
+            Self::HideInheritedItems | Self::HideColumnHeads | Self::SectionSeparators |
+            Self::NumberItems
+        )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SecSortTarget { Method, Order }
+
 pub enum ViewMgrMode {
     Normal,
     Rename { buffer: String, cursor: usize },
     ConfirmDelete { yes: bool },
-    Props  { buffer: String, cursor: usize },
+    Props {
+        name_buf:             String,
+        name_cur:             usize,
+        sec_cursor:           usize,      // cursor within the sections list
+        sort_state:           SortState,  // for the Item Sorting sub-dialog
+        sec_sort_method:      SectionSortMethod,
+        sec_sort_order:       SortOrder,
+        sec_sort_picker:      Option<(SecSortTarget, usize)>, // (target, cursor)
+        hide_empty_sections:  bool,
+        hide_done_items:      bool,
+        hide_dependent_items: bool,
+        hide_inherited_items: bool,
+        hide_column_heads:    bool,
+        section_separators:   bool,
+        number_items:         bool,
+        active_field:         ViewPropsField,
+        sec_scroll:           usize,
+    },
 }
 
 pub struct ViewMgrState {
@@ -1262,6 +1346,10 @@ impl App {
             sections:   vec![section],
             columns:    Vec::new(),
             left_count: 0,
+            hide_empty_sections: false, hide_done_items: false, hide_dependent_items: false,
+            hide_inherited_items: false, hide_column_heads: false, section_separators: false,
+            number_items: false,
+            section_sort_method: SectionSortMethod::None, section_sort_order: SortOrder::Ascending,
         };
 
         fn date(id: usize, name: &str) -> Category {
@@ -1549,7 +1637,13 @@ impl App {
             filter:           vec![],
         };
         let new_view = View { id: view_id, name, sections: vec![section],
-                              columns: vec![], left_count: 0 };
+                              columns: vec![], left_count: 0,
+                              hide_empty_sections: false, hide_done_items: false,
+                              hide_dependent_items: false, hide_inherited_items: false,
+                              hide_column_heads: false, section_separators: false,
+                              number_items: false,
+                              section_sort_method: SectionSortMethod::None,
+                              section_sort_order: SortOrder::Ascending };
         let old = std::mem::replace(&mut self.view, new_view);
         self.inactive_views.push(old);
         self.cursor = CursorPos::SectionHead(0);
@@ -1724,6 +1818,7 @@ impl App {
             MenuAction::SectionAdd       => self.sec_open_add(SectionInsert::Below),
             MenuAction::SectionRemove    => self.sec_open_confirm_remove(),
             MenuAction::ViewAdd          => self.view_add_open(),
+            MenuAction::ViewProperties   => self.open_view_props(),
             MenuAction::FileSave                => { self.handle_file_save(); }
             MenuAction::FileEnableEncryption
             | MenuAction::FileChangePassword
@@ -1961,6 +2056,34 @@ impl App {
             }
         }
         self.cursor = new_cursor;
+    }
+
+    pub fn cursor_pgup(&mut self, n: usize) {
+        for _ in 0..n { self.cursor_up(); }
+    }
+
+    pub fn cursor_pgdn(&mut self, n: usize) {
+        for _ in 0..n { self.cursor_down(); }
+    }
+
+    pub fn cursor_home(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        self.sub_row = 0;
+        self.cursor = CursorPos::SectionHead(0);
+    }
+
+    pub fn cursor_end(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        self.sub_row = 0;
+        let num_sections = self.view.sections.len();
+        if num_sections == 0 { return; }
+        let last_sec = num_sections - 1;
+        let n = section_item_indices(&self.items, &self.view, last_sec, &self.categories).len();
+        self.cursor = if n == 0 {
+            CursorPos::SectionHead(last_sec)
+        } else {
+            CursorPos::Item { section: last_sec, item: n - 1 }
+        };
     }
 
     // ── View buffer cursor ────────────────────────────────────────────────────
@@ -5253,55 +5376,470 @@ impl App {
 
     // ── Props (F6 — dialog) ───────────────────────────────────────────────────
 
-    pub fn vmgr_begin_props(&mut self) {
-        let name = self.vmgr_view_name_at_cursor().to_string();
-        let cursor = name.chars().count();
-        self.vmgr_state.mode = ViewMgrMode::Props { buffer: name, cursor };
+    fn vmgr_view_ref(&self) -> &View {
+        if self.vmgr_state.cursor == 0 { &self.view }
+        else { self.inactive_views.get(self.vmgr_state.cursor - 1).unwrap_or(&self.view) }
     }
 
-    pub fn vmgr_props_char(&mut self, ch: char) {
-        if let ViewMgrMode::Props { buffer, cursor } = &mut self.vmgr_state.mode {
-            let byte = char_to_byte(buffer, *cursor);
-            buffer.insert(byte, ch);
-            *cursor += 1;
+    pub fn vmgr_begin_props(&mut self) {
+        let v = self.vmgr_view_ref();
+        let name_buf             = v.name.clone();
+        let hide_empty_sections  = v.hide_empty_sections;
+        let hide_done_items      = v.hide_done_items;
+        let hide_dependent_items = v.hide_dependent_items;
+        let hide_inherited_items = v.hide_inherited_items;
+        let hide_column_heads    = v.hide_column_heads;
+        let section_separators   = v.section_separators;
+        let number_items         = v.number_items;
+        let sec_sort_method      = v.section_sort_method;
+        let sec_sort_order       = v.section_sort_order;
+        let name_cur = name_buf.chars().count();
+        self.vmgr_state.mode = ViewMgrMode::Props {
+            name_buf, name_cur,
+            sec_cursor:   0,
+            sort_state:   SortState::Closed,
+            sec_sort_method, sec_sort_order, sec_sort_picker: None,
+            hide_empty_sections, hide_done_items, hide_dependent_items,
+            hide_inherited_items, hide_column_heads, section_separators, number_items,
+            active_field: ViewPropsField::Name,
+            sec_scroll:   0,
+        };
+    }
+
+    /// Open View Properties for the active (current) view — used by menu.
+    pub fn open_view_props(&mut self) {
+        self.vmgr_state.cursor = 0;
+        self.vmgr_begin_props();
+    }
+
+    pub fn vmgr_props_field_next(&mut self) {
+        if let ViewMgrMode::Props { active_field, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+            let mut next = active_field.next();
+            if next == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
+                next = next.next();
+            }
+            *active_field = next;
         }
     }
 
-    pub fn vmgr_props_backspace(&mut self) {
-        if let ViewMgrMode::Props { buffer, cursor } = &mut self.vmgr_state.mode {
-            if *cursor > 0 {
-                *cursor -= 1;
-                let byte = char_to_byte(buffer, *cursor);
-                buffer.remove(byte);
+    pub fn vmgr_props_field_prev(&mut self) {
+        if let ViewMgrMode::Props { active_field, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+            let mut prev = active_field.prev();
+            if prev == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
+                prev = prev.prev();
+            }
+            *active_field = prev;
+        }
+    }
+
+    pub fn vmgr_props_toggle(&mut self) {
+        if let ViewMgrMode::Props { active_field, hide_empty_sections, hide_done_items,
+            hide_dependent_items, hide_inherited_items, hide_column_heads,
+            section_separators, number_items, .. } = &mut self.vmgr_state.mode
+        {
+            match active_field {
+                ViewPropsField::HideEmptySections  => *hide_empty_sections  = !*hide_empty_sections,
+                ViewPropsField::HideDoneItems      => *hide_done_items      = !*hide_done_items,
+                ViewPropsField::HideDependentItems => *hide_dependent_items = !*hide_dependent_items,
+                ViewPropsField::HideInheritedItems => *hide_inherited_items = !*hide_inherited_items,
+                ViewPropsField::HideColumnHeads    => *hide_column_heads    = !*hide_column_heads,
+                ViewPropsField::SectionSeparators  => *section_separators   = !*section_separators,
+                ViewPropsField::NumberItems        => *number_items         = !*number_items,
+                _ => {}
             }
         }
     }
 
-    pub fn vmgr_props_left(&mut self) {
-        if let ViewMgrMode::Props { cursor, .. } = &mut self.vmgr_state.mode {
-            if *cursor > 0 { *cursor -= 1; }
+    pub fn vmgr_props_name_char(&mut self, ch: char) {
+        if let ViewMgrMode::Props { name_buf, name_cur, active_field: ViewPropsField::Name, .. }
+            = &mut self.vmgr_state.mode
+        {
+            let byte = char_to_byte(name_buf, *name_cur);
+            name_buf.insert(byte, ch);
+            *name_cur += 1;
         }
     }
 
-    pub fn vmgr_props_right(&mut self) {
-        if let ViewMgrMode::Props { buffer, cursor } = &mut self.vmgr_state.mode {
-            if *cursor < buffer.chars().count() { *cursor += 1; }
+    pub fn vmgr_props_name_backspace(&mut self) {
+        if let ViewMgrMode::Props { name_buf, name_cur, active_field: ViewPropsField::Name, .. }
+            = &mut self.vmgr_state.mode
+        {
+            if *name_cur > 0 {
+                *name_cur -= 1;
+                let byte = char_to_byte(name_buf, *name_cur);
+                name_buf.remove(byte);
+            }
+        }
+    }
+
+    pub fn vmgr_props_name_left(&mut self) {
+        if let ViewMgrMode::Props { name_cur, .. } = &mut self.vmgr_state.mode {
+            if *name_cur > 0 { *name_cur -= 1; }
+        }
+    }
+
+    pub fn vmgr_props_name_right(&mut self) {
+        if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut self.vmgr_state.mode {
+            if *name_cur < name_buf.chars().count() { *name_cur += 1; }
         }
     }
 
     pub fn vmgr_props_confirm(&mut self) {
-        if let ViewMgrMode::Props { buffer, .. } = &self.vmgr_state.mode {
-            let name = buffer.trim().to_string();
-            if !name.is_empty() {
-                self.vmgr_set_view_name_at_cursor(name);
-                if self.file_path.is_some() { self.dirty = true; }
-            }
-        }
+        let idx = self.vmgr_state.cursor;
+        let (name, hes, hdi, hdep, hii, hch, ss, ni, ssm, sso) = match &self.vmgr_state.mode {
+            ViewMgrMode::Props {
+                name_buf, hide_empty_sections, hide_done_items, hide_dependent_items,
+                hide_inherited_items, hide_column_heads, section_separators, number_items,
+                sec_sort_method, sec_sort_order, ..
+            } => (
+                name_buf.trim().to_string(),
+                *hide_empty_sections, *hide_done_items, *hide_dependent_items,
+                *hide_inherited_items, *hide_column_heads, *section_separators, *number_items,
+                *sec_sort_method, *sec_sort_order,
+            ),
+            _ => return,
+        };
         self.vmgr_state.mode = ViewMgrMode::Normal;
+        if name.is_empty() { return; }
+        let view = if idx == 0 { &mut self.view }
+                   else { match self.inactive_views.get_mut(idx - 1) { Some(v) => v, None => return } };
+        view.name                = name;
+        view.hide_empty_sections  = hes;
+        view.hide_done_items      = hdi;
+        view.hide_dependent_items = hdep;
+        view.hide_inherited_items = hii;
+        view.hide_column_heads    = hch;
+        view.section_separators   = ss;
+        view.number_items         = ni;
+        view.section_sort_method  = ssm;
+        view.section_sort_order   = sso;
+        // Apply section sort in place.
+        match ssm {
+            SectionSortMethod::Alphabetic => {
+                view.sections.sort_by(|a, b| {
+                    let c = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+                    if sso == SortOrder::Descending { c.reverse() } else { c }
+                });
+                if idx == 0 { self.cursor = CursorPos::SectionHead(0); self.mode = Mode::Normal; }
+            }
+            SectionSortMethod::CategoryOrder => {
+                let flat = flatten_cats(&self.categories);
+                let pos_of = |sec: &crate::model::Section| -> usize {
+                    flat.iter().position(|f| f.id == sec.cat_id).unwrap_or(usize::MAX)
+                };
+                view.sections.sort_by(|a, b| {
+                    let c = pos_of(a).cmp(&pos_of(b));
+                    if sso == SortOrder::Descending { c.reverse() } else { c }
+                });
+                if idx == 0 { self.cursor = CursorPos::SectionHead(0); self.mode = Mode::Normal; }
+            }
+            _ => {}
+        }
+        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn vmgr_props_cancel(&mut self) {
         self.vmgr_state.mode = ViewMgrMode::Normal;
+    }
+
+    pub fn vmgr_props_sec_up(&mut self) {
+        if let ViewMgrMode::Props { sec_cursor, .. } = &mut self.vmgr_state.mode {
+            if *sec_cursor > 0 { *sec_cursor -= 1; }
+        }
+    }
+
+    pub fn vmgr_props_sec_down(&mut self) {
+        let v_idx = self.vmgr_state.cursor;
+        let sec_count = if v_idx == 0 { self.view.sections.len() }
+                        else { self.inactive_views.get(v_idx - 1).map(|v| v.sections.len()).unwrap_or(0) };
+        if let ViewMgrMode::Props { sec_cursor, .. } = &mut self.vmgr_state.mode {
+            if *sec_cursor + 1 < sec_count { *sec_cursor += 1; }
+        }
+    }
+
+    // ── Section Sort picker ───────────────────────────────────────────────────
+
+    pub fn vmgr_sec_sort_cycle(&mut self) {
+        if let ViewMgrMode::Props { active_field: ViewPropsField::SectionSorting, sec_sort_method, .. }
+            = &mut self.vmgr_state.mode
+        {
+            let pos = SectionSortMethod::ALL.iter().position(|m| m == sec_sort_method).unwrap_or(0);
+            *sec_sort_method = SectionSortMethod::ALL[(pos + 1) % SectionSortMethod::ALL.len()];
+        }
+    }
+
+    pub fn vmgr_sec_order_cycle(&mut self) {
+        if let ViewMgrMode::Props { active_field: ViewPropsField::SectionSortOrder, sec_sort_order, .. }
+            = &mut self.vmgr_state.mode
+        {
+            *sec_sort_order = match *sec_sort_order {
+                SortOrder::Ascending  => SortOrder::Descending,
+                SortOrder::Descending => SortOrder::Ascending,
+            };
+        }
+    }
+
+    pub fn vmgr_sec_sort_open_picker(&mut self) {
+        if let ViewMgrMode::Props { active_field, sec_sort_method, sec_sort_order, sec_sort_picker, .. }
+            = &mut self.vmgr_state.mode
+        {
+            match *active_field {
+                ViewPropsField::SectionSorting => {
+                    let pos = SectionSortMethod::ALL.iter().position(|m| m == sec_sort_method).unwrap_or(0);
+                    *sec_sort_picker = Some((SecSortTarget::Method, pos));
+                }
+                ViewPropsField::SectionSortOrder => {
+                    let pos = SortOrder::ALL.iter().position(|o| o == sec_sort_order).unwrap_or(0);
+                    *sec_sort_picker = Some((SecSortTarget::Order, pos));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn vmgr_sec_sort_picker_up(&mut self) {
+        if let ViewMgrMode::Props { sec_sort_picker: Some((_, cursor)), .. } = &mut self.vmgr_state.mode {
+            if *cursor > 0 { *cursor -= 1; }
+        }
+    }
+
+    pub fn vmgr_sec_sort_picker_down(&mut self) {
+        if let ViewMgrMode::Props { sec_sort_picker: Some((target, cursor)), .. } = &mut self.vmgr_state.mode {
+            let len = match target {
+                SecSortTarget::Method => SectionSortMethod::ALL.len(),
+                SecSortTarget::Order  => SortOrder::ALL.len(),
+            };
+            if *cursor + 1 < len { *cursor += 1; }
+        }
+    }
+
+    pub fn vmgr_sec_sort_picker_confirm(&mut self) {
+        if let ViewMgrMode::Props { sec_sort_picker, sec_sort_method, sec_sort_order, active_field, .. }
+            = &mut self.vmgr_state.mode
+        {
+            if let Some((target, cursor)) = sec_sort_picker.take() {
+                match target {
+                    SecSortTarget::Method => {
+                        *sec_sort_method = SectionSortMethod::ALL[cursor.min(SectionSortMethod::ALL.len() - 1)];
+                        // If method becomes None, move active_field back to SectionSorting
+                        if *sec_sort_method == SectionSortMethod::None
+                            && *active_field == ViewPropsField::SectionSortOrder
+                        {
+                            *active_field = ViewPropsField::SectionSorting;
+                        }
+                    }
+                    SecSortTarget::Order => {
+                        *sec_sort_order = SortOrder::ALL[cursor.min(SortOrder::ALL.len() - 1)];
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn vmgr_sec_sort_picker_cancel(&mut self) {
+        if let ViewMgrMode::Props { sec_sort_picker, .. } = &mut self.vmgr_state.mode {
+            *sec_sort_picker = None;
+        }
+    }
+
+    // ── Item Sorting sub-dialog (applies to all sections) ─────────────────────
+
+    pub fn vmgr_open_item_sort(&mut self) {
+        let v_idx = self.vmgr_state.cursor;
+        let view_ref = if v_idx == 0 { &self.view }
+                       else { self.inactive_views.get(v_idx - 1).unwrap_or(&self.view) };
+        let (sn, po, poor, pna, pcid, pseq, so, soor, sna, scid, sseq) =
+            if let Some(sec) = view_ref.sections.first() {
+                (sec.sort_new, sec.primary_on, sec.primary_order, sec.primary_na,
+                 sec.primary_cat_id, sec.primary_seq, sec.secondary_on, sec.secondary_order,
+                 sec.secondary_na, sec.secondary_cat_id, sec.secondary_seq)
+            } else {
+                (SortNewItems::OnDemand, SortOn::None, SortOrder::Ascending, SortNa::Bottom,
+                 None, SortSeq::CategoryHierarchy, SortOn::None, SortOrder::Ascending,
+                 SortNa::Bottom, None, SortSeq::CategoryHierarchy)
+            };
+        if let ViewMgrMode::Props { active_field: ViewPropsField::ItemSorting, ref mut sort_state, .. }
+            = self.vmgr_state.mode
+        {
+            *sort_state = SortState::Dialog {
+                sort_new:         sn,
+                primary_on:       po,   primary_order:    poor,  primary_na:    pna,
+                primary_cat_id:   pcid, primary_seq:      pseq,
+                secondary_on:     so,   secondary_order:  soor,  secondary_na:  sna,
+                secondary_cat_id: scid, secondary_seq:    sseq,
+                active_field:     SortField::SortNewItems,
+                picker:           None,
+            };
+        }
+    }
+
+    pub fn vmgr_sort_tab(&mut self) {
+        if let ViewMgrMode::Props {
+            sort_state: SortState::Dialog { active_field, primary_on, primary_cat_id, secondary_on, secondary_cat_id, .. }, ..
+        } = &mut self.vmgr_state.mode {
+            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id);
+            let pos = fields.iter().position(|f| f == active_field).unwrap_or(0);
+            *active_field = fields[(pos + 1) % fields.len()];
+        }
+    }
+
+    pub fn vmgr_sort_tab_back(&mut self) {
+        if let ViewMgrMode::Props {
+            sort_state: SortState::Dialog { active_field, primary_on, primary_cat_id, secondary_on, secondary_cat_id, .. }, ..
+        } = &mut self.vmgr_state.mode {
+            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id);
+            let pos = fields.iter().position(|f| f == active_field).unwrap_or(0);
+            *active_field = if pos == 0 { *fields.last().unwrap_or(&SortField::SortNewItems) } else { fields[pos - 1] };
+        }
+    }
+
+    pub fn vmgr_sort_confirm(&mut self) {
+        let v_idx = self.vmgr_state.cursor;
+        let vals = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { sort_state: SortState::Dialog {
+                sort_new, primary_on, primary_order, primary_na, primary_cat_id, primary_seq,
+                secondary_on, secondary_order, secondary_na, secondary_cat_id, secondary_seq, ..
+            }, .. } => (*sort_new, *primary_on, *primary_order, *primary_na, *primary_cat_id,
+                        *primary_seq, *secondary_on, *secondary_order, *secondary_na,
+                        *secondary_cat_id, *secondary_seq),
+            _ => return,
+        };
+        let (sn, po, poor, pna, pcid, pseq, so, soor, sna, scid, sseq) = vals;
+        // Apply to every section in the view at cursor.
+        let view = if v_idx == 0 { &mut self.view }
+                   else { match self.inactive_views.get_mut(v_idx - 1) { Some(v) => v, None => return } };
+        for sec in &mut view.sections {
+            sec.sort_new         = sn;
+            sec.primary_on       = po;   sec.primary_order    = poor;  sec.primary_na    = pna;
+            sec.primary_cat_id   = pcid; sec.primary_seq      = pseq;
+            sec.secondary_on     = so;   sec.secondary_order  = soor;  sec.secondary_na  = sna;
+            sec.secondary_cat_id = scid; sec.secondary_seq    = sseq;
+        }
+        if self.file_path.is_some() { self.dirty = true; }
+        if let ViewMgrMode::Props { ref mut sort_state, .. } = self.vmgr_state.mode {
+            *sort_state = SortState::Closed;
+        }
+    }
+
+    pub fn vmgr_sort_cancel(&mut self) {
+        if let ViewMgrMode::Props { ref mut sort_state, .. } = self.vmgr_state.mode {
+            *sort_state = SortState::Closed;
+        }
+    }
+
+    pub fn vmgr_sort_open_picker(&mut self) {
+        let flat_cats = flatten_cats(&self.categories);
+        let (target, current_idx) = {
+            let ViewMgrMode::Props {
+                sort_state: SortState::Dialog {
+                    active_field, primary_on, primary_order, primary_na, primary_cat_id, primary_seq,
+                    secondary_on, secondary_order, secondary_na, secondary_cat_id, secondary_seq, ..
+                }, ..
+            } = &self.vmgr_state.mode else { return; };
+            match active_field {
+                SortField::SortNewItems      => (*active_field, 0),
+                SortField::PrimaryOn         => (*active_field, SortOn::ALL.iter().position(|&x| x == *primary_on).unwrap_or(0)),
+                SortField::PrimaryOrder      => (*active_field, SortOrder::ALL.iter().position(|&x| x == *primary_order).unwrap_or(0)),
+                SortField::PrimaryNa         => (*active_field, SortNa::ALL.iter().position(|&x| x == *primary_na).unwrap_or(0)),
+                SortField::PrimaryCategory   => (*active_field, primary_cat_id.and_then(|id| flat_cats.iter().position(|e| e.id == id)).unwrap_or(0)),
+                SortField::PrimarySequence   => (*active_field, SortSeq::ALL.iter().position(|&x| x == *primary_seq).unwrap_or(0)),
+                SortField::SecondaryOn       => (*active_field, SortOn::ALL.iter().position(|&x| x == *secondary_on).unwrap_or(0)),
+                SortField::SecondaryOrder    => (*active_field, SortOrder::ALL.iter().position(|&x| x == *secondary_order).unwrap_or(0)),
+                SortField::SecondaryNa       => (*active_field, SortNa::ALL.iter().position(|&x| x == *secondary_na).unwrap_or(0)),
+                SortField::SecondaryCategory => (*active_field, secondary_cat_id.and_then(|id| flat_cats.iter().position(|e| e.id == id)).unwrap_or(0)),
+                SortField::SecondarySequence => (*active_field, SortSeq::ALL.iter().position(|&x| x == *secondary_seq).unwrap_or(0)),
+            }
+        };
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            *picker = Some(SortPicker { cursor: current_idx, target });
+        }
+    }
+
+    fn vmgr_sort_picker_len(&self) -> usize {
+        let flat_len = flatten_cats(&self.categories).len();
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { picker: Some(p), .. }, .. } = &self.vmgr_state.mode {
+            match p.target {
+                SortField::SortNewItems                                   => SortNewItems::ALL.len(),
+                SortField::PrimaryOn | SortField::SecondaryOn             => SortOn::ALL.len(),
+                SortField::PrimaryOrder | SortField::SecondaryOrder       => SortOrder::ALL.len(),
+                SortField::PrimaryNa | SortField::SecondaryNa             => SortNa::ALL.len(),
+                SortField::PrimaryCategory | SortField::SecondaryCategory => flat_len,
+                SortField::PrimarySequence | SortField::SecondarySequence => SortSeq::ALL.len(),
+            }
+        } else { 0 }
+    }
+
+    pub fn vmgr_sort_picker_up(&mut self) {
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            if let Some(p) = picker { if p.cursor > 0 { p.cursor -= 1; } }
+        }
+    }
+    pub fn vmgr_sort_picker_down(&mut self) {
+        let max = self.vmgr_sort_picker_len();
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            if let Some(p) = picker { if p.cursor + 1 < max { p.cursor += 1; } }
+        }
+    }
+    pub fn vmgr_sort_picker_pgup(&mut self, n: usize) {
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            if let Some(p) = picker { p.cursor = p.cursor.saturating_sub(n); }
+        }
+    }
+    pub fn vmgr_sort_picker_pgdn(&mut self, n: usize) {
+        let max = self.vmgr_sort_picker_len();
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            if let Some(p) = picker { if max > 0 { p.cursor = (p.cursor + n).min(max - 1); } }
+        }
+    }
+    pub fn vmgr_sort_picker_home(&mut self) {
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            if let Some(p) = picker { p.cursor = 0; }
+        }
+    }
+    pub fn vmgr_sort_picker_end(&mut self) {
+        let max = self.vmgr_sort_picker_len();
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            if let Some(p) = picker { if max > 0 { p.cursor = max - 1; } }
+        }
+    }
+
+    pub fn vmgr_sort_picker_confirm(&mut self) {
+        let flat_cats = flatten_cats(&self.categories);
+        let (cursor, target) = {
+            let ViewMgrMode::Props { sort_state: SortState::Dialog { picker, .. }, .. } = &self.vmgr_state.mode
+            else { return; };
+            match picker { Some(p) => (p.cursor, p.target), None => return }
+        };
+        if let ViewMgrMode::Props {
+            sort_state: SortState::Dialog {
+                ref mut sort_new, ref mut primary_on, ref mut primary_order, ref mut primary_na,
+                ref mut primary_cat_id, ref mut primary_seq,
+                ref mut secondary_on, ref mut secondary_order, ref mut secondary_na,
+                ref mut secondary_cat_id, ref mut secondary_seq,
+                ref mut picker, ..
+            }, ..
+        } = self.vmgr_state.mode {
+            match target {
+                SortField::SortNewItems => { if let Some(&v) = SortNewItems::ALL.get(cursor) { *sort_new = v; } }
+                SortField::PrimaryOn => { if let Some(&v) = SortOn::ALL.get(cursor) { if v != SortOn::Category { *primary_cat_id = None; } *primary_on = v; } }
+                SortField::PrimaryOrder => { if let Some(&v) = SortOrder::ALL.get(cursor) { *primary_order = v; } }
+                SortField::PrimaryNa => { if let Some(&v) = SortNa::ALL.get(cursor) { *primary_na = v; } }
+                SortField::PrimaryCategory => { if let Some(e) = flat_cats.get(cursor) { *primary_cat_id = Some(e.id); } }
+                SortField::PrimarySequence => { if let Some(&v) = SortSeq::ALL.get(cursor) { *primary_seq = v; } }
+                SortField::SecondaryOn => { if let Some(&v) = SortOn::ALL.get(cursor) { if v != SortOn::Category { *secondary_cat_id = None; } *secondary_on = v; } }
+                SortField::SecondaryOrder => { if let Some(&v) = SortOrder::ALL.get(cursor) { *secondary_order = v; } }
+                SortField::SecondaryNa => { if let Some(&v) = SortNa::ALL.get(cursor) { *secondary_na = v; } }
+                SortField::SecondaryCategory => { if let Some(e) = flat_cats.get(cursor) { *secondary_cat_id = Some(e.id); } }
+                SortField::SecondarySequence => { if let Some(&v) = SortSeq::ALL.get(cursor) { *secondary_seq = v; } }
+            }
+            *picker = None;
+        }
+    }
+
+    pub fn vmgr_sort_picker_cancel(&mut self) {
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            *picker = None;
+        }
     }
 
     // ── Delete (F4) ───────────────────────────────────────────────────────────

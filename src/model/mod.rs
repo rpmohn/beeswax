@@ -8,4 +8,4 @@ pub use category::{Category, CategoryKind};
 pub use column::{ColFormat, Column, DateDisplay, Clock, DateFmtCode, DateFmt};
 pub use item::Item;
 pub use section::{Section, SortOn, SortNewItems, SortOrder, SortSeq, SortNa, FilterOp, FilterEntry};
-pub use view::View;
+pub use view::{View, SectionSortMethod};

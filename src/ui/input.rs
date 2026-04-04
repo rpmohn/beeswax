@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FilterState, FKeyMod, MenuState, Mode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FilterState, FKeyMod, MenuState, Mode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode, ViewPropsField};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -167,6 +167,12 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // View Properties dialog can appear over any screen
+    if matches!(app.vmgr_state.mode, ViewMgrMode::Props { .. }) {
+        handle_vmgr_props(app, code);
+        return;
+    }
+
     // View Manager screen — handled here to avoid catch-all dirty marking for navigation
     if matches!(app.screen, AppScreen::ViewMgr) {
         handle_vmgr(app, code);
@@ -271,8 +277,12 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         return;
     }
     match code {
-        KeyCode::Up    => app.cursor_up(),
-        KeyCode::Down  => app.cursor_down(),
+        KeyCode::Up       => app.cursor_up(),
+        KeyCode::Down     => app.cursor_down(),
+        KeyCode::PageUp   => app.cursor_pgup(10),
+        KeyCode::PageDown => app.cursor_pgdn(10),
+        KeyCode::Home     => app.cursor_home(),
+        KeyCode::End      => app.cursor_end(),
         KeyCode::Left  => app.cursor_col_left(),
         KeyCode::Right => app.cursor_col_right(),
         KeyCode::Insert => app.begin_create_blank(),
@@ -847,13 +857,102 @@ fn handle_vmgr_delete(app: &mut App, code: KeyCode) {
 }
 
 fn handle_vmgr_props(app: &mut App, code: KeyCode) {
+    // Section sort picker (choices popup for method or order).
+    let has_sec_sort_picker = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { sec_sort_picker: Some(_), .. }
+    );
+    if has_sec_sort_picker { handle_vmgr_sec_sort_picker(app, code); return; }
+
+    // Item sort picker is the innermost layer of the sort dialog.
+    let has_item_sort_picker = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { sort_state: SortState::Dialog { ref picker, .. }, .. }
+        if picker.is_some()
+    );
+    let has_sort = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { sort_state: SortState::Dialog { .. }, .. }
+    );
+    if has_item_sort_picker { handle_vmgr_sort_picker(app, code); return; }
+    if has_sort             { handle_vmgr_sort_dialog(app, code); return; }
+
+    let is_name = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field: ViewPropsField::Name, .. }
+    );
+    let is_sections = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field: ViewPropsField::Sections, .. }
+    );
+    let is_item_sorting = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field: ViewPropsField::ItemSorting, .. }
+    );
+    let is_sec_sorting = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field: ViewPropsField::SectionSorting, .. }
+    );
+    let is_sec_order = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field: ViewPropsField::SectionSortOrder, .. }
+    );
+    let is_bool = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field, .. }
+        if active_field.is_bool()
+    );
     match code {
-        KeyCode::Enter     => app.vmgr_props_confirm(),
-        KeyCode::Esc       => app.vmgr_props_cancel(),
-        KeyCode::Left      => app.vmgr_props_left(),
-        KeyCode::Right     => app.vmgr_props_right(),
-        KeyCode::Backspace => app.vmgr_props_backspace(),
-        KeyCode::Char(ch)  => app.vmgr_props_char(ch),
+        KeyCode::Enter                                               => app.vmgr_props_confirm(),
+        KeyCode::Esc                                                 => app.vmgr_props_cancel(),
+        KeyCode::Up   if is_sections                                 => app.vmgr_props_sec_up(),
+        KeyCode::Down if is_sections                                 => app.vmgr_props_sec_down(),
+        KeyCode::Tab | KeyCode::Down                                 => app.vmgr_props_field_next(),
+        KeyCode::BackTab | KeyCode::Up                               => app.vmgr_props_field_prev(),
+        KeyCode::F(3) if is_item_sorting                             => app.vmgr_open_item_sort(),
+        KeyCode::F(3) if is_sec_sorting || is_sec_order              => app.vmgr_sec_sort_open_picker(),
+        KeyCode::Char(' ') if is_sec_sorting                         => app.vmgr_sec_sort_cycle(),
+        KeyCode::Char(' ') if is_sec_order                           => app.vmgr_sec_order_cycle(),
+        KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right if is_bool => app.vmgr_props_toggle(),
+        KeyCode::Left      if is_name                                => app.vmgr_props_name_left(),
+        KeyCode::Right     if is_name                                => app.vmgr_props_name_right(),
+        KeyCode::Backspace if is_name                                => app.vmgr_props_name_backspace(),
+        KeyCode::Char(ch)  if is_name                                => app.vmgr_props_name_char(ch),
+        _ => {}
+    }
+}
+
+fn handle_vmgr_sec_sort_picker(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up    => app.vmgr_sec_sort_picker_up(),
+        KeyCode::Down  => app.vmgr_sec_sort_picker_down(),
+        KeyCode::Enter => app.vmgr_sec_sort_picker_confirm(),
+        KeyCode::Esc   => app.vmgr_sec_sort_picker_cancel(),
+        _ => {}
+    }
+}
+
+fn handle_vmgr_sort_dialog(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter  => app.vmgr_sort_confirm(),
+        KeyCode::Esc    => app.vmgr_sort_cancel(),
+        KeyCode::Tab | KeyCode::Down   => app.vmgr_sort_tab(),
+        KeyCode::BackTab | KeyCode::Up => app.vmgr_sort_tab_back(),
+        KeyCode::F(3) => app.vmgr_sort_open_picker(),
+        _ => {}
+    }
+}
+
+fn handle_vmgr_sort_picker(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up       => app.vmgr_sort_picker_up(),
+        KeyCode::Down     => app.vmgr_sort_picker_down(),
+        KeyCode::PageUp   => app.vmgr_sort_picker_pgup(10),
+        KeyCode::PageDown => app.vmgr_sort_picker_pgdn(10),
+        KeyCode::Home     => app.vmgr_sort_picker_home(),
+        KeyCode::End      => app.vmgr_sort_picker_end(),
+        KeyCode::Enter    => app.vmgr_sort_picker_confirm(),
+        KeyCode::Esc      => app.vmgr_sort_picker_cancel(),
         _ => {}
     }
 }

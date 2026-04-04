@@ -121,6 +121,13 @@ pub static VIEWMGR_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "",     "", "",       "", "",      "", "",        "",         ""   ],
 };
 
+pub static VIEW_PROPS_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Edit", "Choices", "", "", "Props", "", "Default", "", ""],
+    shift:  ["",     "",     "",        "", "", "",      "", "",         "", ""],
+    ctrl:   ["",     "",     "",        "", "", "",      "", "",         "", ""],
+    alt:    ["",     "",     "",        "", "", "",      "", "",         "", ""],
+};
+
 /// Render the two-row, 10-section F-key bar into `area` (must be 2 rows tall).
 pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
     let def = if !matches!(app.menu, MenuState::Closed) {
@@ -171,8 +178,16 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &CATPROPS_FKEYS
     } else if matches!(app.mode, Mode::Edit { .. } | Mode::Create { .. }) {
         &EDIT_FKEYS
-    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Rename { .. } | ViewMgrMode::Props { .. }) {
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Rename { .. }) {
         &EDIT_FKEYS
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { ref sec_sort_picker, .. } if sec_sort_picker.is_some()) {
+        &MENU_FKEYS   // section sort choices picker is self-describing
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { sort_state: SortState::Dialog { picker: Some(_), .. }, .. }) {
+        &MENU_FKEYS   // sort field picker is self-describing
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { sort_state: SortState::Dialog { .. }, .. }) {
+        &CHOICES_FKEYS   // F3 = Choices (sort field picker)
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { .. }) {
+        &VIEW_PROPS_FKEYS
     } else if matches!(app.vmgr_state.mode, ViewMgrMode::ConfirmDelete { .. }) {
         &MENU_FKEYS
     } else {

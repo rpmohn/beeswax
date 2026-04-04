@@ -5,7 +5,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use crate::app::{App, ViewMgrMode};
+use crate::app::{App, SortPicker, ViewMgrMode, ViewPropsField, section_item_indices};
+use crate::app::SortState;
 use super::cursor_split;
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -112,66 +113,376 @@ pub fn render(frame: &mut Frame, app: &App) {
         ];
         frame.render_widget(Paragraph::new(del_rows), del_inner);
     }
+}
 
-    // ── Props overlay ─────────────────────────────────────────────────────────
-    if let ViewMgrMode::Props { buffer, cursor: buf_cur } = &app.vmgr_state.mode {
-        let view_ref = if cursor == 0 {
-            &app.view
+/// Renders the View Properties dialog as a floating overlay over any screen.
+pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
+    let props = match &app.vmgr_state.mode {
+        ViewMgrMode::Props { .. } => match &app.vmgr_state.mode { ViewMgrMode::Props {
+            name_buf, name_cur,
+            sec_cursor,
+            sort_state,
+            sec_sort_method, sec_sort_order, sec_sort_picker,
+            hide_empty_sections, hide_done_items, hide_dependent_items,
+            hide_inherited_items, hide_column_heads, section_separators, number_items,
+            active_field, sec_scroll,
+        } => (name_buf, *name_cur, *sec_cursor, sort_state,
+              *sec_sort_method, *sec_sort_order, sec_sort_picker,
+              *hide_empty_sections, *hide_done_items,
+              *hide_dependent_items, *hide_inherited_items, *hide_column_heads,
+              *section_separators, *number_items, *active_field, *sec_scroll),
+        _ => return },
+        _ => return,
+    };
+    let (name_buf, name_cur, sec_cursor, sort_state,
+         sec_sort_method, sec_sort_order, sec_sort_picker,
+         hes, hdi, hdep, hii, hch, ss, ni, active_field, sec_scroll) = props;
+
+    // The view being edited
+    let v_cursor = app.vmgr_state.cursor;
+    let view_ref = if v_cursor == 0 { &app.view }
+                   else { app.inactive_views.get(v_cursor - 1).unwrap_or(&app.view) };
+
+    let dlg = centered_rect(64, 19, area);
+    frame.render_widget(Clear, dlg);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title_top(Line::from(" View Properties ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
+    frame.render_widget(block.clone(), dlg);
+    let inner = block.inner(dlg);
+
+    let rev = Style::default().add_modifier(Modifier::REVERSED);
+    let iw  = inner.width as usize;
+
+    // Layout constants
+    let left_w   = 36usize;   // left column width (labels + values)
+    let right_x  = left_w;   // right column starts here
+
+    let yn = |v: bool| if v { "Yes" } else { "No" };
+    let pad_to = |s: &str, w: usize| -> String {
+        let n = s.chars().count();
+        if n >= w { s.chars().take(w).collect() } else { format!("{}{}", s, " ".repeat(w - n)) }
+    };
+
+    // Helper: build a Yes/No field line.
+    // left_part: the padded left text, right_part: optional right column text.
+    let bool_line = |label: &str, val: bool, field: ViewPropsField, right: &str| -> Line<'static> {
+        let val_str = yn(val);
+        if active_field == field {
+            let left_str = label.to_string();
+            let used = label.chars().count() + val_str.chars().count();
+            let pad = left_w.saturating_sub(used);
+            let mut spans: Vec<Span<'static>> = vec![
+                Span::raw(left_str.to_string()),
+                Span::styled(format!("{}{}", val_str, " ".repeat(pad)), rev),
+            ];
+            if !right.is_empty() {
+                spans.push(Span::raw(right.to_string()));
+            }
+            Line::from(spans)
         } else {
-            match app.inactive_views.get(cursor - 1) {
-                Some(v) => v,
-                None    => &app.view,
+            Line::from(format!("{}{:<w$}{}", label, val_str, right, w = left_w.saturating_sub(label.chars().count())))
+        }
+    };
+
+    // Sections list on right side (visible starting from sec_scroll).
+    let sec_names: Vec<&str> = view_ref.sections.iter().map(|s| s.name.as_str()).collect();
+    let right_avail = iw.saturating_sub(right_x);
+    let is_secs_active = active_field == ViewPropsField::Sections;
+
+    // Returns (text, highlight) for each right-column slot.
+    // slot 0 → "Sections:" header, slot 1+ → section names (with cursor highlight).
+    let right_slot = |slot: usize| -> (String, bool) {
+        match slot {
+            0 => ("Sections:".chars().take(right_avail).collect(), false),
+            n => {
+                let idx = sec_scroll + n - 1;
+                let text = if let Some(name) = sec_names.get(idx) {
+                    name.chars().take(right_avail).collect()
+                } else {
+                    String::new()
+                };
+                let hi = is_secs_active && idx == sec_cursor;
+                (text, hi)
             }
-        };
+        }
+    };
 
-        let sec_count  = view_ref.sections.len();
-        // Count distinct items that appear in any section of this view.
-        let item_count = {
-            let mut seen = std::collections::HashSet::new();
-            for si in 0..sec_count {
-                for gi in crate::app::section_item_indices(&app.items, view_ref, si, &app.categories) {
-                    seen.insert(gi);
-                }
-            }
-            seen.len()
-        };
-
-        let modal_rect = centered_rect(54, 9, area);
-        frame.render_widget(Clear, modal_rect);
-        let props_block = Block::default()
-            .borders(Borders::ALL)
-            .title_top(Line::from(" View Properties ").alignment(Alignment::Center))
-            .title_bottom(
-                Line::from(" Press ENTER when done, ESC to cancel ")
-                    .alignment(Alignment::Center),
-            );
-        frame.render_widget(props_block.clone(), modal_rect);
-        let props_inner = props_block.inner(modal_rect);
-
-        let field_w = 22usize;
-        let (left, hi, right) = cursor_split(buffer, *buf_cur);
-        let left_part: String  = left.chars().take(field_w).collect();
-        let right_part: String = {
-            let used = left_part.chars().count() + 1;  // +1 for hi char
-            right.chars().take(field_w.saturating_sub(used)).collect()
-        };
-
-        let iw = props_inner.width as usize;
-
-        let rows = vec![
-            Line::from(""),
+    // Build a single Line from left text (already padded to left_w) and right slot.
+    let row_with_right = |left_padded: String, slot: usize| -> Line<'static> {
+        let (right_text, highlight) = right_slot(slot);
+        if highlight {
+            let padded = format!("{:<w$}", right_text, w = right_avail);
             Line::from(vec![
-                Span::raw("  Name:      "),
-                Span::raw(left_part),
-                Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
-                Span::raw(right_part),
-                Span::raw(" ".repeat(iw)),  // fill rest of line
-            ]),
-            Line::from(format!("  Sections:  {}", sec_count)),
-            Line::from(format!("  Items:     {}", item_count)),
-            Line::from(""),
-        ];
-        frame.render_widget(Paragraph::new(rows), props_inner);
+                Span::raw(left_padded),
+                Span::styled(padded, rev),
+            ])
+        } else {
+            Line::from(format!("{}{}", left_padded, right_text))
+        }
+    };
+
+    // View statistics: item count.
+    let item_count = {
+        let mut seen = std::collections::HashSet::new();
+        for si in 0..view_ref.sections.len() {
+            for gi in section_item_indices(&app.items, view_ref, si, &app.categories) {
+                seen.insert(gi);
+            }
+        }
+        seen.len()
+    };
+
+    // ── Build the dialog lines ─────────────────────────────────────────────────
+    let name_field_w = left_w.saturating_sub("View name:   ".len());
+
+    // Row 0: blank
+    let mut rows: Vec<Line<'static>> = vec![Line::from("")];
+
+    // Row 1: View name | Sections:
+    {
+        let label = "View name:   ";
+        let (right_text, _) = right_slot(0);
+        let right_padded = format!("{:>width$}", right_text, width = right_avail);
+        if active_field == ViewPropsField::Name {
+            let (left, hi, rt) = cursor_split(name_buf, name_cur);
+            let lp: String = left.chars().take(name_field_w).collect();
+            let rp: String = {
+                let used = lp.chars().count() + 1;
+                rt.chars().take(name_field_w.saturating_sub(used)).collect()
+            };
+            let pad = name_field_w.saturating_sub(lp.chars().count() + 1 + rp.chars().count());
+            rows.push(Line::from(vec![
+                Span::raw(label.to_string()),
+                Span::styled(lp, rev),
+                Span::styled(hi, rev),
+                Span::styled(rp, rev),
+                Span::styled(" ".repeat(pad), rev),
+                Span::raw(right_padded),
+            ]));
+        } else {
+            let displayed: String = name_buf.chars().take(name_field_w).collect();
+            let left_str = pad_to(&format!("{}{}", label, displayed), left_w);
+            rows.push(Line::from(format!("{}{}", left_str, right_padded)));
+        }
+    }
+
+    // Row 2: Item sorting | sec[0]
+    {
+        let label = "Item sorting:      ";
+        let val   = "...";
+        let left_str = if active_field == ViewPropsField::ItemSorting {
+            let full = format!("{}{}", label, val);
+            let padded = pad_to(&full, left_w);
+            // return highlighted left, then right
+            let (right_text, hi) = right_slot(1);
+            let right_span = if hi {
+                Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
+            } else {
+                Span::raw(right_text)
+            };
+            rows.push(Line::from(vec![
+                Span::styled(padded, rev),
+                right_span,
+            ]));
+            // skip normal push below
+            // Use a sentinel: push empty line and pop
+            // Actually let's just use a flag
+            String::new()
+        } else {
+            pad_to(&format!("{}{}", label, val), left_w)
+        };
+        if !left_str.is_empty() {
+            rows.push(row_with_right(left_str, 1));
+        }
+    }
+
+    // Row 3: Section sorting | sec[1]
+    {
+        let label = "Section sorting:   ";
+        let val   = sec_sort_method.label();
+        let left_str = if active_field == ViewPropsField::SectionSorting {
+            let full = format!("{}{}", label, val);
+            let padded = pad_to(&full, left_w);
+            let (right_text, hi) = right_slot(2);
+            let right_span = if hi {
+                Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
+            } else {
+                Span::raw(right_text)
+            };
+            rows.push(Line::from(vec![
+                Span::styled(padded, rev),
+                right_span,
+            ]));
+            String::new()
+        } else {
+            pad_to(&format!("{}{}", label, val), left_w)
+        };
+        if !left_str.is_empty() {
+            rows.push(row_with_right(left_str, 2));
+        }
+    }
+
+    // Row 4: "  Order:" if section sort != None, else blank | sec[2]
+    if sec_sort_method != crate::model::SectionSortMethod::None {
+        let label = "  Order:           ";
+        let val   = sec_sort_order.label();
+        let left_str = if active_field == ViewPropsField::SectionSortOrder {
+            let full = format!("{}{}", label, val);
+            let padded = pad_to(&full, left_w);
+            let (right_text, hi) = right_slot(3);
+            let right_span = if hi {
+                Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
+            } else {
+                Span::raw(right_text)
+            };
+            rows.push(Line::from(vec![
+                Span::styled(padded, rev),
+                right_span,
+            ]));
+            String::new()
+        } else {
+            pad_to(&format!("{}{}", label, val), left_w)
+        };
+        if !left_str.is_empty() {
+            rows.push(row_with_right(left_str, 3));
+        }
+    } else {
+        rows.push(row_with_right(format!("{:<w$}", "", w = left_w), 3));
+    }
+
+    // Row 5–11: Yes/No fields, right column continues
+    let bool_fields: &[(_, _, ViewPropsField)] = &[
+        ("Hide empty sections:   ", hes,  ViewPropsField::HideEmptySections),
+        ("Hide done items:       ", hdi,  ViewPropsField::HideDoneItems),
+        ("Hide dependent items:  ", hdep, ViewPropsField::HideDependentItems),
+        ("Hide inherited items:  ", hii,  ViewPropsField::HideInheritedItems),
+        ("Hide column heads:     ", hch,  ViewPropsField::HideColumnHeads),
+        ("Section separators:    ", ss,   ViewPropsField::SectionSeparators),
+        ("Number items:          ", ni,   ViewPropsField::NumberItems),
+    ];
+    for (row_offset, (label, val, field)) in bool_fields.iter().enumerate() {
+        let slot = 4 + row_offset;
+        let (right_text, right_hi) = right_slot(slot);
+        // For "Number items:" show "Filter:" on the right if the sections list is done
+        let right_str = if *field == ViewPropsField::NumberItems && right_text.is_empty() {
+            "Filter:".to_string()
+        } else {
+            right_text
+        };
+        if active_field == *field {
+            // Left side highlighted; right side may be highlighted independently.
+            let val_str = yn(*val);
+            let used = label.chars().count() + val_str.chars().count();
+            let pad = left_w.saturating_sub(used);
+            let right_span = if right_hi {
+                Span::styled(format!("{:<w$}", right_str, w = right_avail), rev)
+            } else {
+                Span::raw(right_str)
+            };
+            rows.push(Line::from(vec![
+                Span::raw(label.to_string()),
+                Span::styled(format!("{}{}", val_str, " ".repeat(pad)), rev),
+                right_span,
+            ]));
+        } else if right_hi {
+            let val_str = yn(*val);
+            let left_full = format!("{}{:<w$}", label, val_str, w = left_w.saturating_sub(label.chars().count()));
+            rows.push(Line::from(vec![
+                Span::raw(left_full),
+                Span::styled(format!("{:<w$}", right_str, w = right_avail), rev),
+            ]));
+        } else {
+            rows.push(bool_line(label, *val, *field, &right_str));
+        }
+    }
+
+    // Row 12: blank
+    rows.push(Line::from(""));
+
+    // Row 13: View statistics
+    {
+        let label = "View statistics:   ";
+        let val   = format!("{} items", item_count);
+        let left_str = pad_to(&format!("{}{}", label, val), left_w);
+        if active_field == ViewPropsField::ViewStatistics {
+            rows.push(Line::from(Span::styled(left_str, rev)));
+        } else {
+            rows.push(Line::from(left_str));
+        }
+    }
+
+    // Row 14: blank
+    rows.push(Line::from(""));
+
+    // Row 15: View protection
+    {
+        let label = "View protection:   ";
+        let val   = "Global (No protection)";
+        let left_str = pad_to(&format!("{}{}", label, val), left_w);
+        if active_field == ViewPropsField::ViewProtection {
+            rows.push(Line::from(Span::styled(left_str, rev)));
+        } else {
+            rows.push(Line::from(left_str));
+        }
+    }
+
+    // Row 16: blank
+    rows.push(Line::from(""));
+
+    frame.render_widget(Paragraph::new(rows), inner);
+
+    // ── Section sort picker popup ─────────────────────────────────────────────
+    if let Some((target, cursor)) = sec_sort_picker {
+        let (title, choices): (&str, Vec<&str>) = match target {
+            crate::app::SecSortTarget::Method => (
+                " Choices ",
+                crate::model::SectionSortMethod::ALL.iter().map(|m| m.label()).collect(),
+            ),
+            crate::app::SecSortTarget::Order => (
+                " Choices ",
+                crate::model::SortOrder::ALL.iter().map(|o| o.label()).collect(),
+            ),
+        };
+        let h = (choices.len() as u16 + 4).min(area.height.saturating_sub(4));
+        let w = 30u16.min(area.width.saturating_sub(4));
+        let pick_rect = centered_rect(w, h, area);
+        frame.render_widget(Clear, pick_rect);
+        let pick_block = Block::default()
+            .borders(Borders::ALL)
+            .title_top(Line::from(title).alignment(Alignment::Center));
+        frame.render_widget(pick_block.clone(), pick_rect);
+        let pick_inner = pick_block.inner(pick_rect);
+        let mut pick_lines: Vec<Line<'static>> = vec![Line::from("")];
+        for (i, label) in choices.iter().enumerate() {
+            if i == *cursor {
+                pick_lines.push(Line::from(Span::styled(
+                    format!(" {}", label),
+                    Style::default().add_modifier(Modifier::REVERSED),
+                )));
+            } else {
+                pick_lines.push(Line::from(format!(" {}", label)));
+            }
+        }
+        frame.render_widget(Paragraph::new(pick_lines), pick_inner);
+    }
+
+    // ── Sort dialog overlay (when F3 opens Item Sorting sub-dialog) ───────────
+    if let SortState::Dialog {
+        sort_new, primary_on, primary_order, primary_na, primary_cat_id, primary_seq,
+        secondary_on, secondary_order, secondary_na, secondary_cat_id, secondary_seq,
+        active_field: sf, picker,
+    } = sort_state {
+        let picker_ref: Option<&SortPicker> = picker.as_ref();
+        super::view::render_sort_dialog(
+            frame, app, area,
+            " Item Sorting in All Sections ",
+            *sort_new,
+            *primary_on, *primary_order, *primary_na, *primary_cat_id, *primary_seq,
+            *secondary_on, *secondary_order, *secondary_na, *secondary_cat_id, *secondary_seq,
+            *sf, picker_ref,
+        );
     }
 }
 

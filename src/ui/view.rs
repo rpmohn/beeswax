@@ -2085,6 +2085,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     } = sort_state {
         render_sort_dialog(
             frame, app, area,
+            " Item Sorting ",
             *sort_new,
             *primary_on, *primary_order, *primary_na, *primary_cat_id, *primary_seq,
             *secondary_on, *secondary_order, *secondary_na, *secondary_cat_id, *secondary_seq,
@@ -2093,10 +2094,11 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_sort_dialog(
+pub fn render_sort_dialog(
     frame:            &mut Frame,
     app:              &App,
     area:             Rect,
+    title:            &str,
     sort_new:         SortNewItems,
     primary_on:       SortOn,
     primary_order:    SortOrder,
@@ -2120,7 +2122,7 @@ fn render_sort_dialog(
     frame.render_widget(Clear, dlg);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title_top(Line::from(" Item Sorting in Current Section ").alignment(Alignment::Center))
+        .title_top(Line::from(title.to_string()).alignment(Alignment::Center))
         .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);

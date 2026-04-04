@@ -15,4 +15,5 @@ pub fn render(frame: &mut Frame, app: &App) {
     view::render_view_add_dialog(frame, app, area);
     view::render_sec_props_dialog(frame, app, area);
     catmgr::render_cat_props_modal(frame, app, area);
+    viewmgr::render_view_props_overlay(frame, app, area);
 }
