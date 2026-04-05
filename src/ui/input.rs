@@ -332,6 +332,10 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn handle_view_input(app: &mut App, code: KeyCode) {
+    // For item text col=0 (Edit or Create), Up/Down navigate wrapped lines.
+    let is_item_text = matches!(&app.mode,
+        Mode::Edit   { col, .. } if *col == 0) ||
+        matches!(&app.mode, Mode::Create { .. });
     match code {
         KeyCode::Enter     => app.confirm(),
         KeyCode::Esc       => app.cancel(),
@@ -341,6 +345,8 @@ fn handle_view_input(app: &mut App, code: KeyCode) {
         KeyCode::Right     => app.edit_cursor_right(),
         KeyCode::Home      => app.edit_cursor_home(),
         KeyCode::End       => app.edit_cursor_end(),
+        KeyCode::Up   if is_item_text => app.edit_cursor_line_up(),
+        KeyCode::Down if is_item_text => app.edit_cursor_line_down(),
         KeyCode::Char(ch)  => app.input_char(ch),
         _ => {}
     }

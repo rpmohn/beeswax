@@ -210,8 +210,19 @@ pub fn render(frame: &mut Frame, app: &App) {
             let item_pfx   = if is_done { ITEM_DONE_PREFIX } else if item.note.is_empty() { ITEM_PREFIX } else { ITEM_NOTE_PREFIX };
             let pfx_w      = item_pfx.chars().count();
             let max_text_w = main_col_w.saturating_sub(pfx_w);
-            let item_text: String = item.text.chars().take(max_text_w).collect();
-            let item_w    = pfx_w + item_text.chars().count();
+
+            // Cache the item text column width so app.rs navigation methods can use it.
+            if cursor_on_item { app.item_wrap_width.set(max_text_w); }
+
+            // Determine the text source for wrapping: buffer when editing col=0, else item.text.
+            let editing_text = cursor_on_item && matches!(&app.mode, Mode::Edit { col, .. } if *col == 0);
+            let wrap_src = if editing_text {
+                if let Mode::Edit { buffer, .. } = &app.mode { buffer.as_str() } else { item.text.as_str() }
+            } else {
+                item.text.as_str()
+            };
+            let (wrapped_lines, wrap_starts) = word_wrap_lines(wrap_src, max_text_w);
+            let n_text_rows = wrapped_lines.len();
 
             // Multi-line column values: Vec<Vec<String>> (outer=columns, inner=assignments).
             // Date columns always produce one entry; standard columns may produce multiple.
@@ -227,7 +238,8 @@ pub fn render(frame: &mut Frame, app: &App) {
                 .collect();
 
             // How many display rows does this item need?
-            let n_rows = all_vals_lines.iter().map(|v| v.len().max(1)).max().unwrap_or(1);
+            let n_col_rows = all_vals_lines.iter().map(|v| v.len().max(1)).max().unwrap_or(1);
+            let n_rows     = n_text_rows.max(n_col_rows);
 
             // Which cell (if any) is in edit mode — only applies to row 0.
             let (item_active_col, item_cell_edit): (Option<usize>, Option<(&str, usize)>) =
@@ -267,6 +279,28 @@ pub fn render(frame: &mut Frame, app: &App) {
             let left_item_active  = item_active_col.filter(|&i| i < lc);
             let right_item_active = item_active_col.filter(|&i| i >= lc).map(|i| i - lc);
 
+            // Compute the edit cursor position once (doesn't vary by row).
+            let edit_cursor_line_col: Option<(usize, usize)> = if editing_text {
+                if let Mode::Edit { cursor, .. } = &app.mode {
+                    Some(find_cursor_in_wrapped(&wrap_starts, &wrapped_lines, *cursor))
+                } else { None }
+            } else { None };
+
+            // When the cursor sits at the end of a line that fills max_text_w exactly, a
+            // trailing cursor-block space would overflow into the right columns.  Remap:
+            //   • non-last line → show cursor at start of the next wrapped line
+            //   • last line     → overlay the cursor on the last visible character
+            let edit_cursor_display: Option<(usize, usize)> = edit_cursor_line_col.map(|(cl, cc)| {
+                let lw = wrapped_lines[cl].chars().count();
+                if cc >= lw && pfx_w + lw >= main_col_w {
+                    if cl + 1 < n_text_rows       { (cl + 1, 0) }
+                    else if lw > 0                { (cl, lw - 1) }
+                    else                          { (cl, cc) }
+                } else {
+                    (cl, cc)
+                }
+            });
+
             for row_i in 0..n_rows {
                 // Values for this sub-row (empty string if this column has fewer assignments).
                 let left_vals_row: Vec<String> = all_vals_lines[..lc].iter()
@@ -290,40 +324,63 @@ pub fn render(frame: &mut Frame, app: &App) {
                                                 left_active, left_edit,
                                                 hint_ref.filter(|_| left_active.is_some()), "\u{00B7}");
 
-                // Main column content: item text on row 0, blank on subsequent rows.
-                let mut item_spans: Vec<Span<'static>> = if row_i == 0 && cursor_on_item {
+                // Main column content: item text (word-wrapped) across rows.
+                let is_text_row = row_i < n_text_rows;
+                let line_text = if is_text_row { wrapped_lines[row_i].clone() } else { String::new() };
+                let indent = if row_i == 0 { item_pfx.to_string() } else { " ".repeat(pfx_w) };
+
+                let mut item_spans: Vec<Span<'static>> = if cursor_on_item && is_text_row {
                     match &app.mode {
                         Mode::Normal => {
+                            // Highlight all wrapped lines when selected
                             let style = if app.col_cursor == 0 {
                                 Style::default().add_modifier(Modifier::REVERSED)
                             } else {
                                 Style::default().add_modifier(Modifier::BOLD)
                             };
-                            vec![Span::raw(item_pfx), Span::styled(item_text.clone(), style)]
+                            vec![Span::raw(indent), Span::styled(line_text, style)]
                         }
-                        Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
-                            let (left, hi, right) = cursor_split(buffer, *cursor);
-                            vec![
-                                Span::raw(item_pfx),
-                                Span::raw(left),
-                                Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
-                                Span::raw(right),
-                            ]
+                        Mode::Edit { col, .. } if *col == 0 => {
+                            if let Some((dcl, dcc)) = edit_cursor_display {
+                                if row_i == dcl {
+                                    let (left, hi, right) = cursor_split(&line_text, dcc);
+                                    vec![
+                                        Span::raw(indent),
+                                        Span::raw(left),
+                                        Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
+                                        Span::raw(right),
+                                    ]
+                                } else {
+                                    vec![Span::raw(indent), Span::raw(line_text)]
+                                }
+                            } else {
+                                vec![Span::raw(indent), Span::raw(line_text)]
+                            }
                         }
                         Mode::Edit { .. } =>
-                            vec![Span::raw(item_pfx),
-                                 Span::styled(item_text.clone(), Style::default().add_modifier(Modifier::BOLD))],
+                            vec![Span::raw(indent),
+                                 Span::styled(line_text, Style::default().add_modifier(Modifier::BOLD))],
                         Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ItemProps { .. } =>
-                            vec![Span::raw(item_pfx), Span::raw(item_text.clone())],
+                            vec![Span::raw(indent), Span::raw(line_text)],
                     }
-                } else if row_i == 0 {
-                    vec![Span::raw(item_pfx), Span::raw(item_text.clone())]
+                } else if is_text_row {
+                    vec![Span::raw(indent), Span::raw(line_text)]
                 } else {
                     vec![Span::raw(" ".repeat(main_col_w))]
                 };
-                let cur_item_w = if row_i == 0 { item_w } else { main_col_w };
-                if row_i == 0 && cur_item_w < main_col_w {
-                    item_spans.push(Span::raw(" ".repeat(main_col_w - cur_item_w)));
+                // Pad to main_col_w.  cursor_extra accounts for the trailing cursor-block
+                // space when the cursor is past the last char of a short line.
+                let text_chars = if is_text_row {
+                    let line_w = wrapped_lines[row_i].chars().count();
+                    let cursor_extra = if let Some((dcl, dcc)) = edit_cursor_display {
+                        if row_i == dcl && dcc >= line_w { 1 } else { 0 }
+                    } else { 0 };
+                    pfx_w + line_w + cursor_extra
+                } else {
+                    main_col_w
+                };
+                if text_chars < main_col_w {
+                    item_spans.push(Span::raw(" ".repeat(main_col_w - text_chars)));
                 }
 
                 let right_item_spans = col_cells(right_cols, &right_vals_row,
@@ -339,16 +396,52 @@ pub fn render(frame: &mut Frame, app: &App) {
 
             if cursor_on_item {
                 if let Mode::Create { buffer, cursor } = &app.mode {
-                    let used  = ITEM_PREFIX.chars().count() + buffer.chars().count();
+                    let create_pfx_w = ITEM_PREFIX.chars().count();
+                    let create_text_w = main_col_w.saturating_sub(create_pfx_w);
+                    let (create_lines, create_starts) = word_wrap_lines(buffer, create_text_w);
+                    let (cur_line, cur_col) = find_cursor_in_wrapped(&create_starts, &create_lines, *cursor);
+                    // Remap cursor when it would overflow (same logic as edit mode above).
+                    let (dcl, dcc) = {
+                        let lw = create_lines[cur_line].chars().count();
+                        if cur_col >= lw && create_pfx_w + lw >= main_col_w {
+                            if cur_line + 1 < create_lines.len() { (cur_line + 1, 0) }
+                            else if lw > 0                        { (cur_line, lw - 1) }
+                            else                                  { (cur_line, cur_col) }
+                        } else {
+                            (cur_line, cur_col)
+                        }
+                    };
                     let empty: Vec<String> = app.view.columns.iter().map(|_| String::new()).collect();
                     let left_empty  = &empty[..lc];
                     let right_empty = &empty[lc..];
-                    let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}");
-                    spans.extend(input_row_spans(buffer, *cursor));
-                    if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
-                    if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
-                    spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}"));
-                    lines.push(Line::from(spans));
+                    for (row_i, line) in create_lines.iter().enumerate() {
+                        let indent = if row_i == 0 { ITEM_PREFIX.to_string() } else { " ".repeat(create_pfx_w) };
+                        let (left, hi, right) = if row_i == dcl {
+                            cursor_split(line, dcc)
+                        } else {
+                            (line.clone(), String::new(), String::new())
+                        };
+                        let mut spans = if row_i == 0 {
+                            col_cells(left_cols, left_empty, None, None, None, "\u{00B7}")
+                        } else {
+                            let blanks: Vec<String> = left_empty.iter().map(|_| String::new()).collect();
+                            col_cells(left_cols, &blanks, None, None, None, "\u{00B7}")
+                        };
+                        spans.push(Span::raw(indent));
+                        spans.push(Span::raw(left));
+                        if !hi.is_empty() || row_i == dcl {
+                            spans.push(Span::styled(if hi.is_empty() { " ".to_string() } else { hi },
+                                                    Style::default().add_modifier(Modifier::REVERSED)));
+                        }
+                        spans.push(Span::raw(right));
+                        let cursor_extra = if row_i == dcl && dcc >= line.chars().count() { 1 } else { 0 };
+                        let used = create_pfx_w + line.chars().count() + cursor_extra;
+                        if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
+                        if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
+                        let right_blanks: Vec<String> = right_empty.iter().map(|_| String::new()).collect();
+                        spans.extend(col_cells(right_cols, &right_blanks, None, None, None, "\u{00B7}"));
+                        lines.push(Line::from(spans));
+                    }
                 }
             }
         }
@@ -1445,7 +1538,58 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect { x, y, width: w, height: h }
 }
 
-/// Pad `s` to exactly `w` chars (or truncate if longer).
+/// Word-wrap `text` to lines of at most `width` chars, tracking char offsets.
+/// Breaks at the last space within each line; hard-breaks words longer than `width`.
+/// Returns `(lines, starts)` where `starts[i]` is the char index in `text` where line i begins.
+/// Always returns at least one element.
+fn word_wrap_lines(text: &str, width: usize) -> (Vec<String>, Vec<usize>) {
+    if width == 0 { return (vec![String::new()], vec![0]); }
+    let chars: Vec<char> = text.chars().collect();
+    let total = chars.len();
+    let mut lines:  Vec<String> = Vec::new();
+    let mut starts: Vec<usize>  = Vec::new();
+    let mut pos = 0usize; // char index into chars
+    while pos < total {
+        // Skip leading spaces (only on lines after the first)
+        if !lines.is_empty() {
+            while pos < total && chars[pos] == ' ' { pos += 1; }
+            if pos >= total { break; }
+        }
+        let line_start = pos;
+        // Find the furthest break point within [pos, pos+width)
+        let end = (pos + width).min(total);
+        // Look for last space in [pos, end)
+        let last_space = chars[pos..end].iter().rposition(|&c| c == ' ');
+        let break_at = if end == total {
+            // Reached end of text — take everything
+            end
+        } else if let Some(sp) = last_space {
+            pos + sp
+        } else {
+            // No space found → hard break
+            end
+        };
+        let line: String = chars[pos..break_at].iter().collect();
+        // Trim trailing spaces
+        let line = line.trim_end_matches(' ').to_string();
+        lines.push(line);
+        starts.push(line_start);
+        pos = break_at;
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+        starts.push(0);
+    }
+    (lines, starts)
+}
+
+/// Given wrap starts and cursor char position, return `(line_idx, col_within_line)`.
+fn find_cursor_in_wrapped(starts: &[usize], lines: &[String], cursor: usize) -> (usize, usize) {
+    let line_idx = starts.partition_point(|&s| s <= cursor).saturating_sub(1).min(lines.len().saturating_sub(1));
+    let col = cursor.saturating_sub(starts[line_idx]).min(lines[line_idx].chars().count());
+    (line_idx, col)
+}
+
 fn pad_or_trunc(s: &str, w: usize) -> String {
     let len = s.chars().count();
     if len >= w {

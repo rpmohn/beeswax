@@ -471,12 +471,62 @@ pub struct App {
     // Misc
     pub quit:        bool,
     next_id:         usize,
+    /// Wrap width (chars) of the item text column — set during render, used for line navigation.
+    pub item_wrap_width: std::cell::Cell<usize>,
 }
 
 // ── Byte-offset helper ────────────────────────────────────────────────────────
 
 fn char_to_byte(s: &str, n: usize) -> usize {
     s.char_indices().nth(n).map(|(b, _)| b).unwrap_or(s.len())
+}
+
+// ── Word-wrap helpers (for item text cursor navigation) ───────────────────────
+
+/// Word-wrap `text` to lines of at most `width` chars, returning `(lines, starts)`.
+/// `starts[i]` is the char offset in `text` where line i begins.
+fn wrap_lines_for_nav(text: &str, width: usize) -> (Vec<String>, Vec<usize>) {
+    if width == 0 { return (vec![String::new()], vec![0]); }
+    let chars: Vec<char> = text.chars().collect();
+    let total = chars.len();
+    let mut lines:  Vec<String> = Vec::new();
+    let mut starts: Vec<usize>  = Vec::new();
+    let mut pos = 0usize;
+    while pos < total {
+        if !lines.is_empty() {
+            while pos < total && chars[pos] == ' ' { pos += 1; }
+            if pos >= total { break; }
+        }
+        let line_start = pos;
+        let end = (pos + width).min(total);
+        let last_space = chars[pos..end].iter().rposition(|&c| c == ' ');
+        let break_at = if end == total {
+            end
+        } else if let Some(sp) = last_space {
+            pos + sp
+        } else {
+            end
+        };
+        let line: String = chars[pos..break_at].iter().collect::<String>()
+            .trim_end_matches(' ').to_string();
+        lines.push(line);
+        starts.push(line_start);
+        pos = break_at;
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+        starts.push(0);
+    }
+    (lines, starts)
+}
+
+/// Map char cursor position in original text to `(line_idx, col_within_line)`.
+fn find_wrap_cursor(starts: &[usize], lines: &[String], cursor: usize) -> (usize, usize) {
+    let li = starts.partition_point(|&s| s <= cursor)
+        .saturating_sub(1)
+        .min(lines.len().saturating_sub(1));
+    let col = cursor.saturating_sub(starts[li]).min(lines[li].chars().count());
+    (li, col)
 }
 
 // ── Section item filtering ────────────────────────────────────────────────────
@@ -1446,6 +1496,7 @@ impl App {
             save_state:       SaveState::Idle,
             quit:         false,
             next_id:      7,
+            item_wrap_width: std::cell::Cell::new(0),
         }
     }
 
@@ -1486,6 +1537,7 @@ impl App {
             save_state:       SaveState::Idle,
             quit:         false,
             next_id:      data.next_id,
+            item_wrap_width: std::cell::Cell::new(0),
         }
     }
 
@@ -2183,9 +2235,80 @@ impl App {
     }
 
     pub fn edit_cursor_end(&mut self) {
+        let w = self.item_wrap_width.get();
         match &mut self.mode {
+            Mode::Edit { buffer, cursor, col, .. } if *col == 0 && w > 0 => {
+                let buf = buffer.clone();
+                let (lines, starts) = wrap_lines_for_nav(&buf, w);
+                let (li, _) = find_wrap_cursor(&starts, &lines, *cursor);
+                let line_end = starts[li] + lines[li].chars().count();
+                if *cursor == line_end && li + 1 < lines.len() {
+                    *cursor = starts[li + 1] + lines[li + 1].chars().count();
+                } else {
+                    *cursor = line_end;
+                }
+            }
+            Mode::Create { buffer, cursor } if w > 0 => {
+                let buf = buffer.clone();
+                let (lines, starts) = wrap_lines_for_nav(&buf, w);
+                let (li, _) = find_wrap_cursor(&starts, &lines, *cursor);
+                let line_end = starts[li] + lines[li].chars().count();
+                if *cursor == line_end && li + 1 < lines.len() {
+                    *cursor = starts[li + 1] + lines[li + 1].chars().count();
+                } else {
+                    *cursor = line_end;
+                }
+            }
             Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } => {
                 *cursor = buffer.chars().count();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn edit_cursor_line_up(&mut self) {
+        let w = self.item_wrap_width.get();
+        if w == 0 { return; }
+        match &mut self.mode {
+            Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
+                let buf = buffer.clone();
+                let (lines, starts) = wrap_lines_for_nav(&buf, w);
+                let (li, col_in_line) = find_wrap_cursor(&starts, &lines, *cursor);
+                if li > 0 {
+                    *cursor = starts[li - 1] + col_in_line.min(lines[li - 1].chars().count());
+                }
+            }
+            Mode::Create { buffer, cursor } => {
+                let buf = buffer.clone();
+                let (lines, starts) = wrap_lines_for_nav(&buf, w);
+                let (li, col_in_line) = find_wrap_cursor(&starts, &lines, *cursor);
+                if li > 0 {
+                    *cursor = starts[li - 1] + col_in_line.min(lines[li - 1].chars().count());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn edit_cursor_line_down(&mut self) {
+        let w = self.item_wrap_width.get();
+        if w == 0 { return; }
+        match &mut self.mode {
+            Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
+                let buf = buffer.clone();
+                let (lines, starts) = wrap_lines_for_nav(&buf, w);
+                let (li, col_in_line) = find_wrap_cursor(&starts, &lines, *cursor);
+                if li + 1 < lines.len() {
+                    *cursor = starts[li + 1] + col_in_line.min(lines[li + 1].chars().count());
+                }
+            }
+            Mode::Create { buffer, cursor } => {
+                let buf = buffer.clone();
+                let (lines, starts) = wrap_lines_for_nav(&buf, w);
+                let (li, col_in_line) = find_wrap_cursor(&starts, &lines, *cursor);
+                if li + 1 < lines.len() {
+                    *cursor = starts[li + 1] + col_in_line.min(lines[li + 1].chars().count());
+                }
             }
             _ => {}
         }
