@@ -287,8 +287,9 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::End      => app.cursor_end(),
         KeyCode::Left  | KeyCode::BackTab => app.cursor_col_left(),
         KeyCode::Right | KeyCode::Tab    => app.cursor_col_right(),
+        KeyCode::Enter  => app.cursor_down(),
         KeyCode::Insert => app.begin_create_blank(),
-        KeyCode::F(2) | KeyCode::Enter => app.begin_edit(),
+        KeyCode::F(2)   => app.begin_edit(),
         KeyCode::F(4)   => app.item_mark_done(),
         KeyCode::F(3)   => {
             if app.col_cursor == 0 {
