@@ -2175,6 +2175,22 @@ impl App {
         }
     }
 
+    pub fn edit_cursor_home(&mut self) {
+        match &mut self.mode {
+            Mode::Edit { cursor, .. } | Mode::Create { cursor, .. } => { *cursor = 0; }
+            _ => {}
+        }
+    }
+
+    pub fn edit_cursor_end(&mut self) {
+        match &mut self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } => {
+                *cursor = buffer.chars().count();
+            }
+            _ => {}
+        }
+    }
+
     // ── View mode transitions ─────────────────────────────────────────────────
 
     pub fn begin_create(&mut self, first_char: char) {

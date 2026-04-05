@@ -339,6 +339,8 @@ fn handle_view_input(app: &mut App, code: KeyCode) {
         KeyCode::Delete    => app.input_delete(),
         KeyCode::Left      => app.edit_cursor_left(),
         KeyCode::Right     => app.edit_cursor_right(),
+        KeyCode::Home      => app.edit_cursor_home(),
+        KeyCode::End       => app.edit_cursor_end(),
         KeyCode::Char(ch)  => app.input_char(ch),
         _ => {}
     }
