@@ -457,6 +457,8 @@ pub struct App {
     pub cat_search:  Option<String>,
     // Item search (View screen, '/' key): (buffer, cursor_char_pos)
     pub item_search: Option<(String, usize)>,
+    // Last confirmed search query (session-only, for repeat search)
+    pub last_search: Option<String>,
     // Section
     pub sec_mode:    SectionMode,
     // Menu
@@ -1489,6 +1491,7 @@ impl App {
             assign_mode: AssignMode::Normal,
             cat_search:  None,
             item_search: None,
+            last_search: None,
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
@@ -1531,6 +1534,7 @@ impl App {
             assign_mode: AssignMode::Normal,
             cat_search:  None,
             item_search: None,
+            last_search: None,
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
@@ -3769,30 +3773,70 @@ impl App {
         self.item_search = None;
     }
 
-    /// Confirm the search: move cursor to the first visible item whose text
-    /// contains the search buffer as a case-insensitive substring, then close.
+    /// Confirm the search: move cursor to the next visible item (after the
+    /// current position, wrapping) whose text contains the query as a
+    /// case-insensitive substring, then close.
+    /// If the buffer is empty, repeats the last successful query.
     pub fn search_confirm(&mut self) {
         let query = match &self.item_search {
             Some((q, _)) if !q.trim().is_empty() => q.trim().to_lowercase(),
-            _ => { self.item_search = None; return; }
+            _ => {
+                // Empty buffer — try the last query.
+                match self.last_search.clone() {
+                    Some(q) => {
+                        self.item_search = None;
+                        q
+                    }
+                    None => { self.item_search = None; return; }
+                }
+            }
         };
+        if !query.is_empty() {
+            self.last_search = Some(query.clone());
+        }
         self.item_search = None;
 
-        // Walk sections in display order; find the first matching item.
-        let n_secs = self.view.sections.len();
-        for s_idx in 0..n_secs {
-            if self.view.hide_empty_sections {
-                let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
-                if vis.is_empty() { continue; }
-            }
-            let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
-            for (i_idx, &gi) in vis.iter().enumerate() {
-                if self.items[gi].text.to_lowercase().contains(&query) {
-                    self.cursor = CursorPos::Item { section: s_idx, item: i_idx };
-                    self.col_cursor = 0;
-                    self.sub_row = 0;
-                    return;
+        // Determine (start_sec, start_item) = position *after* the current cursor.
+        let (start_sec, start_item) = match self.cursor {
+            CursorPos::SectionHead(s) => (s, 0),
+            CursorPos::Item { section, item } => {
+                let vis = visible_item_indices(&self.items, &self.view, section, &self.categories);
+                if item + 1 < vis.len() {
+                    (section, item + 1)
+                } else {
+                    (section + 1, 0)
                 }
+            }
+        };
+
+        let n_secs = self.view.sections.len();
+        // Build a list of (s_idx, i_idx) pairs for all visible items, starting
+        // from start_sec/start_item and wrapping around.
+        let mut candidates: Vec<(usize, usize)> = Vec::new();
+        for s_idx in 0..n_secs {
+            let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
+            if self.view.hide_empty_sections && vis.is_empty() { continue; }
+            for i_idx in 0..vis.len() {
+                candidates.push((s_idx, i_idx));
+            }
+        }
+        if candidates.is_empty() { return; }
+
+        // Find the index in candidates that corresponds to (start_sec, start_item).
+        let start_pos = candidates.iter().position(|&(s, i)| s == start_sec && i == start_item)
+            .unwrap_or(0);
+
+        // Search from start_pos, wrapping around.
+        let len = candidates.len();
+        for offset in 0..len {
+            let (s_idx, i_idx) = candidates[(start_pos + offset) % len];
+            let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
+            let gi = vis[i_idx];
+            if self.items[gi].text.to_lowercase().contains(&query) {
+                self.cursor = CursorPos::Item { section: s_idx, item: i_idx };
+                self.col_cursor = 0;
+                self.sub_row = 0;
+                return;
             }
         }
     }
