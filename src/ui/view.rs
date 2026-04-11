@@ -35,7 +35,12 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Title bar / Menu bar (2 lines) ───────────────────────────────────
     if matches!(app.menu, MenuState::Closed) {
-        let second_line = if let Mode::ItemProps { cursor, edit_buf, .. } = &app.mode {
+        let second_line = if let Some((buf, cur)) = &app.item_search {
+            let chars: Vec<char> = buf.chars().collect();
+            let left: String  = chars[..*cur].iter().collect();
+            let right: String = chars[*cur..].iter().collect();
+            format!(" Search: {}|{}", left, right)
+        } else if let Mode::ItemProps { cursor, edit_buf, .. } = &app.mode {
             if edit_buf.is_some() {
                 " Type to edit. Press ENTER to save, ESC to cancel.".to_string()
             } else {

@@ -113,6 +113,20 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // Item search bar takes priority when active
+    if app.item_search.is_some() {
+        match code {
+            KeyCode::Enter     => app.search_confirm(),
+            KeyCode::Esc       => app.search_cancel(),
+            KeyCode::Backspace => app.search_backspace(),
+            KeyCode::Left      => app.search_cursor_left(),
+            KeyCode::Right     => app.search_cursor_right(),
+            KeyCode::Char(ch)  => app.search_char(ch),
+            _ => {}
+        }
+        return;
+    }
+
     // Item Properties modal takes priority
     if matches!(app.mode, Mode::ItemProps { .. }) {
         handle_item_props(app, code);
@@ -288,6 +302,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Left  | KeyCode::BackTab => app.cursor_col_left(),
         KeyCode::Right | KeyCode::Tab    => app.cursor_col_right(),
         KeyCode::Enter  => app.cursor_down(),
+        KeyCode::Char('/') => app.search_open(),
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2)   => app.begin_edit(),
         KeyCode::F(4)   => app.item_mark_done(),

@@ -455,6 +455,8 @@ pub struct App {
     pub assign_mode: AssignMode,
     // Category search (shared across CatMgr and Assignment Profile)
     pub cat_search:  Option<String>,
+    // Item search (View screen, '/' key): (buffer, cursor_char_pos)
+    pub item_search: Option<(String, usize)>,
     // Section
     pub sec_mode:    SectionMode,
     // Menu
@@ -1486,6 +1488,7 @@ impl App {
             sub_row:     0,
             assign_mode: AssignMode::Normal,
             cat_search:  None,
+            item_search: None,
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
@@ -1527,6 +1530,7 @@ impl App {
             sub_row:     0,
             assign_mode: AssignMode::Normal,
             cat_search:  None,
+            item_search: None,
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
@@ -3717,6 +3721,79 @@ impl App {
             item.values.remove(&cat_id);
         } else {
             item.values.insert(cat_id, String::new());
+        }
+    }
+
+    // ── Item search ───────────────────────────────────────────────────────────
+
+    /// Open the item search bar (triggered by '/').
+    pub fn search_open(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        self.item_search = Some((String::new(), 0));
+    }
+
+    /// Insert a character at the cursor position and advance the cursor.
+    pub fn search_char(&mut self, ch: char) {
+        if let Some((buf, cur)) = &mut self.item_search {
+            let byte = char_to_byte(buf, *cur);
+            buf.insert(byte, ch);
+            *cur += 1;
+        }
+    }
+
+    /// Remove the character before the cursor.
+    pub fn search_backspace(&mut self) {
+        if let Some((buf, cur)) = &mut self.item_search {
+            if *cur > 0 {
+                *cur -= 1;
+                let byte = char_to_byte(buf, *cur);
+                buf.remove(byte);
+            }
+        }
+    }
+
+    pub fn search_cursor_left(&mut self) {
+        if let Some((_, cur)) = &mut self.item_search {
+            if *cur > 0 { *cur -= 1; }
+        }
+    }
+
+    pub fn search_cursor_right(&mut self) {
+        if let Some((buf, cur)) = &mut self.item_search {
+            if *cur < buf.chars().count() { *cur += 1; }
+        }
+    }
+
+    /// Cancel the search without moving the cursor.
+    pub fn search_cancel(&mut self) {
+        self.item_search = None;
+    }
+
+    /// Confirm the search: move cursor to the first visible item whose text
+    /// contains the search buffer as a case-insensitive substring, then close.
+    pub fn search_confirm(&mut self) {
+        let query = match &self.item_search {
+            Some((q, _)) if !q.trim().is_empty() => q.trim().to_lowercase(),
+            _ => { self.item_search = None; return; }
+        };
+        self.item_search = None;
+
+        // Walk sections in display order; find the first matching item.
+        let n_secs = self.view.sections.len();
+        for s_idx in 0..n_secs {
+            if self.view.hide_empty_sections {
+                let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
+                if vis.is_empty() { continue; }
+            }
+            let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
+            for (i_idx, &gi) in vis.iter().enumerate() {
+                if self.items[gi].text.to_lowercase().contains(&query) {
+                    self.cursor = CursorPos::Item { section: s_idx, item: i_idx };
+                    self.col_cursor = 0;
+                    self.sub_row = 0;
+                    return;
+                }
+            }
         }
     }
 
