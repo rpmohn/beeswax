@@ -478,7 +478,9 @@ pub struct App {
     pub quit:        bool,
     next_id:         usize,
     /// Wrap width (chars) of the item text column — set during render, used for line navigation.
-    pub item_wrap_width: std::cell::Cell<usize>,
+    pub item_wrap_width:  std::cell::Cell<usize>,
+    /// View body scroll offset (lines). Updated each render frame to keep cursor visible.
+    pub scroll_offset:    std::cell::Cell<usize>,
 }
 
 // ── Byte-offset helper ────────────────────────────────────────────────────────
@@ -1505,6 +1507,7 @@ impl App {
             quit:         false,
             next_id:      7,
             item_wrap_width: std::cell::Cell::new(0),
+            scroll_offset:   std::cell::Cell::new(0),
         }
     }
 
@@ -1548,6 +1551,7 @@ impl App {
             quit:         false,
             next_id:      data.next_id,
             item_wrap_width: std::cell::Cell::new(0),
+            scroll_offset:   std::cell::Cell::new(0),
         }
     }
 

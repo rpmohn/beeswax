@@ -98,7 +98,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     let done_cat_id: Option<usize> = flatten_cats(&app.categories)
         .iter().find(|c| c.name == "Done").map(|c| c.id);
 
+    let body_h = body_inner.height as usize;
     let mut lines: Vec<Line> = Vec::new();
+    let mut cursor_first_line: usize = 0;
+    let mut cursor_last_line:  usize = 0;
+    let mut cursor_line_found  = false;
 
     // Precompute which sections are visible (non-empty when hide_empty_sections is on).
     let visible_sections: Vec<usize> = if app.view.hide_empty_sections {
@@ -185,6 +189,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         row.extend(head_spans);
         if !right_cols.is_empty() { row.push(Span::raw(" ")); }
         row.extend(right_head_spans);
+        if cursor_on_head { cursor_first_line = lines.len(); cursor_line_found = true; }
         lines.push(Line::from(row));
 
         if cursor_on_head {
@@ -200,6 +205,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}"));
                 lines.push(Line::from(spans));
             }
+            cursor_last_line = lines.len() - 1;
         }
 
         // ── Item rows ────────────────────────────────────────────────────
@@ -306,6 +312,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 }
             });
 
+            if cursor_on_item { cursor_first_line = lines.len(); cursor_line_found = true; }
             for row_i in 0..n_rows {
                 // Values for this sub-row (empty string if this column has fewer assignments).
                 let left_vals_row: Vec<String> = all_vals_lines[..lc].iter()
@@ -449,6 +456,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     }
                 }
             }
+            if cursor_on_item { cursor_last_line = lines.len() - 1; }
         }
 
         // Blank line between sections
@@ -457,7 +465,21 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
     }
 
-    frame.render_widget(Paragraph::new(lines), body_inner);
+    // Compute scroll offset to keep the cursor row visible.
+    let mut off = app.scroll_offset.get();
+    if cursor_line_found && body_h > 0 {
+        if cursor_first_line < off {
+            off = cursor_first_line;
+        }
+        if cursor_last_line >= off + body_h {
+            off = cursor_last_line + 1 - body_h;
+            // Don't scroll so far that cursor_first_line goes off the top.
+            if cursor_first_line < off { off = cursor_first_line; }
+        }
+    }
+    app.scroll_offset.set(off);
+    let visible: Vec<Line> = lines.into_iter().skip(off).take(body_h).collect();
+    frame.render_widget(Paragraph::new(visible), body_inner);
 
     // ── F-key bar ─────────────────────────────────────────────────────────
     fkeys::render_fkey_bar(frame, chunks[2], app);
