@@ -139,6 +139,12 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // Discard-item confirmation takes priority
+    if matches!(app.mode, Mode::ConfirmDiscardItem { .. }) {
+        handle_item_confirm_discard(app, code);
+        return;
+    }
+
     // Remove-column confirmation takes priority
     if matches!(app.col_mode, ColMode::ConfirmRemove { .. }) {
         handle_col_confirm_remove(app, code);
@@ -329,7 +335,13 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             }
         }
         KeyCode::Delete => {
-            if app.col_cursor == 0 {
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                if app.col_cursor == 0 {
+                    if matches!(app.cursor, CursorPos::Item { .. }) {
+                        app.item_open_confirm_discard();
+                    }
+                }
+            } else if app.col_cursor == 0 {
                 match app.cursor {
                     CursorPos::SectionHead(_) => app.sec_open_confirm_remove(),
                     CursorPos::Item { .. }    => app.item_open_confirm_delete(),
@@ -706,6 +718,20 @@ fn handle_item_confirm_delete(app: &mut App, code: KeyCode) {
             app.item_confirm_delete_confirm();
         }
         KeyCode::Char('n') | KeyCode::Char('N') => app.item_confirm_delete_cancel(),
+        _ => {}
+    }
+}
+
+fn handle_item_confirm_discard(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter                 => app.item_confirm_discard_confirm(),
+        KeyCode::Esc                   => app.item_confirm_discard_cancel(),
+        KeyCode::Left | KeyCode::Right => app.item_confirm_discard_toggle(),
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            if let Mode::ConfirmDiscardItem { yes } = &mut app.mode { *yes = true; }
+            app.item_confirm_discard_confirm();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => app.item_confirm_discard_cancel(),
         _ => {}
     }
 }

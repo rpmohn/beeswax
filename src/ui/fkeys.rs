@@ -161,8 +161,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &MENU_FKEYS   // Head field — no F3
     } else if matches!(app.mode, Mode::ItemProps { .. }) {
         &ITEM_PROPS_FKEYS
-    } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. }) {
-        &MENU_FKEYS   // item delete dialog is self-describing
+    } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. }) {
+        &MENU_FKEYS   // item delete/discard dialog is self-describing
     } else if matches!(app.col_mode, ColMode::QuickAdd { .. }) {
         &QUICK_ADD_FKEYS
     } else if matches!(app.col_mode, ColMode::ConfirmRemove { .. }) {

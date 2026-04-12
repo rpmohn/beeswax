@@ -54,6 +54,8 @@ pub enum Mode {
     Create { buffer: String, cursor: usize },
     /// "Remove this item from the section?" confirmation dialog.
     ConfirmDeleteItem { yes: bool },
+    /// "Discard this item?" confirmation dialog — removes from all categories.
+    ConfirmDiscardItem { yes: bool },
     /// Item Properties modal (F6 on an item in the main column).
     /// cursor: 0=Item text, 1=Note, 2=Note file, 3=Item statistics, 4+=assigned list
     /// edit_buf: Some((buffer, cur)) when in-place text editing is active (cursor==0 only)
@@ -2553,7 +2555,7 @@ impl App {
                     }
                 }
             }
-            Mode::Normal | Mode::ConfirmDeleteItem { .. } | Mode::ItemProps { .. } => {}
+            Mode::Normal | Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. } | Mode::ItemProps { .. } => {}
         }
         // Apply sort immediately if section is configured for WhenEntered.
         let sec_idx = match &self.cursor {
@@ -2666,6 +2668,48 @@ impl App {
         if matches!(self.mode, Mode::ConfirmDeleteItem { .. }) {
             self.mode = Mode::Normal;
         }
+    }
+
+    pub fn item_open_confirm_discard(&mut self) {
+        if self.col_cursor != 0 { return; }
+        if !matches!(self.cursor, CursorPos::Item { .. }) { return; }
+        if !matches!(self.mode, Mode::Normal) { return; }
+        self.mode = Mode::ConfirmDiscardItem { yes: true };
+    }
+
+    pub fn item_confirm_discard_toggle(&mut self) {
+        if let Mode::ConfirmDiscardItem { yes } = &mut self.mode {
+            *yes = !*yes;
+        }
+    }
+
+    pub fn item_confirm_discard_confirm(&mut self) {
+        if let Mode::ConfirmDiscardItem { yes } = self.mode {
+            self.mode = Mode::Normal;
+            if yes { self.item_discard(); }
+        }
+    }
+
+    pub fn item_confirm_discard_cancel(&mut self) {
+        if matches!(self.mode, Mode::ConfirmDiscardItem { .. }) {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    /// Remove the item entirely from the global pool (all category assignments discarded).
+    fn item_discard(&mut self) {
+        let (s, i) = match self.cursor {
+            CursorPos::Item { section, item } => (section, item),
+            _ => return,
+        };
+        let Some(gi) = self.global_item_idx(s, i) else { return; };
+        self.items.remove(gi);
+        self.cursor = if i > 0 {
+            CursorPos::Item { section: s, item: i - 1 }
+        } else {
+            CursorPos::SectionHead(s)
+        };
+        if self.file_path.is_some() { self.dirty = true; }
     }
 
     // ── Item Properties modal ─────────────────────────────────────────────────
@@ -2955,13 +2999,32 @@ impl App {
         };
         if s >= self.view.sections.len() { return; }
         let Some(gi) = self.global_item_idx(s, i) else { return; };
-        self.items.remove(gi);
+
+        // Remove all category assignments that place this item in section s.
+        let sec_cat_id = self.view.sections[s].cat_id;
+        let mut parent_map = HashMap::new();
+        build_cat_maps(&self.categories, None, &mut parent_map, &mut HashMap::new());
+        let to_remove: Vec<usize> = self.items[gi].values.keys()
+            .copied()
+            .filter(|&k| is_under_map(k, sec_cat_id, &parent_map))
+            .collect();
+        for k in &to_remove {
+            self.items[gi].values.remove(k);
+            self.items[gi].cond_cats.remove(k);
+        }
+
+        // Only discard the item entirely when it has no remaining assignments.
+        if self.items[gi].values.is_empty() {
+            self.items.remove(gi);
+        }
+
         // Move cursor to the item above, or the section head if none remain.
         self.cursor = if i > 0 {
             CursorPos::Item { section: s, item: i - 1 }
         } else {
             CursorPos::SectionHead(s)
         };
+        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn col_begin_move(&mut self) {

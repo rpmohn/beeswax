@@ -365,7 +365,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Mode::Edit { .. } =>
                             vec![Span::raw(indent),
                                  Span::styled(line_text, Style::default().add_modifier(Modifier::BOLD))],
-                        Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ItemProps { .. } =>
+                        Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. } | Mode::ItemProps { .. } =>
                             vec![Span::raw(indent), Span::raw(line_text)],
                     }
                 } else if is_text_row {
@@ -1257,6 +1257,43 @@ pub fn render(frame: &mut Frame, app: &App) {
                 format!("{}{}", " ".repeat(hpad), hint),
                 Style::default().add_modifier(Modifier::DIM),
             )),
+        ]), inner);
+    }
+
+    // ── Discard-item confirmation modal ───────────────────────────────────────
+    if let Mode::ConfirmDiscardItem { yes } = &app.mode {
+        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let dlg_rect = centered_rect(46, 9, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default().borders(Borders::ALL).title(" Discard Item ");
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+        let iw = inner.width as usize;
+
+        let msg = "Discard this item?";
+        let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
+        let hint = "Press ENTER to accept, ESC to cancel";
+        let hpad = (iw.saturating_sub(hint.chars().count())) / 2;
+
+        let yes_label = " Yes ";
+        let no_label  = " No  ";
+        let yes_style = if *yes { rev } else { Style::default() };
+        let no_style  = if !yes { rev } else { Style::default() };
+        let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
+        let lpad = gap / 2;
+
+        frame.render_widget(Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg))),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw(" ".repeat(lpad)),
+                Span::styled(yes_label, yes_style),
+                Span::raw("  "),
+                Span::styled(no_label, no_style),
+            ]),
+            Line::from(""),
+            Line::from(Span::raw(format!("{}{}", " ".repeat(hpad), hint))),
         ]), inner);
     }
 
