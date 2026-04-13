@@ -3,9 +3,55 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Config {
-    /// Color scheme name: "AgendaColor", "AgendaMono", or "" for the default.
+    /// Color scheme name: "AgendaColor", "AgendaMono", "SolarizedDark",
+    /// "SolarizedLight", "Custom", or "" for the default.
     #[serde(default)]
     pub colorscheme: String,
+
+    /// Navigation mode: "Agenda" (default) or "vi".
+    #[serde(default)]
+    pub nav_mode: String,
+
+    /// Custom color overrides — only used when colorscheme = "Custom".
+    /// Each field is an optional hex color string, e.g. "#268bd2".
+    /// Omitted fields fall back to the Default (terminal REVERSED) theme.
+    #[serde(default)]
+    pub custom_theme: CustomTheme,
+}
+
+/// Per-element color overrides for the "Custom" color scheme.
+/// All fields are optional hex color strings ("#rrggbb").
+/// Modifiers (bold on section heads, dim on hint text) are applied automatically.
+#[derive(Serialize, Deserialize, Default)]
+pub struct CustomTheme {
+    // ── Bars (title / fkey / menu) ───────────────────────────────────────────
+    #[serde(default)] pub bar_fg:              Option<String>,
+    #[serde(default)] pub bar_bg:              Option<String>,
+    /// Bar cursor: the currently-selected top-level menu item.
+    #[serde(default)] pub bar_cursor_fg:       Option<String>,
+    #[serde(default)] pub bar_cursor_bg:       Option<String>,
+
+    // ── Body ─────────────────────────────────────────────────────────────────
+    #[serde(default)] pub body_fg:             Option<String>,
+    #[serde(default)] pub body_bg:             Option<String>,
+
+    // ── Selected item / edit cursor ──────────────────────────────────────────
+    #[serde(default)] pub selected_fg:         Option<String>,
+    #[serde(default)] pub selected_bg:         Option<String>,
+
+    // ── Section heads ────────────────────────────────────────────────────────
+    /// Unselected section head foreground (background = body_bg).
+    #[serde(default)] pub section_fg:          Option<String>,
+    /// Selected section head — defaults to selected_fg / selected_bg.
+    #[serde(default)] pub section_selected_fg: Option<String>,
+    #[serde(default)] pub section_selected_bg: Option<String>,
+
+    // ── Modal dialogs ────────────────────────────────────────────────────────
+    /// Dialog content area — defaults to body_fg / body_bg.
+    #[serde(default)] pub dialog_fg:           Option<String>,
+    #[serde(default)] pub dialog_bg:           Option<String>,
+    /// Dialog border foreground (background = dialog_bg).
+    #[serde(default)] pub dialog_border_fg:    Option<String>,
 }
 
 /// Platform-specific path to the beeswax config file.

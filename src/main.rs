@@ -78,9 +78,15 @@ fn main() -> io::Result<()> {
         App::new()
     };
 
-    // ── Apply config (color scheme, etc.) ────────────────────────────────────
+    // ── Apply config (color scheme, nav mode, etc.) ──────────────────────────
     let cfg = config::load();
-    app.theme = theme::Theme::for_scheme(theme::ColorScheme::from_str(&cfg.colorscheme));
+    let scheme = theme::ColorScheme::from_str(&cfg.colorscheme);
+    app.theme = if scheme == theme::ColorScheme::Custom {
+        theme::Theme::from_custom(&cfg.custom_theme)
+    } else {
+        theme::Theme::for_scheme(scheme)
+    };
+    app.nav_mode = crate::app::NavMode::from_str(&cfg.nav_mode);
 
     // ── Setup terminal ────────────────────────────────────────────────────────
     enable_raw_mode()?;

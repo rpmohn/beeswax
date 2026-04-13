@@ -4,6 +4,20 @@ use crate::persist;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+// ── Navigation mode ───────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum NavMode {
+    Agenda,  // default: printable keys start a new item
+    Vi,      // hjkl navigation; i/o/O to enter insert
+}
+
+impl NavMode {
+    pub fn from_str(s: &str) -> Self {
+        if s.eq_ignore_ascii_case("vi") { NavMode::Vi } else { NavMode::Agenda }
+    }
+}
+
 // ── F-key modifier state ──────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
@@ -467,6 +481,8 @@ pub struct App {
     pub menu:        MenuState,
     // F-key bar
     pub fkey_mod:    FKeyMod,
+    // Navigation mode (set from config at startup)
+    pub nav_mode:    NavMode,
     // Note
     pub pending_note: Option<NoteTarget>,
     // Persistence
@@ -1501,6 +1517,7 @@ impl App {
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
+            nav_mode:     NavMode::Agenda,
             pending_note: None,
             file_path:        None,
             session_password: None,
@@ -1546,6 +1563,7 @@ impl App {
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
+            nav_mode:     NavMode::Agenda,
             pending_note: None,
             file_path:        path,
             session_password: password,
@@ -2369,6 +2387,29 @@ impl App {
 
     pub fn begin_create_blank(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
+        self.mode = Mode::Create { buffer: String::new(), cursor: 0 };
+    }
+
+    /// Vi-mode `O`: open a new item above the cursor row.
+    /// Repositions cursor so `confirm`'s "insert after current" logic inserts before the
+    /// original position, then enters Create mode.
+    pub fn begin_create_above(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        match self.cursor {
+            CursorPos::SectionHead(_) => {
+                // Already at section head — insert at start of section, same as 'o'.
+            }
+            CursorPos::Item { section, item } => {
+                if item == 0 {
+                    // First item in section: anchor at the section head so the new item
+                    // is inserted at position 0 (i.e., before the existing first item).
+                    self.cursor = CursorPos::SectionHead(section);
+                } else {
+                    // Anchor one item above so the new item lands before the current one.
+                    self.cursor = CursorPos::Item { section, item: item - 1 };
+                }
+            }
+        }
         self.mode = Mode::Create { buffer: String::new(), cursor: 0 };
     }
 

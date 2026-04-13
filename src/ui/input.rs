@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FilterState, FKeyMod, MenuState, Mode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FilterState, FKeyMod, MenuState, Mode, NavMode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode, ViewPropsField};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -354,8 +354,28 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(9)   => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => app.begin_char_input(ch),
+                          && !modifiers.contains(KeyModifiers::ALT) => {
+            match app.nav_mode {
+                NavMode::Vi => handle_view_normal_vi(app, ch),
+                NavMode::Agenda => app.begin_char_input(ch),
+            }
+        }
         _ => {}
+    }
+}
+
+/// Vi-mode character handler for Normal mode.
+/// Maps hjkl, i, o, O; ignores all other printable keys.
+fn handle_view_normal_vi(app: &mut App, ch: char) {
+    match ch {
+        'j' => app.cursor_down(),
+        'k' => app.cursor_up(),
+        'h' => app.cursor_col_left(),
+        'l' => app.cursor_col_right(),
+        'i' => app.begin_edit(),
+        'o' => app.begin_create_blank(),
+        'O' => app.begin_create_above(),
+        _   => {}   // all other printable keys are no-ops in vi normal mode
     }
 }
 

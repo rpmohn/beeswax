@@ -1,29 +1,91 @@
 use ratatui::style::{Color, Modifier, Style};
+use crate::config::CustomTheme;
+
+// ── Solarized palette ─────────────────────────────────────────────────────────
+const S_BASE03:  Color = Color::Rgb(0x00, 0x2b, 0x36);  // darkest bg
+const S_BASE02:  Color = Color::Rgb(0x07, 0x36, 0x42);  // dark bg highlights
+const S_BASE01:  Color = Color::Rgb(0x58, 0x6e, 0x75);  // optional emphasis (dark)
+const S_BASE00:  Color = Color::Rgb(0x65, 0x7b, 0x83);  // body text (dark)
+const S_BASE0:   Color = Color::Rgb(0x83, 0x94, 0x96);  // body text (light)
+const S_BASE1:   Color = Color::Rgb(0x93, 0xa1, 0xa1);  // optional emphasis (light)
+const S_BASE2:   Color = Color::Rgb(0xee, 0xe8, 0xd5);  // light bg highlights
+const S_BASE3:   Color = Color::Rgb(0xfd, 0xf6, 0xe3);  // lightest bg
+const S_BLUE:    Color = Color::Rgb(0x26, 0x8b, 0xd2);
+const S_CYAN:    Color = Color::Rgb(0x2a, 0xa1, 0x98);
+
+// ── Gruvbox palette ───────────────────────────────────────────────────────────
+// dark backgrounds
+const G_BG:      Color = Color::Rgb(0x28, 0x28, 0x28);
+const G_BG1:     Color = Color::Rgb(0x3c, 0x38, 0x36);
+const G_BG2:     Color = Color::Rgb(0x50, 0x49, 0x45);
+const G_FG:      Color = Color::Rgb(0xeb, 0xdb, 0xb2);
+const G_FG4:     Color = Color::Rgb(0xa8, 0x99, 0x84);  // muted fg (dark)
+const G_GRAY:    Color = Color::Rgb(0x92, 0x83, 0x74);
+// light backgrounds
+const G_BG_L:    Color = Color::Rgb(0xfb, 0xf1, 0xc7);
+const G_BG2_L:   Color = Color::Rgb(0xd5, 0xc4, 0xa1);
+const G_BG4_L:   Color = Color::Rgb(0xa8, 0x99, 0x84);  // muted fg (light bar)
+const G_FG_L:    Color = Color::Rgb(0x3c, 0x38, 0x36);
+const G_FG4_L:   Color = Color::Rgb(0x7c, 0x6f, 0x64);  // dim text (light)
+// shared accents
+const G_YELLOW:  Color = Color::Rgb(0xfa, 0xbd, 0x2f);  // bright yellow — selection
+const G_BLUE_D:  Color = Color::Rgb(0x83, 0xa5, 0x98);  // bright blue (dark theme)
+const G_BLUE_L:  Color = Color::Rgb(0x07, 0x66, 0x78);  // dark blue (light theme)
+
+// ── Dracula palette ───────────────────────────────────────────────────────────
+const D_BG:      Color = Color::Rgb(0x28, 0x2a, 0x36);
+const D_CUR:     Color = Color::Rgb(0x44, 0x47, 0x5a);  // current line / bar bg
+const D_FG:      Color = Color::Rgb(0xf8, 0xf8, 0xf2);
+const D_COMMENT: Color = Color::Rgb(0x62, 0x72, 0xa4);
+const D_PURPLE:  Color = Color::Rgb(0xbd, 0x93, 0xf9);
+const D_CYAN:    Color = Color::Rgb(0x8b, 0xe9, 0xfd);
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ColorScheme {
     Default,
     AgendaColor,
     AgendaMono,
+    SolarizedDark,
+    SolarizedLight,
+    GruvboxDark,
+    GruvboxLight,
+    Dracula,
+    Custom,
 }
 
 impl ColorScheme {
     pub fn from_str(s: &str) -> Self {
         match s {
-            "AgendaColor" => ColorScheme::AgendaColor,
-            "AgendaMono"  => ColorScheme::AgendaMono,
-            _             => ColorScheme::Default,
+            "AgendaColor"    => ColorScheme::AgendaColor,
+            "AgendaMono"     => ColorScheme::AgendaMono,
+            "SolarizedDark"  => ColorScheme::SolarizedDark,
+            "SolarizedLight" => ColorScheme::SolarizedLight,
+            "GruvboxDark"    => ColorScheme::GruvboxDark,
+            "GruvboxLight"   => ColorScheme::GruvboxLight,
+            "Dracula"        => ColorScheme::Dracula,
+            "Custom"         => ColorScheme::Custom,
+            _                => ColorScheme::Default,
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
-            ColorScheme::Default     => "Default",
-            ColorScheme::AgendaColor => "AgendaColor",
-            ColorScheme::AgendaMono  => "AgendaMono",
+            ColorScheme::Default      => "Default",
+            ColorScheme::AgendaColor  => "AgendaColor",
+            ColorScheme::AgendaMono   => "AgendaMono",
+            ColorScheme::SolarizedDark  => "SolarizedDark",
+            ColorScheme::SolarizedLight => "SolarizedLight",
+            ColorScheme::GruvboxDark  => "GruvboxDark",
+            ColorScheme::GruvboxLight => "GruvboxLight",
+            ColorScheme::Dracula      => "Dracula",
+            ColorScheme::Custom       => "Custom",
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// All pre-built styles for a color scheme. Used throughout rendering.
 #[derive(Clone)]
@@ -55,10 +117,84 @@ pub struct Theme {
 impl Theme {
     pub fn for_scheme(scheme: ColorScheme) -> Self {
         match scheme {
-            ColorScheme::Default     => Self::default_theme(),
-            ColorScheme::AgendaColor => Self::agenda_color(),
-            ColorScheme::AgendaMono  => Self::agenda_mono(),
+            ColorScheme::Default      => Self::default_theme(),
+            ColorScheme::AgendaColor  => Self::agenda_color(),
+            ColorScheme::AgendaMono   => Self::agenda_mono(),
+            ColorScheme::SolarizedDark  => Self::solarized_dark(),
+            ColorScheme::SolarizedLight => Self::solarized_light(),
+            ColorScheme::GruvboxDark  => Self::gruvbox_dark(),
+            ColorScheme::GruvboxLight => Self::gruvbox_light(),
+            ColorScheme::Dracula      => Self::dracula(),
+            ColorScheme::Custom       => Self::default_theme(), // replaced by from_custom()
         }
+    }
+
+    /// Build a theme from the [custom_theme] config table.
+    /// Any field not supplied falls back to the Default (REVERSED) theme.
+    pub fn from_custom(c: &CustomTheme) -> Self {
+        let def = Self::default_theme();
+
+        // Helper: parse an optional hex color, fall back to `fallback`.
+        let color = |opt: &Option<String>, fallback: Option<Color>| -> Option<Color> {
+            if let Some(s) = opt { parse_hex(s).or(fallback) } else { fallback }
+        };
+
+        let body_fg   = color(&c.body_fg,   None);
+        let body_bg   = color(&c.body_bg,   None);
+        let bar_fg    = color(&c.bar_fg,    None);
+        let bar_bg    = color(&c.bar_bg,    None);
+        let barcur_fg = color(&c.bar_cursor_fg, body_fg);
+        let barcur_bg = color(&c.bar_cursor_bg, body_bg);
+        let sel_fg    = color(&c.selected_fg, None);
+        let sel_bg    = color(&c.selected_bg, None);
+        let sec_fg    = color(&c.section_fg,  None);
+        let secselfg  = color(&c.section_selected_fg, sel_fg);
+        let secselbg  = color(&c.section_selected_bg, sel_bg);
+        let dlg_fg    = color(&c.dialog_fg,         body_fg);
+        let dlg_bg    = color(&c.dialog_bg,         body_bg);
+        let dlgbrd_fg = color(&c.dialog_border_fg,  None);
+
+        let apply = |s: Style, fg: Option<Color>, bg: Option<Color>| -> Style {
+            let s = if let Some(f) = fg { s.fg(f) } else { s };
+            if let Some(b) = bg { s.bg(b) } else { s }
+        };
+
+        // If no custom colors supplied for an element, fall back to the
+        // Default theme's modifier-based style.
+        let bar = if bar_fg.is_some() || bar_bg.is_some() {
+            apply(Style::default(), bar_fg, bar_bg)
+        } else { def.bar };
+
+        let bar_cursor = if barcur_fg.is_some() || barcur_bg.is_some() {
+            apply(Style::default(), barcur_fg, barcur_bg)
+        } else { def.bar_cursor };
+
+        let body = apply(Style::default(), body_fg, body_bg);
+        let item = apply(Style::default(), body_fg, body_bg);
+
+        let item_selected = if sel_fg.is_some() || sel_bg.is_some() {
+            apply(Style::default(), sel_fg, sel_bg)
+        } else { def.item_selected };
+
+        let section = if sec_fg.is_some() || body_bg.is_some() {
+            apply(Style::default(), sec_fg.or(body_fg), body_bg)
+                .add_modifier(Modifier::BOLD)
+        } else { def.section };
+
+        let section_selected = if secselfg.is_some() || secselbg.is_some() {
+            apply(Style::default(), secselfg, secselbg).add_modifier(Modifier::BOLD)
+        } else { def.section_selected };
+
+        let cursor = if sel_fg.is_some() || sel_bg.is_some() {
+            apply(Style::default(), sel_fg, sel_bg)
+        } else { def.cursor };
+
+        let dialog = apply(Style::default(), dlg_fg, dlg_bg);
+        let dialog_border = apply(Style::default(), dlgbrd_fg.or(dlg_fg), dlg_bg);
+        let dim = apply(Style::default(), body_fg, body_bg).add_modifier(Modifier::DIM);
+
+        Theme { bar, bar_cursor, body, item, item_selected,
+                section, section_selected, cursor, dialog, dialog_border, dim }
     }
 
     fn default_theme() -> Self {
@@ -120,4 +256,117 @@ impl Theme {
             dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
         }
     }
+
+    fn solarized_dark() -> Self {
+        // body text on darkest background
+        let body_fg  = S_BASE0;   // #839496
+        let body_bg  = S_BASE03;  // #002b36
+        // bars on slightly lighter dark bg
+        let bar_fg   = S_BASE1;   // #93a1a1
+        let bar_bg   = S_BASE02;  // #073642
+        // selection / cursor: bright text on blue accent
+        let sel_fg   = S_BASE3;   // #fdf6e3
+        let sel_bg   = S_BLUE;    // #268bd2
+        Theme {
+            bar:              Style::default().fg(bar_fg).bg(bar_bg),
+            bar_cursor:       Style::default().fg(body_fg).bg(body_bg),
+            body:             Style::default().fg(body_fg).bg(body_bg),
+            item:             Style::default().fg(body_fg).bg(body_bg),
+            item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
+            section:          Style::default().fg(S_CYAN).bg(body_bg).add_modifier(Modifier::BOLD),
+            section_selected: Style::default().fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD),
+            cursor:           Style::default().fg(sel_fg).bg(sel_bg),
+            dialog:           Style::default().fg(body_fg).bg(body_bg),
+            dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
+            dim:              Style::default().fg(S_BASE01).bg(body_bg).add_modifier(Modifier::DIM),
+        }
+    }
+
+    fn solarized_light() -> Self {
+        // body text on lightest background
+        let body_fg  = S_BASE00;  // #657b83
+        let body_bg  = S_BASE3;   // #fdf6e3
+        // bars on slightly darker light bg
+        let bar_fg   = S_BASE01;  // #586e75
+        let bar_bg   = S_BASE2;   // #eee8d5
+        // selection / cursor: bright text on blue accent
+        let sel_fg   = S_BASE3;   // #fdf6e3
+        let sel_bg   = S_BLUE;    // #268bd2
+        Theme {
+            bar:              Style::default().fg(bar_fg).bg(bar_bg),
+            bar_cursor:       Style::default().fg(body_fg).bg(body_bg),
+            body:             Style::default().fg(body_fg).bg(body_bg),
+            item:             Style::default().fg(body_fg).bg(body_bg),
+            item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
+            section:          Style::default().fg(S_BLUE).bg(body_bg).add_modifier(Modifier::BOLD),
+            section_selected: Style::default().fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD),
+            cursor:           Style::default().fg(sel_fg).bg(sel_bg),
+            dialog:           Style::default().fg(body_fg).bg(body_bg),
+            dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
+            dim:              Style::default().fg(S_BASE1).bg(body_bg).add_modifier(Modifier::DIM),
+        }
+    }
+
+    fn gruvbox_dark() -> Self {
+        // warm cream text on charcoal; bright yellow selection; muted blue section heads
+        Theme {
+            bar:              Style::default().fg(G_FG4).bg(G_BG1),
+            bar_cursor:       Style::default().fg(G_FG).bg(G_BG),
+            body:             Style::default().fg(G_FG).bg(G_BG),
+            item:             Style::default().fg(G_FG).bg(G_BG),
+            item_selected:    Style::default().fg(G_BG).bg(G_YELLOW),
+            section:          Style::default().fg(G_BLUE_D).bg(G_BG).add_modifier(Modifier::BOLD),
+            section_selected: Style::default().fg(G_BG).bg(G_YELLOW).add_modifier(Modifier::BOLD),
+            cursor:           Style::default().fg(G_BG).bg(G_YELLOW),
+            dialog:           Style::default().fg(G_FG).bg(G_BG),
+            dialog_border:    Style::default().fg(G_BG2).bg(G_BG),
+            dim:              Style::default().fg(G_GRAY).bg(G_BG).add_modifier(Modifier::DIM),
+        }
+    }
+
+    fn gruvbox_light() -> Self {
+        // dark warm text on cream; bright yellow selection; dark blue section heads
+        Theme {
+            bar:              Style::default().fg(G_BG4_L).bg(G_BG2_L),
+            bar_cursor:       Style::default().fg(G_FG_L).bg(G_BG_L),
+            body:             Style::default().fg(G_FG_L).bg(G_BG_L),
+            item:             Style::default().fg(G_FG_L).bg(G_BG_L),
+            item_selected:    Style::default().fg(G_BG_L).bg(G_YELLOW),
+            section:          Style::default().fg(G_BLUE_L).bg(G_BG_L).add_modifier(Modifier::BOLD),
+            section_selected: Style::default().fg(G_BG_L).bg(G_YELLOW).add_modifier(Modifier::BOLD),
+            cursor:           Style::default().fg(G_BG_L).bg(G_YELLOW),
+            dialog:           Style::default().fg(G_FG_L).bg(G_BG_L),
+            dialog_border:    Style::default().fg(G_BG2_L).bg(G_BG_L),
+            dim:              Style::default().fg(G_FG4_L).bg(G_BG_L).add_modifier(Modifier::DIM),
+        }
+    }
+
+    fn dracula() -> Self {
+        // light fg on dark purple-grey bg; purple selection; cyan section heads
+        Theme {
+            bar:              Style::default().fg(D_FG).bg(D_CUR),
+            bar_cursor:       Style::default().fg(D_FG).bg(D_BG),
+            body:             Style::default().fg(D_FG).bg(D_BG),
+            item:             Style::default().fg(D_FG).bg(D_BG),
+            item_selected:    Style::default().fg(D_BG).bg(D_PURPLE),
+            section:          Style::default().fg(D_CYAN).bg(D_BG).add_modifier(Modifier::BOLD),
+            section_selected: Style::default().fg(D_BG).bg(D_PURPLE).add_modifier(Modifier::BOLD),
+            cursor:           Style::default().fg(D_BG).bg(D_PURPLE),
+            dialog:           Style::default().fg(D_FG).bg(D_BG),
+            dialog_border:    Style::default().fg(D_COMMENT).bg(D_BG),
+            dim:              Style::default().fg(D_COMMENT).bg(D_BG).add_modifier(Modifier::DIM),
+        }
+    }
+}  // impl Theme
+
+// ── Hex color parser ──────────────────────────────────────────────────────────
+
+/// Parse a "#rrggbb" hex string into a ratatui Color.  Returns None if malformed.
+fn parse_hex(s: &str) -> Option<Color> {
+    let s = s.trim().strip_prefix('#')?;
+    if s.len() != 6 { return None; }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some(Color::Rgb(r, g, b))
 }
