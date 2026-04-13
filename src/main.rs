@@ -1,7 +1,9 @@
 mod app;
+mod config;
 mod menu;
 mod model;
 mod persist;
+mod theme;
 mod ui;
 
 use std::io;
@@ -76,6 +78,10 @@ fn main() -> io::Result<()> {
         App::new()
     };
 
+    // ── Apply config (color scheme, etc.) ────────────────────────────────────
+    let cfg = config::load();
+    app.theme = theme::Theme::for_scheme(theme::ColorScheme::from_str(&cfg.colorscheme));
+
     // ── Setup terminal ────────────────────────────────────────────────────────
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -130,7 +136,8 @@ fn main() -> io::Result<()> {
             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
             // Spawn editor.
-            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+            let default_editor = if cfg!(windows) { "notepad.exe" } else { "vi" };
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| default_editor.to_string());
             let _ = std::process::Command::new(&editor)
                 .arg(&tmp_path)
                 .status();

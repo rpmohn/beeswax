@@ -1,7 +1,6 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -233,7 +232,7 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     frame.render_widget(
         Paragraph::new(vec![row1, row2])
-            .style(Style::default().add_modifier(Modifier::REVERSED)),
+            .style(app.theme.bar),
         area,
     );
 }

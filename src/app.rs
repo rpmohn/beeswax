@@ -481,6 +481,8 @@ pub struct App {
     pub item_wrap_width:  std::cell::Cell<usize>,
     /// View body scroll offset (lines). Updated each render frame to keep cursor visible.
     pub scroll_offset:    std::cell::Cell<usize>,
+    /// Active color scheme / theme. Set from config on startup.
+    pub theme:            crate::theme::Theme,
 }
 
 // ── Byte-offset helper ────────────────────────────────────────────────────────
@@ -1508,6 +1510,7 @@ impl App {
             next_id:      7,
             item_wrap_width: std::cell::Cell::new(0),
             scroll_offset:   std::cell::Cell::new(0),
+            theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::Default),
         }
     }
 
@@ -1552,6 +1555,7 @@ impl App {
             next_id:      data.next_id,
             item_wrap_width: std::cell::Cell::new(0),
             scroll_offset:   std::cell::Cell::new(0),
+            theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::Default),
         }
     }
 

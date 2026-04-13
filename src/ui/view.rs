@@ -65,7 +65,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Line::from(Span::raw(title_bar_top(area.width))),
             Line::from(Span::raw(second_line)),
         ])
-        .style(Style::default().add_modifier(Modifier::REVERSED));
+        .style(app.theme.bar);
         frame.render_widget(title, chunks[0]);
     } else {
         menu::render_bar(frame, chunks[0], app);
@@ -144,9 +144,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                     let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
                     let style = if app.col_cursor == 0 {
-                        Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                        app.theme.section_selected
                     } else {
-                        Style::default().add_modifier(Modifier::BOLD)
+                        app.theme.section
                     };
                     (vec![Span::raw(ind), Span::raw(sec_prefix), Span::styled(name, style)], w)
                 }
@@ -156,23 +156,23 @@ pub fn render(frame: &mut Frame, app: &App) {
                     (vec![
                         Span::raw(ind),
                         Span::raw(sec_prefix),
-                        Span::styled(left,  Style::default().add_modifier(Modifier::BOLD)),
-                        Span::styled(hi,    Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)),
-                        Span::styled(right, Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(left,  app.theme.section),
+                        Span::styled(hi,    app.theme.cursor.add_modifier(Modifier::BOLD)),
+                        Span::styled(right, app.theme.section),
                     ], w)
                 }
                 _ => {
                     let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
                     (vec![Span::raw(ind), Span::raw(sec_prefix),
-                          Span::styled(name, Style::default().add_modifier(Modifier::BOLD))], w)
+                          Span::styled(name, app.theme.section)], w)
                 }
             }
         } else {
             let name: String = sec_display_name.chars().take(max_name_w).collect();
             let w = pfx_w + name.chars().count();
             (vec![Span::raw(ind), Span::raw(sec_prefix),
-                  Span::styled(name, Style::default().add_modifier(Modifier::BOLD))], w)
+                  Span::styled(name, app.theme.section)], w)
         };
         if head_used < main_col_w {
             head_spans.push(Span::raw(" ".repeat(main_col_w - head_used)));
@@ -346,9 +346,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Mode::Normal => {
                             // Highlight all wrapped lines when selected
                             let style = if app.col_cursor == 0 {
-                                Style::default().add_modifier(Modifier::REVERSED)
+                                app.theme.item_selected
                             } else {
-                                Style::default().add_modifier(Modifier::BOLD)
+                                app.theme.item.add_modifier(Modifier::BOLD)
                             };
                             vec![Span::raw(indent), Span::styled(line_text, style)]
                         }
@@ -359,7 +359,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                                     vec![
                                         Span::raw(indent),
                                         Span::raw(left),
-                                        Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
+                                        Span::styled(hi, app.theme.cursor),
                                         Span::raw(right),
                                     ]
                                 } else {
@@ -371,7 +371,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         }
                         Mode::Edit { .. } =>
                             vec![Span::raw(indent),
-                                 Span::styled(line_text, Style::default().add_modifier(Modifier::BOLD))],
+                                 Span::styled(line_text, app.theme.item.add_modifier(Modifier::BOLD))],
                         Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. } | Mode::ItemProps { .. } =>
                             vec![Span::raw(indent), Span::raw(line_text)],
                     }
@@ -443,7 +443,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         spans.push(Span::raw(left));
                         if !hi.is_empty() || row_i == dcl {
                             spans.push(Span::styled(if hi.is_empty() { " ".to_string() } else { hi },
-                                                    Style::default().add_modifier(Modifier::REVERSED)));
+                                                    app.theme.cursor));
                         }
                         spans.push(Span::raw(right));
                         let cursor_extra = if row_i == dcl && dcc >= line.chars().count() { 1 } else { 0 };
@@ -479,7 +479,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
     app.scroll_offset.set(off);
     let visible: Vec<Line> = lines.into_iter().skip(off).take(body_h).collect();
-    frame.render_widget(Paragraph::new(visible), body_inner);
+    frame.render_widget(Paragraph::new(visible).style(app.theme.body), body_inner);
 
     // ── F-key bar ─────────────────────────────────────────────────────────
     fkeys::render_fkey_bar(frame, chunks[2], app);
@@ -508,7 +508,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             .map(|c| c.name.as_str())
             .unwrap_or("");
 
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let rev = app.theme.item_selected;
 
         // Head — fully highlighted when active; show at least one space when blank
         let head_line = {
@@ -564,7 +564,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Choices picker overlay ────────────────────────────────────────────
     if let ColMode::Choices { picker_cursor, kind, .. } = &app.col_mode {
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let rev = app.theme.item_selected;
 
         let lines: Vec<Line> = match kind {
             ChoicesKind::Category => {
@@ -707,7 +707,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         // ── Delete confirmation overlay ───────────────────────────────────
         if *confirm_delete {
             let cat_name = flat.get(pc).map(|e| e.name.as_str()).unwrap_or("?");
-            let rev = Style::default().add_modifier(Modifier::REVERSED);
+            let rev = app.theme.item_selected;
             // Make the dialog wide enough to show the category name.
             let msg = format!("Discard \"{}\"?", cat_name);
             let dlg_w = (msg.chars().count() + 4).max(30).min(area.width as usize) as u16;
@@ -746,7 +746,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
 
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let rev = app.theme.item_selected;
 
         // Helper: field value span (REVERSED when active)
         let field_span = |label: &'static str, val: String, af: PropsField, target: PropsField| -> Vec<Span<'static>> {
@@ -966,7 +966,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── SetTime modal ─────────────────────────────────────────────────────────
     if let ColMode::SetTime { year, month, day, hour_buf, min_buf, sec_buf, active, .. } = &app.col_mode {
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let rev = app.theme.item_selected;
 
         let st_rect = centered_rect(28, 7, area);
         frame.render_widget(Clear, st_rect);
@@ -1122,8 +1122,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         let gi       = *gi;
         let cursor   = *cursor;
         let edit_buf = edit_buf.clone();
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
-        let dim = Style::default().add_modifier(Modifier::DIM);
+        let rev = app.theme.item_selected;
+        let dim = app.theme.dim;
 
         let item = match app.items.get(gi) { Some(it) => it, None => return };
 
@@ -1149,7 +1149,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
-            .title(" Item Properties ");
+            .title(" Item Properties ")
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
         let iw = inner.width as usize;
@@ -1244,10 +1245,13 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Remove-item confirmation modal ────────────────────────────────────────
     if let Mode::ConfirmDeleteItem { yes } = &app.mode {
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let rev   = app.theme.item_selected;
+        let unsel = app.theme.dialog;
+        let dim   = app.theme.dim;
         let dlg_rect = centered_rect(46, 9, area);
         frame.render_widget(Clear, dlg_rect);
-        let block = Block::default().borders(Borders::ALL).title(" Remove Item ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Remove Item ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
         let iw = inner.width as usize;
@@ -1259,8 +1263,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let yes_label = " Yes ";
         let no_label  = " No  ";
-        let yes_style = if *yes { rev } else { Style::default() };
-        let no_style  = if !yes { rev } else { Style::default() };
+        let yes_style = if *yes { rev } else { unsel };
+        let no_style  = if !yes { rev } else { unsel };
         let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
         let lpad = gap / 2;
 
@@ -1275,19 +1279,18 @@ pub fn render(frame: &mut Frame, app: &App) {
                 Span::styled(no_label, no_style),
             ]),
             Line::from(""),
-            Line::from(Span::styled(
-                format!("{}{}", " ".repeat(hpad), hint),
-                Style::default().add_modifier(Modifier::DIM),
-            )),
-        ]), inner);
+            Line::from(Span::styled(format!("{}{}", " ".repeat(hpad), hint), dim)),
+        ]).style(app.theme.dialog), inner);
     }
 
     // ── Discard-item confirmation modal ───────────────────────────────────────
     if let Mode::ConfirmDiscardItem { yes } = &app.mode {
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let rev   = app.theme.item_selected;
+        let unsel = app.theme.dialog;
         let dlg_rect = centered_rect(46, 9, area);
         frame.render_widget(Clear, dlg_rect);
-        let block = Block::default().borders(Borders::ALL).title(" Discard Item ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Discard Item ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
         let iw = inner.width as usize;
@@ -1299,8 +1302,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let yes_label = " Yes ";
         let no_label  = " No  ";
-        let yes_style = if *yes { rev } else { Style::default() };
-        let no_style  = if !yes { rev } else { Style::default() };
+        let yes_style = if *yes { rev } else { unsel };
+        let no_style  = if !yes { rev } else { unsel };
         let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
         let lpad = gap / 2;
 
@@ -1316,12 +1319,12 @@ pub fn render(frame: &mut Frame, app: &App) {
             ]),
             Line::from(""),
             Line::from(Span::raw(format!("{}{}", " ".repeat(hpad), hint))),
-        ]), inner);
+        ]).style(app.theme.dialog), inner);
     }
 
     // ── Remove-column confirmation modal ──────────────────────────────────────
     if let ColMode::ConfirmRemove { yes } = &app.col_mode {
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let rev = app.theme.item_selected;
         let dlg_rect = centered_rect(38, 7, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL)
@@ -1336,8 +1339,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let yes_label = " Yes ";
         let no_label  = " No  ";
-        let yes_style = if *yes { rev } else { Style::default() };
-        let no_style  = if !yes { rev } else { Style::default() };
+        let yes_style = if *yes { rev } else { app.theme.dialog };
+        let no_style  = if !yes { rev } else { app.theme.dialog };
         let gap = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
         let lpad = gap / 2;
         let btn_line = Line::from(vec![
@@ -1358,7 +1361,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Remove-section confirmation modal ─────────────────────────────────────
     if let SectionMode::ConfirmRemove { yes } = &app.sec_mode {
-        let rev = Style::default().add_modifier(Modifier::REVERSED);
+        let rev = app.theme.item_selected;
         let dlg_rect = centered_rect(44, 7, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL).title(" Remove Section ");
@@ -1372,8 +1375,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let yes_label = " Yes ";
         let no_label  = " No  ";
-        let yes_style = if *yes { rev } else { Style::default() };
-        let no_style  = if !yes { rev } else { Style::default() };
+        let yes_style = if *yes { rev } else { app.theme.dialog };
+        let no_style  = if !yes { rev } else { app.theme.dialog };
         let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
         let lpad = gap / 2;
         let btn_line = Line::from(vec![
@@ -1522,7 +1525,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let field_w = iw.saturating_sub(label_w + 2);
         let cat_disp: String = cat_name.chars().take(field_w).collect();
         let cat_padded = format!("{:<width$}", cat_disp, width = field_w);
-        let cat_style = if active_field == SectionFormField::Category { rev } else { Style::default() };
+        let cat_style = if active_field == SectionFormField::Category { rev } else { app.theme.dialog };
         let cat_line = Line::from(vec![
             Span::raw("  Category:  "),
             Span::styled(cat_padded, cat_style),
@@ -1533,7 +1536,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             SectionInsert::Below => "Below",
             SectionInsert::Above => "Above",
         };
-        let ins_style = if active_field == SectionFormField::Insert { rev } else { Style::default() };
+        let ins_style = if active_field == SectionFormField::Insert { rev } else { app.theme.dialog };
         let ins_line = Line::from(vec![
             Span::raw("  Insert:    "),
             Span::styled(format!("{:<8}", ins_str), ins_style),
@@ -1582,7 +1585,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 .map(|(i, e)| {
                     let indent = "  ".repeat(e.depth);
                     let label  = format!("{}{}", indent, e.name);
-                    let style  = if i == picker_cur { rev } else { Style::default() };
+                    let style  = if i == picker_cur { rev } else { app.theme.dialog };
                     Line::from(Span::styled(label, style))
                 })
                 .collect();
@@ -1822,15 +1825,17 @@ pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Save Changes? ");
+        .title(" Save Changes? ")
+        .style(app.theme.dialog_border);
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
-    let rev = Style::default().add_modifier(Modifier::REVERSED);
+    let rev = app.theme.item_selected;
+    let unsel = app.theme.dialog;
 
-    let yes_style    = if *choice == AskChoice::Yes    { rev } else { Style::default() };
-    let no_style     = if *choice == AskChoice::No     { rev } else { Style::default() };
-    let cancel_style = if *choice == AskChoice::Cancel { rev } else { Style::default() };
+    let yes_style    = if *choice == AskChoice::Yes    { rev } else { unsel };
+    let no_style     = if *choice == AskChoice::No     { rev } else { unsel };
+    let cancel_style = if *choice == AskChoice::Cancel { rev } else { unsel };
 
     let btn_line = Line::from(vec![
         Span::raw("     "),
@@ -1849,7 +1854,7 @@ pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
     ];
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
 }
 
 // ── Password-entry dialog ─────────────────────────────────────────────────────
@@ -2021,7 +2026,7 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
             .map(|(i, e)| {
                 let indent = "  ".repeat(e.depth);
                 let label  = format!("{}{}", indent, e.name);
-                let style  = if i == pc { rev } else { Style::default() };
+                let style  = if i == pc { rev } else { app.theme.dialog };
                 Line::from(Span::styled(label, style))
             })
             .collect();
@@ -2047,8 +2052,8 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
-    let rev = Style::default().add_modifier(Modifier::REVERSED);
-    let dim = Style::default().add_modifier(Modifier::DIM);
+    let rev = app.theme.item_selected;
+    let dim = app.theme.dim;
     let iw  = inner.width as usize;
 
     // Left column width (labels + field): ~36 chars. Right column: Columns list.
@@ -2365,8 +2370,9 @@ pub fn render_sort_dialog(
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
-    let rev = Style::default().add_modifier(Modifier::REVERSED);
-    let fs  = |active: bool| if active { rev } else { Style::default() };
+    let rev = app.theme.item_selected;
+    let unsel = app.theme.dialog;
+    let fs  = |active: bool| if active { rev } else { unsel };
 
     let sort_new_label = "Sort new items:  ";
     let sort_on_label  = "  Sort on:       ";
@@ -2463,7 +2469,7 @@ pub fn render_sort_dialog(
                     .map(|(i, e)| {
                         let indent = "  ".repeat(e.depth);
                         let label  = format!("{}{}", indent, e.name);
-                        let style  = if i == p.cursor { rev } else { Style::default() };
+                        let style  = if i == p.cursor { rev } else { app.theme.dialog };
                         Line::from(Span::styled(label, style))
                     })
                     .collect();
@@ -2489,7 +2495,7 @@ pub fn render_sort_dialog(
                 let pick_inner = pick_block.inner(pick_rect);
                 let pick_lines: Vec<Line> = choices.iter().enumerate()
                     .map(|(i, label)| {
-                        let style = if i == p.cursor { rev } else { Style::default() };
+                        let style = if i == p.cursor { rev } else { app.theme.dialog };
                         Line::from(Span::styled(*label, style))
                     })
                     .collect();
