@@ -57,6 +57,7 @@ pub enum ViewMode {
     },
 }
 
+#[derive(Clone, Copy)]
 pub enum CursorPos {
     SectionHead(usize),
     Item { section: usize, item: usize },
@@ -497,6 +498,14 @@ pub struct App {
     pub item_wrap_width:  std::cell::Cell<usize>,
     /// View body scroll offset (lines). Updated each render frame to keep cursor visible.
     pub scroll_offset:    std::cell::Cell<usize>,
+    /// Absolute line index of the first line of the cursor row — set each render frame.
+    pub cursor_line:      std::cell::Cell<usize>,
+    /// Height of the view body in rows — set each render frame.
+    pub body_height:      std::cell::Cell<usize>,
+    /// Map of every renderable cursor position to its (first_line, last_line) — set each render frame.
+    pub line_map:         std::cell::RefCell<Vec<(CursorPos, usize, usize)>>,
+    /// Pending first character of a two-key vi sequence (e.g. 'z' waiting for 'z').
+    pub vi_pending:       Option<char>,
     /// Active color scheme / theme. Set from config on startup.
     pub theme:            crate::theme::Theme,
 }
@@ -1527,6 +1536,10 @@ impl App {
             next_id:      7,
             item_wrap_width: std::cell::Cell::new(0),
             scroll_offset:   std::cell::Cell::new(0),
+            cursor_line:     std::cell::Cell::new(0),
+            body_height:     std::cell::Cell::new(0),
+            line_map:        std::cell::RefCell::new(Vec::new()),
+            vi_pending:      None,
             theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::Default),
         }
     }
@@ -1573,6 +1586,10 @@ impl App {
             next_id:      data.next_id,
             item_wrap_width: std::cell::Cell::new(0),
             scroll_offset:   std::cell::Cell::new(0),
+            cursor_line:     std::cell::Cell::new(0),
+            body_height:     std::cell::Cell::new(0),
+            line_map:        std::cell::RefCell::new(Vec::new()),
+            vi_pending:      None,
             theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::Default),
         }
     }
@@ -2220,26 +2237,110 @@ impl App {
         for _ in 0..n { self.cursor_down(); }
     }
 
+    /// zz — set scroll offset so the cursor row is vertically centred in the body.
+    /// Uses the cursor_line and body_height values written by the last render frame.
+    pub fn scroll_center(&mut self) {
+        let half = self.body_height.get() / 2;
+        self.scroll_offset.set(self.cursor_line.get().saturating_sub(half));
+    }
+
+    /// H — move cursor to the first visible row on screen.
+    pub fn cursor_screen_top(&mut self) {
+        let off = self.scroll_offset.get();
+        let pos = self.line_map.borrow().iter()
+            .find(|(_, _, last)| *last >= off)
+            .map(|(p, _, _)| *p);
+        if let Some(p) = pos { self.cursor = p; }
+    }
+
+    /// L — move cursor to the last visible row on screen.
+    pub fn cursor_screen_bottom(&mut self) {
+        let last_vis = self.scroll_offset.get() + self.body_height.get().saturating_sub(1);
+        let pos = self.line_map.borrow().iter().rev()
+            .find(|(_, first, _)| *first <= last_vis)
+            .map(|(p, _, _)| *p);
+        if let Some(p) = pos { self.cursor = p; }
+    }
+
+    /// Home: move to the current section head (preserving col_cursor).
+    /// If already on a section head, move to the previous section head.
     pub fn cursor_home(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
         self.sub_row = 0;
-        let first = self.next_visible_section_fwd(0).unwrap_or(0);
-        self.cursor = CursorPos::SectionHead(first);
+        match self.cursor {
+            CursorPos::Item { section, .. } => {
+                self.cursor = CursorPos::SectionHead(section);
+            }
+            CursorPos::SectionHead(s) => {
+                if s > 0 {
+                    if let Some(prev) = self.next_visible_section_bwd(s - 1) {
+                        self.cursor = CursorPos::SectionHead(prev);
+                    }
+                }
+            }
+        }
     }
 
+    /// End: move to the last item of the current section (preserving col_cursor).
+    /// If already on the last item, move to the last item of the next section.
     pub fn cursor_end(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
         self.sub_row = 0;
-        let num_sections = self.view.sections.len();
-        if num_sections == 0 { return; }
-        let last_sec = self.next_visible_section_bwd(num_sections - 1)
-            .unwrap_or(num_sections - 1);
-        let n = visible_item_indices(&self.items, &self.view, last_sec, &self.categories).len();
-        self.cursor = if n == 0 {
-            CursorPos::SectionHead(last_sec)
-        } else {
-            CursorPos::Item { section: last_sec, item: n - 1 }
-        };
+        match self.cursor {
+            CursorPos::SectionHead(s) => {
+                let n = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
+                if n > 0 {
+                    self.cursor = CursorPos::Item { section: s, item: n - 1 };
+                } else {
+                    self.end_next_section_last(s);
+                }
+            }
+            CursorPos::Item { section, item } => {
+                let n = visible_item_indices(&self.items, &self.view, section, &self.categories).len();
+                if item + 1 >= n {
+                    // Already at last item — jump to last item of next section.
+                    self.end_next_section_last(section);
+                } else {
+                    self.cursor = CursorPos::Item { section, item: n - 1 };
+                }
+            }
+        }
+    }
+
+    /// gg — move to the first section head of the first visible section (col unchanged).
+    pub fn cursor_first(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        self.sub_row = 0;
+        if let Some(s) = self.next_visible_section_fwd(0) {
+            self.cursor = CursorPos::SectionHead(s);
+        }
+    }
+
+    /// G — move to the last item of the last visible section (col unchanged).
+    pub fn cursor_last(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        self.sub_row = 0;
+        let n = self.view.sections.len();
+        if n == 0 { return; }
+        if let Some(s) = self.next_visible_section_bwd(n - 1) {
+            let count = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
+            self.cursor = if count > 0 {
+                CursorPos::Item { section: s, item: count - 1 }
+            } else {
+                CursorPos::SectionHead(s)
+            };
+        }
+    }
+
+    fn end_next_section_last(&mut self, from: usize) {
+        if let Some(s) = self.next_visible_section_fwd(from + 1) {
+            let n = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
+            self.cursor = if n > 0 {
+                CursorPos::Item { section: s, item: n - 1 }
+            } else {
+                CursorPos::SectionHead(s)
+            };
+        }
     }
 
     // ── View buffer cursor ────────────────────────────────────────────────────

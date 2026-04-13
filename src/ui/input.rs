@@ -286,6 +286,19 @@ fn handle_password_entry(app: &mut App, code: KeyCode) {
 // ── View handlers ─────────────────────────────────────────────────────────────
 
 fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                app.cursor_pgdn(app.body_height.get().max(1));
+                return;
+            }
+            KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.cursor_pgup(app.body_height.get().max(1));
+                return;
+            }
+            _ => {}
+        }
+    }
     if modifiers.contains(KeyModifiers::ALT) {
         match code {
             KeyCode::Char('r') => app.col_quick_add(ColPos::Right),
@@ -365,16 +378,33 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 /// Vi-mode character handler for Normal mode.
-/// Maps hjkl, i, o, O; ignores all other printable keys.
+/// Maps hjkl, i, o, O, zz; ignores all other printable keys.
 fn handle_view_normal_vi(app: &mut App, ch: char) {
+    // Resolve pending two-key sequences first.
+    if let Some(pending) = app.vi_pending.take() {
+        match (pending, ch) {
+            ('z', 'z') => app.scroll_center(),
+            ('g', 'g') => app.cursor_first(),
+            _ => handle_view_normal_vi(app, ch),  // discard first key, process second
+        }
+        return;
+    }
+
     match ch {
         'j' => app.cursor_down(),
         'k' => app.cursor_up(),
         'h' => app.cursor_col_left(),
         'l' => app.cursor_col_right(),
+        'H' => app.cursor_screen_top(),
+        'L' => app.cursor_screen_bottom(),
+        '{' => app.cursor_home(),
+        '}' => app.cursor_end(),
+        'G' => app.cursor_last(),
         'i' => app.begin_edit(),
         'o' => app.begin_create_blank(),
         'O' => app.begin_create_above(),
+        'g' => app.vi_pending = Some('g'),
+        'z' => app.vi_pending = Some('z'),
         _   => {}   // all other printable keys are no-ops in vi normal mode
     }
 }

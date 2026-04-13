@@ -103,6 +103,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let mut cursor_first_line: usize = 0;
     let mut cursor_last_line:  usize = 0;
     let mut cursor_line_found  = false;
+    let mut lmap: Vec<(CursorPos, usize, usize)> = Vec::new();
 
     // Precompute which sections are visible (non-empty when hide_empty_sections is on).
     let visible_sections: Vec<usize> = if app.view.hide_empty_sections {
@@ -190,6 +191,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         if !right_cols.is_empty() { row.push(Span::raw(" ")); }
         row.extend(right_head_spans);
         if cursor_on_head { cursor_first_line = lines.len(); cursor_line_found = true; }
+        let head_first = lines.len();
         lines.push(Line::from(row));
 
         if cursor_on_head {
@@ -207,6 +209,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
             cursor_last_line = lines.len() - 1;
         }
+        lmap.push((CursorPos::SectionHead(s_idx), head_first, lines.len() - 1));
 
         // ── Item rows ────────────────────────────────────────────────────
         let sec_item_indices = visible_item_indices(&app.items, &app.view, s_idx, &app.categories);
@@ -313,6 +316,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             });
 
             if cursor_on_item { cursor_first_line = lines.len(); cursor_line_found = true; }
+            let item_first = lines.len();
             for row_i in 0..n_rows {
                 // Values for this sub-row (empty string if this column has fewer assignments).
                 let left_vals_row: Vec<String> = all_vals_lines[..lc].iter()
@@ -457,6 +461,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 }
             }
             if cursor_on_item { cursor_last_line = lines.len() - 1; }
+            lmap.push((CursorPos::Item { section: s_idx, item: i_idx }, item_first, lines.len() - 1));
         }
 
         // Blank line between sections
@@ -478,6 +483,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
     }
     app.scroll_offset.set(off);
+    app.cursor_line.set(cursor_first_line);
+    app.body_height.set(body_h);
+    *app.line_map.borrow_mut() = lmap;
     let visible: Vec<Line> = lines.into_iter().skip(off).take(body_h).collect();
     frame.render_widget(Paragraph::new(visible).style(app.theme.body), body_inner);
 
