@@ -452,6 +452,39 @@ fn handle_view_input(app: &mut App, code: KeyCode) {
     }
 }
 
+// ── Vi list-navigation helper ─────────────────────────────────────────────────
+
+/// Handles vi navigation keys (j/k/G/gg/H/M/L) for list-style pickers.
+/// Returns `true` if `code` was consumed so the caller can return early.
+/// No-ops and returns `false` when nav_mode != Vi.
+/// Always clears `vi_pending` so stale state doesn't leak across handlers.
+fn handle_vi_list(
+    app:  &mut App,
+    code: KeyCode,
+    down: &dyn Fn(&mut App),
+    up:   &dyn Fn(&mut App),
+    end:  &dyn Fn(&mut App),
+    home: &dyn Fn(&mut App),
+    mid:  &dyn Fn(&mut App),
+) -> bool {
+    if app.nav_mode != NavMode::Vi { return false; }
+    let pending = app.vi_pending.take();   // always clear stale state
+    if let Some('g') = pending {
+        if code == KeyCode::Char('g') { home(app); return true; }
+        // Unknown two-key sequence — fall through with pending cleared.
+    }
+    match code {
+        KeyCode::Char('j') => { down(app); true }
+        KeyCode::Char('k') => { up(app);   true }
+        KeyCode::Char('G') => { end(app);  true }
+        KeyCode::Char('g') => { app.vi_pending = Some('g'); true }
+        KeyCode::Char('H') => { home(app); true }
+        KeyCode::Char('M') => { mid(app);  true }
+        KeyCode::Char('L') => { end(app);  true }
+        _ => false
+    }
+}
+
 // ── CatMgr handlers ───────────────────────────────────────────────────────────
 
 fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
@@ -494,6 +527,10 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             _ => { app.cat_search_clear(); }  // navigation key: cancel search, then handle
         }
     }
+    if handle_vi_list(app, code,
+        &|a| a.cat_cursor_down(), &|a| a.cat_cursor_up(),
+        &|a| a.cat_cursor_end(), &|a| a.cat_cursor_home(),
+        &|a| a.cat_cursor_middle()) { return; }
     match code {
         KeyCode::Up       => app.cat_cursor_up(),
         KeyCode::Down     => app.cat_cursor_down(),
@@ -510,7 +547,15 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Delete => app.cat_delete(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
                           && !modifiers.contains(KeyModifiers::ALT) => {
-            app.cat_search_char(ch);
+            match app.nav_mode {
+                NavMode::Vi => match ch {
+                    'i' => app.cat_begin_edit(),
+                    'o' => app.cat_begin_create(false),
+                    '/' => app.cat_search_open(),
+                    _   => {}
+                },
+                NavMode::Agenda => app.cat_search_char(ch),
+            }
         }
         _ => {}
     }
@@ -560,6 +605,14 @@ fn handle_catmgr_input(app: &mut App, code: KeyCode) {
 }
 
 fn handle_catmgr_move(app: &mut App, code: KeyCode) {
+    if app.nav_mode == NavMode::Vi {
+        app.vi_pending = None;   // clear any stale pending
+        match code {
+            KeyCode::Char('j') => { app.cat_move_down(); return; }
+            KeyCode::Char('k') => { app.cat_move_up();   return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Up           => app.cat_move_up(),
         KeyCode::Down         => app.cat_move_down(),
@@ -593,6 +646,10 @@ fn handle_col_form(app: &mut App, code: KeyCode) {
 }
 
 fn handle_col_choices(app: &mut App, code: KeyCode) {
+    if handle_vi_list(app, code,
+        &|a| a.col_choices_down(), &|a| a.col_choices_up(),
+        &|a| a.col_choices_end(), &|a| a.col_choices_home(),
+        &|a| a.col_choices_middle()) { return; }
     match code {
         KeyCode::Up       => app.col_choices_up(),
         KeyCode::Down     => app.col_choices_down(),
@@ -668,6 +725,10 @@ fn handle_col_quick_add(app: &mut App, code: KeyCode) {
             _ => { app.cat_search_clear(); }
         }
     }
+    if handle_vi_list(app, code,
+        &|a| a.col_quick_add_down(), &|a| a.col_quick_add_up(),
+        &|a| a.col_quick_add_end(), &|a| a.col_quick_add_home(),
+        &|a| a.col_quick_add_middle()) { return; }
     match code {
         KeyCode::Up       => app.col_quick_add_up(),
         KeyCode::Down     => app.col_quick_add_down(),
@@ -763,6 +824,10 @@ fn handle_item_props(app: &mut App, code: KeyCode) {
         }
         return;
     }
+    if handle_vi_list(app, code,
+        &|a| a.item_props_cursor_down(), &|a| a.item_props_cursor_up(),
+        &|a| a.item_props_cursor_end(), &|a| a.item_props_cursor_home(),
+        &|a| a.item_props_cursor_middle()) { return; }
     match code {
         KeyCode::Esc                        => app.item_props_cancel(),
         KeyCode::Enter | KeyCode::F(2)      => app.item_props_edit(),
@@ -774,6 +839,7 @@ fn handle_item_props(app: &mut App, code: KeyCode) {
         KeyCode::PageUp                     => app.item_props_cursor_pgup(10),
         KeyCode::PageDown                   => app.item_props_cursor_pgdn(10),
         KeyCode::Delete                     => app.item_props_remove(),
+        KeyCode::Char('i') if app.nav_mode == NavMode::Vi => app.item_props_edit(),
         _ => {}
     }
 }
@@ -821,6 +887,10 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         handle_catmgr_props(app, code, modifiers);
         return;
     }
+    if handle_vi_list(app, code,
+        &|a| a.col_sub_pick_down(), &|a| a.col_sub_pick_up(),
+        &|a| a.col_sub_pick_end(), &|a| a.col_sub_pick_home(),
+        &|a| a.col_sub_pick_middle()) { return; }
     match code {
         KeyCode::Up              => app.col_sub_pick_up(),
         KeyCode::Down            => app.col_sub_pick_down(),
@@ -880,6 +950,10 @@ fn handle_sec_form(app: &mut App, code: KeyCode) {
 }
 
 fn handle_sec_choices(app: &mut App, code: KeyCode) {
+    if handle_vi_list(app, code,
+        &|a| a.sec_choices_down(), &|a| a.sec_choices_up(),
+        &|a| a.sec_choices_end(), &|a| a.sec_choices_home(),
+        &|a| a.sec_choices_middle()) { return; }
     match code {
         KeyCode::Up       => app.sec_choices_up(),
         KeyCode::Down     => app.sec_choices_down(),
@@ -908,6 +982,10 @@ fn handle_assign_profile(app: &mut App, code: KeyCode) {
             _ => { app.cat_search_clear(); }  // navigation key: cancel search, then handle
         }
     }
+    if handle_vi_list(app, code,
+        &|a| a.assign_cursor_down(), &|a| a.assign_cursor_up(),
+        &|a| a.assign_cursor_end(), &|a| a.assign_cursor_home(),
+        &|a| a.assign_cursor_middle()) { return; }
     match code {
         KeyCode::Up       => app.assign_cursor_up(),
         KeyCode::Down     => app.assign_cursor_down(),
@@ -930,6 +1008,10 @@ fn handle_assign_profile(app: &mut App, code: KeyCode) {
 fn handle_view_add(app: &mut App, code: KeyCode) {
     // Picker sub-mode
     if matches!(app.view_mode, ViewMode::AddPick { .. }) {
+        if handle_vi_list(app, code,
+            &|a| a.view_add_pick_down(), &|a| a.view_add_pick_up(),
+            &|a| a.view_add_pick_end(), &|a| a.view_add_pick_home(),
+            &|a| a.view_add_pick_middle()) { return; }
         match code {
             KeyCode::Up       => app.view_add_pick_up(),
             KeyCode::Down     => app.view_add_pick_down(),
@@ -980,6 +1062,10 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             _ => {}
         }
     }
+    if handle_vi_list(app, code,
+        &|a| a.vmgr_cursor_down(), &|a| a.vmgr_cursor_up(),
+        &|a| a.vmgr_cursor_end(), &|a| a.vmgr_cursor_home(),
+        &|a| a.vmgr_cursor_middle()) { return; }
     match code {
         KeyCode::Up       => app.vmgr_cursor_up(),
         KeyCode::Down     => app.vmgr_cursor_down(),
@@ -994,6 +1080,7 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(8) | KeyCode::Esc => app.close_view_mgr(),
         KeyCode::F(9)  => { app.close_view_mgr(); app.toggle_catmgr(); }
         KeyCode::F(10) => app.open_menu(),
+        KeyCode::Char('i') if app.nav_mode == NavMode::Vi => app.vmgr_begin_rename(),
         _ => {}
     }
 }
@@ -1085,6 +1172,14 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode) {
 }
 
 fn handle_vmgr_sec_sort_picker(app: &mut App, code: KeyCode) {
+    if app.nav_mode == NavMode::Vi {
+        app.vi_pending = None;
+        match code {
+            KeyCode::Char('j') => { app.vmgr_sec_sort_picker_down(); return; }
+            KeyCode::Char('k') => { app.vmgr_sec_sort_picker_up();   return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Up    => app.vmgr_sec_sort_picker_up(),
         KeyCode::Down  => app.vmgr_sec_sort_picker_down(),
@@ -1106,6 +1201,10 @@ fn handle_vmgr_sort_dialog(app: &mut App, code: KeyCode) {
 }
 
 fn handle_vmgr_sort_picker(app: &mut App, code: KeyCode) {
+    if handle_vi_list(app, code,
+        &|a| a.vmgr_sort_picker_down(), &|a| a.vmgr_sort_picker_up(),
+        &|a| a.vmgr_sort_picker_end(), &|a| a.vmgr_sort_picker_home(),
+        &|a| a.vmgr_sort_picker_middle()) { return; }
     match code {
         KeyCode::Up       => app.vmgr_sort_picker_up(),
         KeyCode::Down     => app.vmgr_sort_picker_down(),
@@ -1174,6 +1273,10 @@ fn handle_sec_props_normal(app: &mut App, code: KeyCode) {
 }
 
 fn handle_sec_filter_picker(app: &mut App, code: KeyCode) {
+    if handle_vi_list(app, code,
+        &|a| a.sec_filter_picker_down(), &|a| a.sec_filter_picker_up(),
+        &|a| a.sec_filter_picker_end(), &|a| a.sec_filter_picker_home(),
+        &|a| a.sec_filter_picker_middle()) { return; }
     match code {
         KeyCode::Up       => app.sec_filter_picker_up(),
         KeyCode::Down     => app.sec_filter_picker_down(),
@@ -1200,6 +1303,10 @@ fn handle_sec_sort_dialog(app: &mut App, code: KeyCode) {
 }
 
 fn handle_sec_sort_picker(app: &mut App, code: KeyCode) {
+    if handle_vi_list(app, code,
+        &|a| a.sec_sort_picker_down(), &|a| a.sec_sort_picker_up(),
+        &|a| a.sec_sort_picker_end(), &|a| a.sec_sort_picker_home(),
+        &|a| a.sec_sort_picker_middle()) { return; }
     match code {
         KeyCode::Up       => app.sec_sort_picker_up(),
         KeyCode::Down     => app.sec_sort_picker_down(),

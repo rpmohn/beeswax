@@ -1728,6 +1728,12 @@ impl App {
             *picker_cursor = 0;
         }
     }
+    pub fn view_add_pick_middle(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
+            *picker_cursor = len / 2;
+        }
+    }
     pub fn view_add_pick_end(&mut self) {
         let len = flatten_cats(&self.categories).len();
         if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
@@ -3017,6 +3023,14 @@ impl App {
     pub fn item_props_cursor_home(&mut self) {
         if let Mode::ItemProps { cursor, .. } = &mut self.mode { *cursor = 0; }
     }
+    pub fn item_props_cursor_middle(&mut self) {
+        let (gi, max) = match &self.mode {
+            Mode::ItemProps { gi, .. } => (*gi, self.item_props_max_cursor(*gi)),
+            _ => return,
+        };
+        let _ = gi;
+        if let Mode::ItemProps { cursor, .. } = &mut self.mode { *cursor = max / 2; }
+    }
 
     pub fn item_props_cursor_end(&mut self) {
         let gi = match &self.mode { Mode::ItemProps { gi, .. } => *gi, _ => return };
@@ -3248,7 +3262,12 @@ impl App {
             *picker_cursor = 0;
         }
     }
-
+    pub fn col_quick_add_middle(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = len / 2;
+        }
+    }
     pub fn col_quick_add_end(&mut self) {
         let len = flatten_cats(&self.categories).len();
         if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
@@ -3520,6 +3539,16 @@ impl App {
     pub fn col_choices_home(&mut self) {
         if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
             *picker_cursor = 0;
+        }
+    }
+    pub fn col_choices_middle(&mut self) {
+        let list_len = match &self.col_mode {
+            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
+            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
+            _ => return,
+        };
+        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = list_len / 2;
         }
     }
     pub fn col_choices_end(&mut self) {
@@ -3934,7 +3963,13 @@ impl App {
             *on_sub = false;
         }
     }
-
+    pub fn assign_cursor_middle(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+            *cursor = len / 2;
+            *on_sub = false;
+        }
+    }
     pub fn assign_cursor_end(&mut self) {
         let len = flatten_cats(&self.categories).len();
         if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
@@ -4109,6 +4144,11 @@ impl App {
             *picker_cursor = idx; return;
         }
         self.cat_state.cursor = idx;
+    }
+
+    /// Open search with an empty buffer (vi-mode '/' entry point).
+    pub fn cat_search_open(&mut self) {
+        self.cat_search = Some(String::new());
     }
 
     /// Move to the first match after appending `ch` to the search buffer.
@@ -4337,6 +4377,12 @@ impl App {
             *picker_cursor = 0;
         }
     }
+    pub fn sec_choices_middle(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+            *picker_cursor = len / 2;
+        }
+    }
     pub fn sec_choices_end(&mut self) {
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
@@ -4517,7 +4563,12 @@ impl App {
             *cursor = 0;
         }
     }
-
+    pub fn sec_filter_picker_middle(&mut self) {
+        let count = flatten_cats(&self.categories).len();
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+            *cursor = count / 2;
+        }
+    }
     pub fn sec_filter_picker_end(&mut self) {
         let count = flatten_cats(&self.categories).len();
         if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
@@ -4746,6 +4797,14 @@ impl App {
             if let Some(p) = picker { p.cursor = 0; }
         }
     }
+    pub fn sec_sort_picker_middle(&mut self) {
+        let max = self.sec_sort_picker_len();
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            if let Some(p) = picker { p.cursor = max / 2; }
+        }
+    }
     pub fn sec_sort_picker_end(&mut self) {
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
@@ -4860,7 +4919,11 @@ impl App {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
         self.cat_state.cursor = 0;
     }
-
+    pub fn cat_cursor_middle(&mut self) {
+        if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
+        let flat = flatten_cats(&self.categories);
+        self.cat_state.cursor = flat.len() / 2;
+    }
     pub fn cat_cursor_end(&mut self) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
         let flat = flatten_cats(&self.categories);
@@ -5390,6 +5453,15 @@ impl App {
             *picker_cursor = 0;
         }
     }
+    pub fn col_sub_pick_middle(&mut self) {
+        let len = match &self.col_mode {
+            ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
+            _ => return,
+        };
+        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = len / 2;
+        }
+    }
     pub fn col_sub_pick_end(&mut self) {
         let len = match &self.col_mode {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
@@ -5888,6 +5960,10 @@ impl App {
     }
     pub fn vmgr_cursor_home(&mut self) {
         self.vmgr_state.cursor = 0;
+    }
+    pub fn vmgr_cursor_middle(&mut self) {
+        let count = 1 + self.inactive_views.len();
+        self.vmgr_state.cursor = count / 2;
     }
     pub fn vmgr_cursor_end(&mut self) {
         let count = 1 + self.inactive_views.len();
@@ -6468,6 +6544,12 @@ impl App {
     pub fn vmgr_sort_picker_home(&mut self) {
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
             if let Some(p) = picker { p.cursor = 0; }
+        }
+    }
+    pub fn vmgr_sort_picker_middle(&mut self) {
+        let max = self.vmgr_sort_picker_len();
+        if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
+            if let Some(p) = picker { p.cursor = max / 2; }
         }
     }
     pub fn vmgr_sort_picker_end(&mut self) {
