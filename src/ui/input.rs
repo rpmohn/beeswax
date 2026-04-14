@@ -286,6 +286,26 @@ fn handle_password_entry(app: &mut App, code: KeyCode) {
 // ── View handlers ─────────────────────────────────────────────────────────────
 
 fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // In vi mode, non-char keys can complete a pending sequence.
+    if app.nav_mode == NavMode::Vi {
+        if let Some(pending) = app.vi_pending {
+            match (pending, code) {
+                ('z', KeyCode::Enter) => {
+                    app.vi_pending = None;
+                    app.scroll_to_top();
+                    return;
+                }
+                (_, KeyCode::Char(_)) => {
+                    // Char keys reach handle_view_normal_vi via the Char arm below — do nothing here.
+                }
+                _ => {
+                    // Unknown sequence: discard pending, fall through to process the key normally.
+                    app.vi_pending = None;
+                }
+            }
+        }
+    }
+
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('f') | KeyCode::Char('F') => {
@@ -383,8 +403,9 @@ fn handle_view_normal_vi(app: &mut App, ch: char) {
     // Resolve pending two-key sequences first.
     if let Some(pending) = app.vi_pending.take() {
         match (pending, ch) {
-            ('z', 'z') => app.scroll_center(),
-            ('g', 'g') => app.cursor_first(),
+            ('z', 'z') | ('z', '.') => app.scroll_center(),
+            ('z', '-')              => app.scroll_to_bottom(),
+            ('g', 'g')              => app.cursor_first(),
             _ => handle_view_normal_vi(app, ch),  // discard first key, process second
         }
         return;
@@ -396,6 +417,7 @@ fn handle_view_normal_vi(app: &mut App, ch: char) {
         'h' => app.cursor_col_left(),
         'l' => app.cursor_col_right(),
         'H' => app.cursor_screen_top(),
+        'M' => app.cursor_screen_middle(),
         'L' => app.cursor_screen_bottom(),
         '{' => app.cursor_home(),
         '}' => app.cursor_end(),

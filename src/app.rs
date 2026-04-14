@@ -2237,11 +2237,21 @@ impl App {
         for _ in 0..n { self.cursor_down(); }
     }
 
-    /// zz — set scroll offset so the cursor row is vertically centred in the body.
-    /// Uses the cursor_line and body_height values written by the last render frame.
+    /// zz / z. — centre scroll so the cursor row is in the middle of the body.
     pub fn scroll_center(&mut self) {
         let half = self.body_height.get() / 2;
         self.scroll_offset.set(self.cursor_line.get().saturating_sub(half));
+    }
+
+    /// z<Enter> — scroll so the cursor row is at the top of the body.
+    pub fn scroll_to_top(&mut self) {
+        self.scroll_offset.set(self.cursor_line.get());
+    }
+
+    /// z- — scroll so the cursor row is at the bottom of the body.
+    pub fn scroll_to_bottom(&mut self) {
+        let bottom_off = self.body_height.get().saturating_sub(1);
+        self.scroll_offset.set(self.cursor_line.get().saturating_sub(bottom_off));
     }
 
     /// H — move cursor to the first visible row on screen.
@@ -2259,6 +2269,19 @@ impl App {
         let pos = self.line_map.borrow().iter().rev()
             .find(|(_, first, _)| *first <= last_vis)
             .map(|(p, _, _)| *p);
+        if let Some(p) = pos { self.cursor = p; }
+    }
+
+    /// M — move cursor to the middle visible row on screen.
+    pub fn cursor_screen_middle(&mut self) {
+        let mid = self.scroll_offset.get() + self.body_height.get() / 2;
+        let lmap = self.line_map.borrow();
+        let pos = lmap.iter()
+            .filter(|(_, first, _)| *first <= mid)
+            .last()
+            .or_else(|| lmap.first())
+            .map(|(p, _, _)| *p);
+        drop(lmap);
         if let Some(p) = pos { self.cursor = p; }
     }
 
