@@ -1,0 +1,48 @@
+# beeswax — color mapping test config
+# Each color is unique so you can identify exactly which setting controls
+# which element. Copy to ~/.config/beeswax/config.toml to activate.
+#
+# Key:
+#   bar_fg              = #ff0000  bright RED
+#   bar_bg              = #000080  dark NAVY
+#   bar_cursor_fg       = #ffff00  bright YELLOW
+#   bar_cursor_bg       = #800080  dark PURPLE
+#   body_fg             = #00ff00  bright GREEN
+#   body_bg             = #1a0a00  dark BROWN
+#   selected_fg         = #00ffff  bright CYAN
+#   selected_bg         = #8b0000  dark CRIMSON
+#   section_fg          = #ff8000  bright ORANGE
+#   dialog_fg           = #aaff00  bright LIME
+#   dialog_bg           = #003344  dark TEAL
+#   dialog_border_fg    = #ff69b4  HOT PINK
+#   dialog_border_bg    = #1a0066  dark INDIGO
+#   view_bg             = #0a001a  dark VIOLET
+#   view_item           = #ffd700  bright GOLD
+#   view_col            = #40e0d0  TURQUOISE
+#   view_col_head       = #ff4500  ORANGE RED
+#   view_sec_head       = #7fff00  CHARTREUSE
+#   view_head_bg        = #1a1a00  dark OLIVE
+
+colorscheme = "Custom"
+nav_mode    = "Agenda"
+
+[custom_theme]
+bar_fg              = "#ff0000"   # bright RED        — bar text (fkey labels, menu items)
+bar_bg              = "#000080"   # dark NAVY         — bar background
+bar_cursor_fg       = "#ffff00"   # bright YELLOW     — active menu item text
+bar_cursor_bg       = "#800080"   # dark PURPLE       — active menu item background
+body_fg             = "#00ff00"   # bright GREEN      — normal item text
+body_bg             = "#1a0a00"   # dark BROWN        — main body background
+selected_fg         = "#00ffff"   # bright CYAN       — selected item text
+selected_bg         = "#8b0000"   # dark CRIMSON      — selected item background
+section_fg          = "#ff8000"   # bright ORANGE     — unselected section head text
+dialog_fg           = "#aaff00"   # bright LIME       — dialog body text
+dialog_bg           = "#003344"   # dark TEAL         — dialog body background
+dialog_border_fg    = "#ff69b4"   # HOT PINK          — dialog border characters and title
+dialog_border_bg    = "#1a0066"   # dark INDIGO       — dialog border background
+view_bg             = "#0a001a"   # dark VIOLET       — view body background
+view_item           = "#ffd700"   # bright GOLD       — item text foreground
+view_col            = "#40e0d0"   # TURQUOISE         — column value foreground
+view_col_head       = "#ff4500"   # ORANGE RED        — column header foreground
+view_sec_head       = "#7fff00"   # CHARTREUSE        — section header foreground
+view_head_bg        = "#1a1a00"   # dark OLIVE        — section/column header line background

@@ -129,7 +129,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let left_active  = if cursor_on_head { active_col.filter(|&i| i < lc) } else { None };
         let left_head_edit = head_cell_edit(left_active, &app.mode);
         let left_head_spans = col_cells(left_cols, &left_head_vals,
-                                        left_active, left_head_edit, None, "");
+                                        left_active, left_head_edit, None, "", app.theme.view_col_head, app.theme.item_selected);
 
         // Main column content
         // When left columns exist, indent section header to align with item text.
@@ -145,35 +145,36 @@ pub fn render(frame: &mut Frame, app: &App) {
                     let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
                     let style = if app.col_cursor == 0 {
-                        app.theme.section_selected
+                        app.theme.item_selected.add_modifier(Modifier::BOLD)
                     } else {
-                        app.theme.section
+                        app.theme.view_sec_head.add_modifier(Modifier::BOLD)
                     };
                     (vec![Span::raw(ind), Span::raw(sec_prefix), Span::styled(name, style)], w)
                 }
                 Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
                     let (left, hi, right) = cursor_split(buffer, *cursor);
                     let w = pfx_w + buffer.chars().count();
+                    let sec_style = app.theme.view_sec_head.add_modifier(Modifier::BOLD);
                     (vec![
                         Span::raw(ind),
                         Span::raw(sec_prefix),
-                        Span::styled(left,  app.theme.section),
+                        Span::styled(left,  sec_style),
                         Span::styled(hi,    app.theme.cursor.add_modifier(Modifier::BOLD)),
-                        Span::styled(right, app.theme.section),
+                        Span::styled(right, sec_style),
                     ], w)
                 }
                 _ => {
                     let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
                     (vec![Span::raw(ind), Span::raw(sec_prefix),
-                          Span::styled(name, app.theme.section)], w)
+                          Span::styled(name, app.theme.view_sec_head.add_modifier(Modifier::BOLD))], w)
                 }
             }
         } else {
             let name: String = sec_display_name.chars().take(max_name_w).collect();
             let w = pfx_w + name.chars().count();
             (vec![Span::raw(ind), Span::raw(sec_prefix),
-                  Span::styled(name, app.theme.section)], w)
+                  Span::styled(name, app.theme.view_sec_head.add_modifier(Modifier::BOLD))], w)
         };
         if head_used < main_col_w {
             head_spans.push(Span::raw(" ".repeat(main_col_w - head_used)));
@@ -184,7 +185,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let right_active = if cursor_on_head { active_col.filter(|&i| i >= lc).map(|i| i - lc) } else { None };
         let right_head_edit = head_cell_edit(right_active.map(|i| i + lc), &app.mode);
         let right_head_spans = col_cells(right_cols, &right_head_vals,
-                                         right_active, right_head_edit, None, "");
+                                         right_active, right_head_edit, None, "", app.theme.view_col_head, app.theme.item_selected);
 
         let mut row = left_head_spans;
         row.extend(head_spans);
@@ -192,7 +193,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         row.extend(right_head_spans);
         if cursor_on_head { cursor_first_line = lines.len(); cursor_line_found = true; }
         let head_first = lines.len();
-        lines.push(Line::from(row));
+        lines.push(Line::from(row).style(app.theme.view_head_bg));
 
         if cursor_on_head {
             if let Mode::Create { buffer, cursor } = &app.mode {
@@ -200,11 +201,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let empty: Vec<String> = app.view.columns.iter().map(|_| String::new()).collect();
                 let left_empty  = &empty[..lc];
                 let right_empty = &empty[lc..];
-                let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}");
+                let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected);
                 spans.extend(input_row_spans(buffer, *cursor));
                 if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
                 if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
-                spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}"));
+                spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected));
                 lines.push(Line::from(spans));
             }
             cursor_last_line = lines.len() - 1;
@@ -338,7 +339,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
                 let left_item_spans = col_cells(left_cols, &left_vals_row,
                                                 left_active, left_edit,
-                                                hint_ref.filter(|_| left_active.is_some()), "\u{00B7}");
+                                                hint_ref.filter(|_| left_active.is_some()), "\u{00B7}", app.theme.view_col, app.theme.item_selected);
 
                 // Main column content: item text (word-wrapped) across rows.
                 let is_text_row = row_i < n_text_rows;
@@ -352,7 +353,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                             let style = if app.col_cursor == 0 {
                                 app.theme.item_selected
                             } else {
-                                app.theme.item.add_modifier(Modifier::BOLD)
+                                app.theme.view_item.add_modifier(Modifier::BOLD)
                             };
                             vec![Span::raw(indent), Span::styled(line_text, style)]
                         }
@@ -375,12 +376,12 @@ pub fn render(frame: &mut Frame, app: &App) {
                         }
                         Mode::Edit { .. } =>
                             vec![Span::raw(indent),
-                                 Span::styled(line_text, app.theme.item.add_modifier(Modifier::BOLD))],
+                                 Span::styled(line_text, app.theme.view_item.add_modifier(Modifier::BOLD))],
                         Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. } | Mode::ItemProps { .. } =>
                             vec![Span::raw(indent), Span::raw(line_text)],
                     }
                 } else if is_text_row {
-                    vec![Span::raw(indent), Span::raw(line_text)]
+                    vec![Span::styled(indent, app.theme.view_item), Span::styled(line_text, app.theme.view_item)]
                 } else {
                     vec![Span::raw(" ".repeat(main_col_w))]
                 };
@@ -401,7 +402,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
                 let right_item_spans = col_cells(right_cols, &right_vals_row,
                                                  right_active, right_edit,
-                                                 hint_ref.filter(|_| right_active.is_some()), "\u{00B7}");
+                                                 hint_ref.filter(|_| right_active.is_some()), "\u{00B7}", app.theme.view_col, app.theme.item_selected);
 
                 let mut row = left_item_spans;
                 row.extend(item_spans);
@@ -438,10 +439,10 @@ pub fn render(frame: &mut Frame, app: &App) {
                             (line.clone(), String::new(), String::new())
                         };
                         let mut spans = if row_i == 0 {
-                            col_cells(left_cols, left_empty, None, None, None, "\u{00B7}")
+                            col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected)
                         } else {
                             let blanks: Vec<String> = left_empty.iter().map(|_| String::new()).collect();
-                            col_cells(left_cols, &blanks, None, None, None, "\u{00B7}")
+                            col_cells(left_cols, &blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected)
                         };
                         spans.push(Span::raw(indent));
                         spans.push(Span::raw(left));
@@ -455,7 +456,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
                         if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
                         let right_blanks: Vec<String> = right_empty.iter().map(|_| String::new()).collect();
-                        spans.extend(col_cells(right_cols, &right_blanks, None, None, None, "\u{00B7}"));
+                        spans.extend(col_cells(right_cols, &right_blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected));
                         lines.push(Line::from(spans));
                     }
                 }
@@ -487,7 +488,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     app.body_height.set(body_h);
     *app.line_map.borrow_mut() = lmap;
     let visible: Vec<Line> = lines.into_iter().skip(off).take(body_h).collect();
-    frame.render_widget(Paragraph::new(visible).style(app.theme.body), body_inner);
+    frame.render_widget(Paragraph::new(visible).style(app.theme.view_bg), body_inner);
 
     // ── F-key bar ─────────────────────────────────────────────────────────
     fkeys::render_fkey_bar(frame, chunks[2], app);
@@ -628,7 +629,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Quick-add category picker (Alt-R / Alt-L) ────────────────────────────
     if let ColMode::QuickAdd { position, picker_cursor, confirm_delete } = &app.col_mode {
-        let rev  = Style::default().add_modifier(Modifier::REVERSED);
+        let rev  = app.theme.item_selected;
         let dim  = Style::default().add_modifier(Modifier::DIM);
         let flat = flatten_cats(&app.categories);
         let pc   = *picker_cursor;
@@ -919,7 +920,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let inner = block.inner(cal_rect);
         let iw = inner.width as usize;
 
-        let rev  = Style::default().add_modifier(Modifier::REVERSED);
+        let rev  = app.theme.item_selected;
         let bold = Style::default().add_modifier(Modifier::BOLD);
 
         // Title: centre "Month YYYY" in iw chars
@@ -1050,7 +1051,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let item_vals   = item_vals.unwrap_or(&empty_vals);
         let cond_cats   = cond_cats.unwrap_or(&empty_conds);
 
-        let rev  = Style::default().add_modifier(Modifier::REVERSED);
+        let rev  = app.theme.item_selected;
         let bold = Style::default().add_modifier(Modifier::BOLD);
 
         // Scroll window: same 16-row limit as Assignment Profile.
@@ -1407,7 +1408,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     if let AssignMode::Profile { gi, cursor: prof_cursor, on_sub } = &app.assign_mode {
         let (gi, prof_cur, prof_on_sub) = (*gi, *prof_cursor, *on_sub);
         let cats    = flatten_cats(&app.categories);
-        let rev     = Style::default().add_modifier(Modifier::REVERSED);
+        let rev     = app.theme.item_selected;
         let bold    = Style::default().add_modifier(Modifier::BOLD);
         let dim     = Style::default().add_modifier(Modifier::DIM);
 
@@ -1516,7 +1517,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
     if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
         let cats       = flatten_cats(&app.categories);
-        let rev        = Style::default().add_modifier(Modifier::REVERSED);
+        let rev        = app.theme.item_selected;
         let dlg_rect   = centered_rect(52, 11, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL).title(" Section Add ");
@@ -1701,6 +1702,8 @@ fn col_cells(
     cell_edit: Option<(&str, usize)>,
     autocomplete_hint: Option<&str>,
     prefix: &'static str,
+    text_style: Style,
+    selected_style: Style,
 ) -> Vec<Span<'static>> {
     let prefix_w = prefix.chars().count();
     let mut spans = Vec::new();
@@ -1719,7 +1722,7 @@ fn col_cells(
             col.width
         };
         if show_prefix {
-            spans.push(Span::raw(prefix));
+            spans.push(Span::styled(prefix, text_style));
         }
         if active_col == Some(i) {
             if let Some((buf, cur)) = cell_edit {
@@ -1727,11 +1730,11 @@ fn col_cells(
                 spans.extend(cell_edit_spans(buf, cur, text_w, hint));
             } else {
                 let cell = pad_or_trunc(&display_val, text_w);
-                spans.push(Span::styled(cell, Style::default().add_modifier(Modifier::REVERSED)));
+                spans.push(Span::styled(cell, selected_style));
             }
         } else {
             let cell = pad_or_trunc(&display_val, text_w);
-            spans.push(Span::raw(cell));
+            spans.push(Span::styled(cell, text_style));
         }
         spans.push(Span::raw(" "));
     }
@@ -1895,7 +1898,7 @@ pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let stars: String = "*".repeat(buf.chars().count());
     let pw_field = format!("{:<width$}", stars, width = fw);
     let pw_style = if !*confirm_active {
-        Style::default().add_modifier(Modifier::REVERSED)
+        app.theme.item_selected
     } else {
         Style::default()
     };
@@ -1911,7 +1914,7 @@ pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
         let cf_stars: String = "*".repeat(confirm_buf.chars().count());
         let cf_field = format!("{:<width$}", cf_stars, width = fw);
         let cf_style = if *confirm_active {
-            Style::default().add_modifier(Modifier::REVERSED)
+            app.theme.item_selected
         } else {
             Style::default()
         };
@@ -1965,7 +1968,7 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let name_label = "  View name: ";
     let sec_label  = "  Sections:  ";
     let field_w    = 22usize;
-    let rev        = Style::default().add_modifier(Modifier::REVERSED);
+    let rev        = app.theme.item_selected;
 
     let name_line: Line = if active_field == ViewAddField::Name {
         let (left, hi, right) = super::cursor_split(name_buf, name_cur);

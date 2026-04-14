@@ -1,0 +1,60 @@
+# beeswax configuration
+# Copy this file to:
+#   Linux/macOS:  ~/.config/beeswax/config.toml
+#   Windows:      %APPDATA%\beeswax\config.toml
+
+# ── Color scheme ──────────────────────────────────────────────────────────────
+# Available values:
+#   ""              Terminal default (reversed highlight, no colors)
+#   "AgendaColor"   Lotus Agenda-inspired (blue/cyan on dark)
+#   "AgendaMono"    Lotus Agenda-inspired (white/grey on dark)
+#   "SolarizedDark"
+#   "SolarizedLight"
+#   "GruvboxDark"
+#   "GruvboxLight"
+#   "Dracula"
+#   "Custom"        Use the [custom_theme] section below
+colorscheme = "AgendaColor"
+
+# ── Navigation mode ───────────────────────────────────────────────────────────
+# Available values:
+#   "Agenda"   Original Agenda-style (typing a character begins a new item)
+#   "vi"       Vi-style (hjkl movement, i/o/O to insert, no auto-create)
+nav_mode = "Agenda"
+
+# ── Custom color scheme ───────────────────────────────────────────────────────
+# Only applied when colorscheme = "Custom".
+# All fields are optional hex color strings ("#rrggbb").
+# Omit any field to fall back to the terminal default for that element.
+#
+# [custom_theme]
+# # Title bar, fkey bar, and menu bar
+# bar_fg              = "#839496"
+# bar_bg              = "#073642"
+# bar_cursor_fg       = "#002b36"
+# bar_cursor_bg       = "#268bd2"
+#
+# # Main body text
+# body_fg             = "#839496"
+# body_bg             = "#002b36"
+#
+# # Highlighted (selected) row
+# selected_fg         = "#002b36"
+# selected_bg         = "#839496"
+#
+# # Section headings
+# section_fg          = "#268bd2"
+#
+# # Modal dialog content
+# dialog_fg           = "#839496"
+# dialog_bg           = "#073642"
+# dialog_border_fg    = "#268bd2"
+# dialog_border_bg    = "#073642"
+#
+# # View body
+# view_bg             = "#002b36"   # view body background
+# view_item           = "#839496"   # item text foreground
+# view_col            = "#839496"   # column value foreground
+# view_col_head       = "#2aa198"   # column header foreground
+# view_sec_head       = "#2aa198"   # section header foreground
+# view_head_bg        = "#002b36"   # background for section/column header lines

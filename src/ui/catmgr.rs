@@ -60,7 +60,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Line::from(Span::raw(title_bar_top(area.width))),
             Line::from(Span::raw(second_line)),
         ])
-        .style(Style::default().add_modifier(Modifier::REVERSED));
+        .style(app.theme.bar);
         frame.render_widget(title, chunks[0]);
     } else {
         menu::render_bar(frame, chunks[0], app);
@@ -114,10 +114,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::raw(ind),
                         Span::raw(kchar),
                         Span::raw(" "),
-                        Span::styled(
-                            entry.name.clone(),
-                            Style::default().add_modifier(Modifier::REVERSED),
-                        ),
+                        Span::styled(entry.name.clone(), app.theme.item_selected),
                     ]),
                     CatMode::Edit { buffer, cursor: buf_cur } => {
                         // Indicator stays; only the name is being edited
@@ -143,10 +140,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::raw(ind),
                         Span::raw(kchar),
                         Span::raw(" "),
-                        Span::styled(
-                            entry.name.clone(),
-                            Style::default().add_modifier(Modifier::REVERSED),
-                        ),
+                        Span::styled(entry.name.clone(), app.theme.item_selected),
                     ]),
                 }
             } else {
@@ -210,30 +204,24 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
             CategoryKind::Unindexed => "Unindexed",
         };
 
-        // Active: whole field content in REVERSED, padded to field_w.
+        let sel = app.theme.item_selected;
+
+        // Active: whole field content in selected style, padded to field_w.
         // Inactive: plain text padded to field_w.
-        fn text_field(buf: &str, field_w: usize, active: bool) -> Span<'static> {
+        fn text_field(buf: &str, field_w: usize, active: bool, sel: Style) -> Span<'static> {
             let displayed: String = buf.chars().take(field_w).collect();
             let pad = field_w.saturating_sub(displayed.chars().count());
             let s = format!("{}{}", displayed, " ".repeat(pad));
-            if active {
-                Span::styled(s, Style::default().add_modifier(Modifier::REVERSED))
-            } else {
-                Span::raw(s)
-            }
+            if active { Span::styled(s, sel) } else { Span::raw(s) }
         }
 
-        fn bool_field(val: bool, active: bool) -> Span<'static> {
+        fn bool_field(val: bool, active: bool, sel: Style) -> Span<'static> {
             let s = if val { "Yes" } else { "No " };
-            if active {
-                Span::styled(s, Style::default().add_modifier(Modifier::REVERSED))
-            } else {
-                Span::raw(s)
-            }
+            if active { Span::styled(s, sel) } else { Span::raw(s) }
         }
 
         // Note field: empty → "...", non-empty → content with \n shown as ↵, truncated with "..."
-        fn note_field(note: &str, field_w: usize, active: bool) -> Span<'static> {
+        fn note_field(note: &str, field_w: usize, active: bool, sel: Style) -> Span<'static> {
             let text = if note.is_empty() {
                 let pad = field_w.saturating_sub(3);
                 format!("...{}", " ".repeat(pad))
@@ -243,18 +231,13 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
                     .collect();
                 let n = processed.chars().count();
                 if n <= field_w {
-                    let pad = field_w - n;
-                    format!("{}{}", processed, " ".repeat(pad))
+                    format!("{}{}", processed, " ".repeat(field_w - n))
                 } else {
                     let truncated: String = processed.chars().take(field_w.saturating_sub(3)).collect();
                     format!("{}...", truncated)
                 }
             };
-            if active {
-                Span::styled(text, Style::default().add_modifier(Modifier::REVERSED))
-            } else {
-                Span::raw(text)
-            }
+            if active { Span::styled(text, sel) } else { Span::raw(text) }
         }
 
         // All text-field labels are 17 chars; fields are 20 chars wide → 37 total = rc.
@@ -281,7 +264,7 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
         // Row 1: " Category name:  "(17) + field(20) + "    Type: <kind>"
         let row1 = Line::from(vec![
             Span::raw(" Category name:  "),
-            text_field(name_buf, fw, name_active),
+            text_field(name_buf, fw, name_active, sel),
             Span::raw(format!("    Type: {}", kind_str)),
         ]);
 
@@ -291,41 +274,41 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
         let row2 = Line::from(vec![
             Span::raw(format!(" Parent is {}{}", parent_disp, " ".repeat(parent_pad))),
             Span::raw("Match cat name:  "),
-            bool_field(*match_cat_name, mcat_active),
+            bool_field(*match_cat_name, mcat_active, sel),
         ]);
 
         // Row 3: " Short name:     "(17) + field(20) + "    Match short name: " + bool
         let row3 = Line::from(vec![
             Span::raw(" Short name:     "),
-            text_field(short_name_buf, fw, short_active),
+            text_field(short_name_buf, fw, short_active, sel),
             Span::raw("    Match short name: "),
-            bool_field(*match_short_name, mshort_active),
+            bool_field(*match_short_name, mshort_active, sel),
         ]);
 
         // Row 4: " Also match:     "(17) + field(20)
         let row4 = Line::from(vec![
             Span::raw(" Also match:     "),
-            text_field(also_match_buf, fw, also_active),
+            text_field(also_match_buf, fw, also_active, sel),
         ]);
 
         // Row 5: " Note:           "(17) + note_field(20) + "Assignment conditions:"
         let row5 = Line::from(vec![
             Span::raw(" Note:           "),
-            note_field(&note_text, fw, note_active),
+            note_field(&note_text, fw, note_active, sel),
             Span::raw("Assignment conditions:"),
         ]);
 
         // Row 6: " Note file:      "(17) + field(20)
         let row6 = Line::from(vec![
             Span::raw(" Note file:      "),
-            text_field(note_file_buf, fw, nfile_active),
+            text_field(note_file_buf, fw, nfile_active, sel),
         ]);
 
         // Row 7: " Exclusive children: "(21) + bool(3) + padding + "Assignment actions:"
         let excl_pad = rc.saturating_sub(21 + 3);
         let row7 = Line::from(vec![
             Span::raw(" Exclusive children: "),
-            bool_field(*excl_children, excl_active),
+            bool_field(*excl_children, excl_active, sel),
             Span::raw(" ".repeat(excl_pad)),
             Span::raw("Assignment actions:"),
         ]);

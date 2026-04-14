@@ -102,8 +102,6 @@ pub struct Theme {
     pub item_selected:    Style,
     /// Unselected section head.
     pub section:          Style,
-    /// Selected section head.
-    pub section_selected: Style,
     /// Edit/create text cursor character.
     pub cursor:           Style,
     /// Modal dialog content area.
@@ -112,6 +110,20 @@ pub struct Theme {
     pub dialog_border:    Style,
     /// Dimmed hint / autocomplete text.
     pub dim:              Style,
+
+    // ── View-specific ─────────────────────────────────────────────────────────
+    /// View body background + default fg (paragraph base style).
+    pub view_bg:       Style,
+    /// Foreground for unselected item text.
+    pub view_item:     Style,
+    /// Foreground for column value entries.
+    pub view_col:      Style,
+    /// Foreground for column header labels.
+    pub view_col_head: Style,
+    /// Foreground for section header names (rendering code adds BOLD).
+    pub view_sec_head: Style,
+    /// Background applied to the entire section/column header line.
+    pub view_head_bg:  Style,
 }
 
 impl Theme {
@@ -148,12 +160,17 @@ impl Theme {
         let sel_fg    = color(&c.selected_fg, None);
         let sel_bg    = color(&c.selected_bg, None);
         let sec_fg    = color(&c.section_fg,  None);
-        let secselfg  = color(&c.section_selected_fg, sel_fg);
-        let secselbg  = color(&c.section_selected_bg, sel_bg);
+
         let dlg_fg    = color(&c.dialog_fg,         body_fg);
         let dlg_bg    = color(&c.dialog_bg,         body_bg);
         let dlgbrd_fg = color(&c.dialog_border_fg,  None);
         let dlgbrd_bg = color(&c.dialog_border_bg,  None);
+        let vbg_bg    = color(&c.view_bg,            body_bg);
+        let vitem_fg  = color(&c.view_item,          body_fg);
+        let vcol_fg   = color(&c.view_col,           body_fg);
+        let vcolh_fg  = color(&c.view_col_head,      sec_fg.or(body_fg));
+        let vsech_fg  = color(&c.view_sec_head,      sec_fg);
+        let vhbg_bg   = color(&c.view_head_bg,       vbg_bg);
 
         let apply = |s: Style, fg: Option<Color>, bg: Option<Color>| -> Style {
             let s = if let Some(f) = fg { s.fg(f) } else { s };
@@ -182,10 +199,6 @@ impl Theme {
                 .add_modifier(Modifier::BOLD)
         } else { def.section };
 
-        let section_selected = if secselfg.is_some() || secselbg.is_some() {
-            apply(Style::default(), secselfg, secselbg).add_modifier(Modifier::BOLD)
-        } else { def.section_selected };
-
         let cursor = if sel_fg.is_some() || sel_bg.is_some() {
             apply(Style::default(), sel_fg, sel_bg)
         } else { def.cursor };
@@ -194,8 +207,16 @@ impl Theme {
         let dialog_border = apply(Style::default(), dlgbrd_fg.or(dlg_fg), dlgbrd_bg.or(dlg_bg));
         let dim = apply(Style::default(), body_fg, body_bg).add_modifier(Modifier::DIM);
 
+        let view_bg       = apply(Style::default(), body_fg, vbg_bg);
+        let view_item     = apply(Style::default(), vitem_fg, None);
+        let view_col      = apply(Style::default(), vcol_fg,  None);
+        let view_col_head = apply(Style::default(), vcolh_fg, None);
+        let view_sec_head = apply(Style::default(), vsech_fg, None);
+        let view_head_bg  = apply(Style::default(), None, vhbg_bg);
+
         Theme { bar, bar_cursor, body, item, item_selected,
-                section, section_selected, cursor, dialog, dialog_border, dim }
+                section, cursor, dialog, dialog_border, dim,
+                view_bg, view_item, view_col, view_col_head, view_sec_head, view_head_bg }
     }
 
     fn default_theme() -> Self {
@@ -208,11 +229,16 @@ impl Theme {
             item:             Style::default(),
             item_selected:    rev,
             section:          bold,
-            section_selected: Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
             cursor:           rev,
             dialog:           Style::default(),
             dialog_border:    Style::default(),
             dim:              Style::default().add_modifier(Modifier::DIM),
+            view_bg:          Style::default(),
+            view_item:        Style::default(),
+            view_col:         Style::default(),
+            view_col_head:    Style::default(),
+            view_sec_head:    Style::default(),
+            view_head_bg:     Style::default(),
         }
     }
 
@@ -230,11 +256,16 @@ impl Theme {
             item:             Style::default().fg(body_fg).bg(body_bg),
             item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
             section:          Style::default().fg(Color::Blue).bg(body_bg).add_modifier(Modifier::BOLD),
-            section_selected: Style::default().fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(Color::Blue).bg(body_bg),
             dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
+            view_bg:          Style::default().fg(body_fg).bg(body_bg),
+            view_item:        Style::default().fg(body_fg),
+            view_col:         Style::default().fg(body_fg),
+            view_col_head:    Style::default().fg(Color::Blue),
+            view_sec_head:    Style::default().fg(Color::Blue),
+            view_head_bg:     Style::default().bg(body_bg),
         }
     }
 
@@ -250,11 +281,16 @@ impl Theme {
             item:             Style::default().fg(body_fg).bg(body_bg),
             item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
             section:          Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::BOLD),
-            section_selected: Style::default().fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(body_fg).bg(body_bg),
             dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
+            view_bg:          Style::default().fg(body_fg).bg(body_bg),
+            view_item:        Style::default().fg(body_fg),
+            view_col:         Style::default().fg(body_fg),
+            view_col_head:    Style::default().fg(body_fg),
+            view_sec_head:    Style::default().fg(body_fg),
+            view_head_bg:     Style::default().bg(body_bg),
         }
     }
 
@@ -275,11 +311,16 @@ impl Theme {
             item:             Style::default().fg(body_fg).bg(body_bg),
             item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
             section:          Style::default().fg(S_CYAN).bg(body_bg).add_modifier(Modifier::BOLD),
-            section_selected: Style::default().fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
             dim:              Style::default().fg(S_BASE01).bg(body_bg).add_modifier(Modifier::DIM),
+            view_bg:          Style::default().fg(body_fg).bg(body_bg),
+            view_item:        Style::default().fg(body_fg),
+            view_col:         Style::default().fg(body_fg),
+            view_col_head:    Style::default().fg(S_CYAN),
+            view_sec_head:    Style::default().fg(S_CYAN),
+            view_head_bg:     Style::default().bg(body_bg),
         }
     }
 
@@ -300,11 +341,16 @@ impl Theme {
             item:             Style::default().fg(body_fg).bg(body_bg),
             item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
             section:          Style::default().fg(S_BLUE).bg(body_bg).add_modifier(Modifier::BOLD),
-            section_selected: Style::default().fg(sel_fg).bg(sel_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
             dim:              Style::default().fg(S_BASE1).bg(body_bg).add_modifier(Modifier::DIM),
+            view_bg:          Style::default().fg(body_fg).bg(body_bg),
+            view_item:        Style::default().fg(body_fg),
+            view_col:         Style::default().fg(body_fg),
+            view_col_head:    Style::default().fg(S_BLUE),
+            view_sec_head:    Style::default().fg(S_BLUE),
+            view_head_bg:     Style::default().bg(body_bg),
         }
     }
 
@@ -317,11 +363,16 @@ impl Theme {
             item:             Style::default().fg(G_FG).bg(G_BG),
             item_selected:    Style::default().fg(G_BG).bg(G_YELLOW),
             section:          Style::default().fg(G_BLUE_D).bg(G_BG).add_modifier(Modifier::BOLD),
-            section_selected: Style::default().fg(G_BG).bg(G_YELLOW).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(G_BG).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG).bg(G_BG),
             dialog_border:    Style::default().fg(G_BG2).bg(G_BG),
             dim:              Style::default().fg(G_GRAY).bg(G_BG).add_modifier(Modifier::DIM),
+            view_bg:          Style::default().fg(G_FG).bg(G_BG),
+            view_item:        Style::default().fg(G_FG),
+            view_col:         Style::default().fg(G_FG),
+            view_col_head:    Style::default().fg(G_BLUE_D),
+            view_sec_head:    Style::default().fg(G_BLUE_D),
+            view_head_bg:     Style::default().bg(G_BG),
         }
     }
 
@@ -334,11 +385,16 @@ impl Theme {
             item:             Style::default().fg(G_FG_L).bg(G_BG_L),
             item_selected:    Style::default().fg(G_BG_L).bg(G_YELLOW),
             section:          Style::default().fg(G_BLUE_L).bg(G_BG_L).add_modifier(Modifier::BOLD),
-            section_selected: Style::default().fg(G_BG_L).bg(G_YELLOW).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(G_BG_L).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG_L).bg(G_BG_L),
             dialog_border:    Style::default().fg(G_BG2_L).bg(G_BG_L),
             dim:              Style::default().fg(G_FG4_L).bg(G_BG_L).add_modifier(Modifier::DIM),
+            view_bg:          Style::default().fg(G_FG_L).bg(G_BG_L),
+            view_item:        Style::default().fg(G_FG_L),
+            view_col:         Style::default().fg(G_FG_L),
+            view_col_head:    Style::default().fg(G_BLUE_L),
+            view_sec_head:    Style::default().fg(G_BLUE_L),
+            view_head_bg:     Style::default().bg(G_BG_L),
         }
     }
 
@@ -351,11 +407,16 @@ impl Theme {
             item:             Style::default().fg(D_FG).bg(D_BG),
             item_selected:    Style::default().fg(D_BG).bg(D_PURPLE),
             section:          Style::default().fg(D_CYAN).bg(D_BG).add_modifier(Modifier::BOLD),
-            section_selected: Style::default().fg(D_BG).bg(D_PURPLE).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(D_BG).bg(D_PURPLE),
             dialog:           Style::default().fg(D_FG).bg(D_BG),
             dialog_border:    Style::default().fg(D_COMMENT).bg(D_BG),
             dim:              Style::default().fg(D_COMMENT).bg(D_BG).add_modifier(Modifier::DIM),
+            view_bg:          Style::default().fg(D_FG).bg(D_BG),
+            view_item:        Style::default().fg(D_FG),
+            view_col:         Style::default().fg(D_FG),
+            view_col_head:    Style::default().fg(D_CYAN),
+            view_sec_head:    Style::default().fg(D_CYAN),
+            view_head_bg:     Style::default().bg(D_BG),
         }
     }
 }  // impl Theme

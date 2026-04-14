@@ -42,10 +42,6 @@ pub struct CustomTheme {
     // ── Section heads ────────────────────────────────────────────────────────
     /// Unselected section head foreground (background = body_bg).
     #[serde(default)] pub section_fg:          Option<String>,
-    /// Selected section head — defaults to selected_fg / selected_bg.
-    #[serde(default)] pub section_selected_fg: Option<String>,
-    #[serde(default)] pub section_selected_bg: Option<String>,
-
     // ── Modal dialogs ────────────────────────────────────────────────────────
     /// Dialog content area — defaults to body_fg / body_bg.
     #[serde(default)] pub dialog_fg:           Option<String>,
@@ -53,6 +49,20 @@ pub struct CustomTheme {
     /// Dialog border foreground and background.
     #[serde(default)] pub dialog_border_fg:    Option<String>,
     #[serde(default)] pub dialog_border_bg:    Option<String>,
+
+    // ── View body ────────────────────────────────────────────────────────────────
+    /// View body background color.
+    #[serde(default)] pub view_bg:             Option<String>,
+    /// Foreground color for item text.
+    #[serde(default)] pub view_item:           Option<String>,
+    /// Foreground color for column value entries.
+    #[serde(default)] pub view_col:            Option<String>,
+    /// Foreground color for column header labels.
+    #[serde(default)] pub view_col_head:       Option<String>,
+    /// Foreground color for section header names.
+    #[serde(default)] pub view_sec_head:       Option<String>,
+    /// Background color for the entire section/column header line.
+    #[serde(default)] pub view_head_bg:        Option<String>,
 }
 
 /// Platform-specific path to the beeswax config file.
