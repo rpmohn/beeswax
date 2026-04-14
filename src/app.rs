@@ -2273,14 +2273,16 @@ impl App {
     }
 
     /// M — move cursor to the middle visible row on screen.
+    /// If less than a full screen of data is shown, uses the middle of the
+    /// actual content rather than the middle of the screen height.
     pub fn cursor_screen_middle(&mut self) {
-        let mid = self.scroll_offset.get() + self.body_height.get() / 2;
+        let off      = self.scroll_offset.get();
+        let last_vis = off + self.body_height.get().saturating_sub(1);
         let lmap = self.line_map.borrow();
-        let pos = lmap.iter()
-            .filter(|(_, first, _)| *first <= mid)
-            .last()
-            .or_else(|| lmap.first())
-            .map(|(p, _, _)| *p);
+        let visible: Vec<_> = lmap.iter()
+            .filter(|(_, first, last)| *last >= off && *first <= last_vis)
+            .collect();
+        let pos = visible.get(visible.len() / 2).map(|(p, _, _)| *p);
         drop(lmap);
         if let Some(p) = pos { self.cursor = p; }
     }

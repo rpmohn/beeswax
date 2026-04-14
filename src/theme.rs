@@ -153,6 +153,7 @@ impl Theme {
         let dlg_fg    = color(&c.dialog_fg,         body_fg);
         let dlg_bg    = color(&c.dialog_bg,         body_bg);
         let dlgbrd_fg = color(&c.dialog_border_fg,  None);
+        let dlgbrd_bg = color(&c.dialog_border_bg,  None);
 
         let apply = |s: Style, fg: Option<Color>, bg: Option<Color>| -> Style {
             let s = if let Some(f) = fg { s.fg(f) } else { s };
@@ -190,7 +191,7 @@ impl Theme {
         } else { def.cursor };
 
         let dialog = apply(Style::default(), dlg_fg, dlg_bg);
-        let dialog_border = apply(Style::default(), dlgbrd_fg.or(dlg_fg), dlg_bg);
+        let dialog_border = apply(Style::default(), dlgbrd_fg.or(dlg_fg), dlgbrd_bg.or(dlg_bg));
         let dim = apply(Style::default(), body_fg, body_bg).add_modifier(Modifier::DIM);
 
         Theme { bar, bar_cursor, body, item, item_selected,

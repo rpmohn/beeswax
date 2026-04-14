@@ -50,8 +50,9 @@ pub struct CustomTheme {
     /// Dialog content area — defaults to body_fg / body_bg.
     #[serde(default)] pub dialog_fg:           Option<String>,
     #[serde(default)] pub dialog_bg:           Option<String>,
-    /// Dialog border foreground (background = dialog_bg).
+    /// Dialog border foreground and background.
     #[serde(default)] pub dialog_border_fg:    Option<String>,
+    #[serde(default)] pub dialog_border_bg:    Option<String>,
 }
 
 /// Platform-specific path to the beeswax config file.
