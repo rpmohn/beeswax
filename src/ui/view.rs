@@ -159,7 +159,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::raw(ind),
                         Span::raw(sec_prefix),
                         Span::styled(left,  sec_style),
-                        Span::styled(hi,    app.theme.cursor.add_modifier(Modifier::BOLD)),
+                        Span::styled(hi,    app.theme.item_selected),
                         Span::styled(right, sec_style),
                     ], w)
                 }
@@ -202,7 +202,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let left_empty  = &empty[..lc];
                 let right_empty = &empty[lc..];
                 let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected);
-                spans.extend(input_row_spans(buffer, *cursor));
+                spans.extend(input_row_spans(buffer, *cursor, app.theme.view_item, app.theme.item_selected));
                 if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
                 if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
                 spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected));
@@ -362,23 +362,26 @@ pub fn render(frame: &mut Frame, app: &App) {
                                 if row_i == dcl {
                                     let (left, hi, right) = cursor_split(&line_text, dcc);
                                     vec![
-                                        Span::raw(indent),
-                                        Span::raw(left),
-                                        Span::styled(hi, app.theme.cursor),
-                                        Span::raw(right),
+                                        Span::styled(indent, app.theme.view_item),
+                                        Span::styled(left,   app.theme.view_item),
+                                        Span::styled(hi,     app.theme.item_selected),
+                                        Span::styled(right,  app.theme.view_item),
                                     ]
                                 } else {
-                                    vec![Span::raw(indent), Span::raw(line_text)]
+                                    vec![Span::styled(indent, app.theme.view_item),
+                                         Span::styled(line_text, app.theme.view_item)]
                                 }
                             } else {
-                                vec![Span::raw(indent), Span::raw(line_text)]
+                                vec![Span::styled(indent, app.theme.view_item),
+                                     Span::styled(line_text, app.theme.view_item)]
                             }
                         }
                         Mode::Edit { .. } =>
-                            vec![Span::raw(indent),
-                                 Span::styled(line_text, app.theme.view_item.add_modifier(Modifier::BOLD))],
+                            vec![Span::styled(indent, app.theme.view_item),
+                                 Span::styled(line_text, app.theme.view_item)],
                         Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. } | Mode::ItemProps { .. } =>
-                            vec![Span::raw(indent), Span::raw(line_text)],
+                            vec![Span::styled(indent, app.theme.view_item),
+                                 Span::styled(line_text, app.theme.view_item)],
                     }
                 } else if is_text_row {
                     vec![Span::styled(indent, app.theme.view_item), Span::styled(line_text, app.theme.view_item)]
@@ -444,13 +447,15 @@ pub fn render(frame: &mut Frame, app: &App) {
                             let blanks: Vec<String> = left_empty.iter().map(|_| String::new()).collect();
                             col_cells(left_cols, &blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected)
                         };
-                        spans.push(Span::raw(indent));
-                        spans.push(Span::raw(left));
+                        spans.push(Span::styled(indent, app.theme.view_item));
+                        spans.push(Span::styled(left,   app.theme.view_item));
                         if !hi.is_empty() || row_i == dcl {
-                            spans.push(Span::styled(if hi.is_empty() { " ".to_string() } else { hi },
-                                                    app.theme.cursor));
+                            spans.push(Span::styled(
+                                if hi.is_empty() { " ".to_string() } else { hi },
+                                app.theme.item_selected,
+                            ));
                         }
-                        spans.push(Span::raw(right));
+                        spans.push(Span::styled(right, app.theme.view_item));
                         let cursor_extra = if row_i == dcl && dcc >= line.chars().count() { 1 } else { 0 };
                         let used = create_pfx_w + line.chars().count() + cursor_extra;
                         if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
@@ -1727,7 +1732,7 @@ fn col_cells(
         if active_col == Some(i) {
             if let Some((buf, cur)) = cell_edit {
                 let hint = if cell_edit.is_some() { autocomplete_hint } else { None };
-                spans.extend(cell_edit_spans(buf, cur, text_w, hint));
+                spans.extend(cell_edit_spans(buf, cur, text_w, hint, text_style, selected_style));
             } else {
                 let cell = pad_or_trunc(&display_val, text_w);
                 spans.push(Span::styled(cell, selected_style));
@@ -1743,7 +1748,7 @@ fn col_cells(
 
 /// Spans for a column cell in edit mode: scrolling window + cursor-highlighted char.
 /// `hint` is an optional dim autocomplete suffix shown after typed text.
-fn cell_edit_spans(buffer: &str, cursor: usize, width: usize, hint: Option<&str>) -> Vec<Span<'static>> {
+fn cell_edit_spans(buffer: &str, cursor: usize, width: usize, hint: Option<&str>, text_style: Style, cursor_style: Style) -> Vec<Span<'static>> {
     let chars: Vec<char> = buffer.chars().collect();
     let cur   = cursor.min(chars.len());
     // Scroll the window left so the cursor is always visible.
@@ -1753,9 +1758,9 @@ fn cell_edit_spans(buffer: &str, cursor: usize, width: usize, hint: Option<&str>
     let (left, hi, right) = cursor_split(&visible, cur_in_win);
     let buf_used = left.chars().count() + 1 + right.chars().count();
     let mut spans = vec![
-        Span::raw(left),
-        Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
-        Span::raw(right),
+        Span::styled(left,  text_style),
+        Span::styled(hi,    cursor_style),
+        Span::styled(right, text_style),
     ];
     if let Some(hint_str) = hint.filter(|s| !s.is_empty()) {
         let remaining = width.saturating_sub(buf_used);
@@ -1774,13 +1779,13 @@ fn cell_edit_spans(buffer: &str, cursor: usize, width: usize, hint: Option<&str>
 }
 
 /// Spans for a new-item input row: prefix + buffer text with cursor-highlighted char.
-fn input_row_spans(buffer: &str, cursor: usize) -> Vec<Span<'static>> {
+fn input_row_spans(buffer: &str, cursor: usize, text_style: Style, cursor_style: Style) -> Vec<Span<'static>> {
     let (left, hi, right) = cursor_split(buffer, cursor);
     vec![
-        Span::raw(ITEM_PREFIX),
-        Span::raw(left),
-        Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
-        Span::raw(right),
+        Span::styled(ITEM_PREFIX, text_style),
+        Span::styled(left,        text_style),
+        Span::styled(hi,          cursor_style),
+        Span::styled(right,       text_style),
     ]
 }
 
