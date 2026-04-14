@@ -4010,27 +4010,30 @@ impl App {
     }
 
     /// Confirm the search: move cursor to the next visible item (after the
-    /// current position, wrapping) whose text contains the query as a
-    /// case-insensitive substring, then close.
+    /// current position, wrapping) whose text matches the query as a
+    /// case-insensitive regular expression, then close.
     /// If the buffer is empty, repeats the last successful query.
     pub fn search_confirm(&mut self) {
-        let query = match &self.item_search {
-            Some((q, _)) if !q.trim().is_empty() => q.trim().to_lowercase(),
+        let pattern = match &self.item_search {
+            Some((q, _)) if !q.trim().is_empty() => q.trim().to_string(),
             _ => {
                 // Empty buffer — try the last query.
                 match self.last_search.clone() {
-                    Some(q) => {
-                        self.item_search = None;
-                        q
-                    }
-                    None => { self.item_search = None; return; }
+                    Some(q) => { self.item_search = None; q }
+                    None    => { self.item_search = None; return; }
                 }
             }
         };
-        if !query.is_empty() {
-            self.last_search = Some(query.clone());
-        }
         self.item_search = None;
+
+        // Compile case-insensitive regex; fall back to literal match on invalid pattern.
+        let re = regex::Regex::new(&format!("(?i){}", pattern))
+            .or_else(|_| regex::Regex::new(&format!("(?i){}", regex::escape(&pattern))))
+            .ok();
+        if re.is_none() { return; }
+        let re = re.unwrap();
+
+        self.last_search = Some(pattern);
 
         // Determine (start_sec, start_item) = position *after* the current cursor.
         let (start_sec, start_item) = match self.cursor {
@@ -4046,8 +4049,7 @@ impl App {
         };
 
         let n_secs = self.view.sections.len();
-        // Build a list of (s_idx, i_idx) pairs for all visible items, starting
-        // from start_sec/start_item and wrapping around.
+        // Build a list of (s_idx, i_idx) pairs for all visible items.
         let mut candidates: Vec<(usize, usize)> = Vec::new();
         for s_idx in 0..n_secs {
             let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
@@ -4068,7 +4070,7 @@ impl App {
             let (s_idx, i_idx) = candidates[(start_pos + offset) % len];
             let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
             let gi = vis[i_idx];
-            if self.items[gi].text.to_lowercase().contains(&query) {
+            if re.is_match(&self.items[gi].text) {
                 self.cursor = CursorPos::Item { section: s_idx, item: i_idx };
                 self.col_cursor = 0;
                 self.sub_row = 0;

@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use crate::app::{App, SortPicker, ViewMgrMode, ViewPropsField, section_item_indices};
 use crate::app::SortState;
@@ -155,13 +155,21 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Clear, dlg);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .style(app.theme.dialog_border)
         .title_top(Line::from(" View Properties ").alignment(Alignment::Center))
         .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
+    let content = Rect {
+        x:      inner.x + 1,
+        y:      inner.y,
+        width:  inner.width.saturating_sub(2),
+        height: inner.height,
+    };
 
     let rev = Style::default().add_modifier(Modifier::REVERSED);
-    let iw  = inner.width as usize;
+    let iw  = content.width as usize;
 
     // Layout constants
     let left_w   = 36usize;   // left column width (labels + values)
@@ -200,14 +208,16 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let is_secs_active = active_field == ViewPropsField::Sections;
 
     // Returns (text, highlight) for each right-column slot.
-    // slot 0 → "Sections:" header, slot 1+ → section names (with cursor highlight).
+    // slot 0 → blank, slot 1 → "Sections:" header, slot 2+ → section names.
     let right_slot = |slot: usize| -> (String, bool) {
         match slot {
-            0 => ("Sections:".chars().take(right_avail).collect(), false),
+            0 => (String::new(), false),
+            1 => ("Sections:".chars().take(right_avail).collect(), false),
             n => {
-                let idx = sec_scroll + n - 1;
+                let idx = sec_scroll + n - 2;
                 let text = if let Some(name) = sec_names.get(idx) {
-                    name.chars().take(right_avail).collect()
+                    let indented = format!("  {}", name);
+                    indented.chars().take(right_avail).collect()
                 } else {
                     String::new()
                 };
@@ -433,7 +443,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     // Row 16: blank
     rows.push(Line::from(""));
 
-    frame.render_widget(Paragraph::new(rows), inner);
+    frame.render_widget(Paragraph::new(rows), content);
 
     // ── Section sort picker popup ─────────────────────────────────────────────
     if let Some((target, cursor)) = sec_sort_picker {
