@@ -3371,6 +3371,9 @@ impl App {
         if s >= self.view.sections.len() { return; }
         let Some(gi) = self.global_item_idx(s, i) else { return; };
 
+        // Count visible items in the section before removal.
+        let count = section_item_indices(&self.items, &self.view, s, &self.categories).len();
+
         // Remove all category assignments that place this item in section s.
         let sec_cat_id = self.view.sections[s].cat_id;
         let mut parent_map = HashMap::new();
@@ -3389,8 +3392,11 @@ impl App {
             self.items.remove(gi);
         }
 
-        // Move cursor to the item above, or the section head if none remain.
-        self.cursor = if i > 0 {
+        // Prefer moving down to the next item (which slides into position i).
+        // Fall back to the item above if we just removed the last one.
+        self.cursor = if i + 1 < count {
+            CursorPos::Item { section: s, item: i }
+        } else if i > 0 {
             CursorPos::Item { section: s, item: i - 1 }
         } else {
             CursorPos::SectionHead(s)
