@@ -90,7 +90,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Span::raw(" "),  // blank indicator
                     Span::raw(" "),  // separator
                     Span::raw(left),
-                    Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
+                    Span::styled(hi, app.theme.item_selected),
                     Span::raw(right),
                 ]));
             }
@@ -124,7 +124,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                             Span::raw(kchar),
                             Span::raw(" "),
                             Span::raw(left),
-                            Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
+                            Span::styled(hi, app.theme.item_selected),
                             Span::raw(right),
                         ])
                     }
@@ -164,7 +164,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::raw(" "),  // blank indicator — new cats are Standard
                         Span::raw(" "),  // separator
                         Span::raw(left),
-                        Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
+                        Span::styled(hi, app.theme.item_selected),
                         Span::raw(right),
                     ]));
                 }
@@ -172,7 +172,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
     }
 
-    frame.render_widget(Paragraph::new(lines), body_inner);
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), body_inner);
 
     // ── Category Properties modal ─────────────────────────────────────────────
     render_cat_props_modal(frame, app, area);

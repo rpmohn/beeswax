@@ -57,7 +57,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Line::from(vec![
                         Span::raw(format!("{} ", marker)),
                         Span::raw(left),
-                        Span::styled(hi, Style::default().add_modifier(Modifier::REVERSED)),
+                        Span::styled(hi, app.theme.item_selected),
                         Span::raw(right),
                     ])
                 }
