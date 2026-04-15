@@ -543,8 +543,11 @@ fn wrap_lines_for_nav(text: &str, width: usize) -> (Vec<String>, Vec<usize>) {
         } else {
             end
         };
-        let line: String = chars[pos..break_at].iter().collect::<String>()
-            .trim_end_matches(' ').to_string();
+        let is_last = break_at == total;
+        let line: String = {
+            let s: String = chars[pos..break_at].iter().collect();
+            if is_last { s } else { s.trim_end_matches(' ').to_string() }
+        };
         lines.push(line);
         starts.push(line_start);
         pos = break_at;
@@ -2821,7 +2824,7 @@ impl App {
         }
         match std::mem::replace(&mut self.mode, Mode::Normal) {
             Mode::Create { buffer, .. } => {
-                let text = buffer.trim().to_string();
+                let text = buffer.clone();
                 if text.is_empty() { return; }
                 let id = self.alloc_id();
                 let (sec_idx, insert_after) = match &self.cursor {
@@ -2851,7 +2854,7 @@ impl App {
                 self.cursor = CursorPos::Item { section: sec_idx, item: new_local };
             }
             Mode::Edit { buffer, col, .. } => {
-                let text = buffer.trim().to_string();
+                let text = buffer.clone();
                 if col == 0 {
                     if text.is_empty() { return; }
                     match &self.cursor {
@@ -3116,7 +3119,7 @@ impl App {
             Mode::ItemProps { gi, edit_buf: Some((buf, _)), .. } => (*gi, buf.clone()),
             _ => return,
         };
-        let trimmed = buf.trim().to_string();
+        let trimmed = buf.clone();
         if !trimmed.is_empty() {
             if let Some(item) = self.items.get_mut(gi) {
                 item.text = trimmed;

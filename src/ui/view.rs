@@ -1726,8 +1726,10 @@ fn word_wrap_lines(text: &str, width: usize) -> (Vec<String>, Vec<usize>) {
             end
         };
         let line: String = chars[pos..break_at].iter().collect();
-        // Trim trailing spaces
-        let line = line.trim_end_matches(' ').to_string();
+        // Trim trailing spaces except on the last segment, where trailing spaces
+        // are intentionally typed by the user and must be preserved for cursor rendering.
+        let is_last = break_at == total;
+        let line = if is_last { line } else { line.trim_end_matches(' ').to_string() };
         lines.push(line);
         starts.push(line_start);
         pos = break_at;
