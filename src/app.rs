@@ -1080,6 +1080,189 @@ fn parse_year_str(s: &str) -> Option<i32> {
     Some(if s.len() <= 2 { if y < 70 { 2000 + y } else { 1900 + y } } else { y })
 }
 
+// ── Date arithmetic ───────────────────────────────────────────────────────────
+
+/// Add (or subtract, if negative) `n` days to a date.
+pub fn date_add_days(mut y: i32, mut m: u32, mut d: u32, n: i32) -> (i32, u32, u32) {
+    if n > 0 {
+        d += n as u32;
+        loop {
+            let dim = days_in_month(y, m);
+            if d <= dim { break; }
+            d -= dim;
+            m += 1;
+            if m > 12 { m = 1; y += 1; }
+        }
+    } else if n < 0 {
+        let mut rem = (-n) as u32;
+        while rem >= d {
+            rem -= d;
+            if m == 1 { m = 12; y -= 1; } else { m -= 1; }
+            d = days_in_month(y, m);
+        }
+        d -= rem;
+    }
+    (y, m, d)
+}
+
+/// Add (or subtract, if negative) `n` months, clamping the day if needed.
+fn date_add_months(y: i32, m: u32, d: u32, n: i32) -> (i32, u32, u32) {
+    let total  = y * 12 + (m as i32 - 1) + n;
+    let new_y  = total.div_euclid(12);
+    let new_m  = (total.rem_euclid(12) + 1) as u32;
+    let new_d  = d.min(days_in_month(new_y, new_m));
+    (new_y, new_m, new_d)
+}
+
+/// Day of week using Tomohiko Sakamoto's algorithm. Returns 0=Sun … 6=Sat.
+pub fn date_dow(y: i32, m: u32, d: u32) -> u32 {
+    static T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let y = if m < 3 { y - 1 } else { y };
+    ((y + y/4 - y/100 + y/400 + T[(m as usize) - 1] + d as i32).rem_euclid(7)) as u32
+}
+
+// ── Natural-language date parser ──────────────────────────────────────────────
+
+/// Per-language keyword table for natural-language date recognition.
+/// Swap in a different table to support other locales without changing any logic.
+pub struct NatLangTable {
+    pub today:        &'static [&'static str],
+    pub tomorrow:     &'static [&'static str],
+    pub yesterday:    &'static [&'static str],
+    /// Modifier meaning "the next occurrence after today".
+    pub next:         &'static [&'static str],
+    /// Modifier meaning "the most recent past occurrence".
+    pub last:         &'static [&'static str],
+    /// Weekday name lists, index 0 = Sunday … 6 = Saturday.
+    pub weekdays:     [&'static [&'static str]; 7],
+    pub day_units:    &'static [&'static str],
+    pub week_units:   &'static [&'static str],
+    pub month_units:  &'static [&'static str],
+    pub year_units:   &'static [&'static str],
+}
+
+pub const ENGLISH_TABLE: NatLangTable = NatLangTable {
+    today:        &["today", "now"],
+    tomorrow:     &["tomorrow", "tmrw"],
+    yesterday:    &["yesterday", "yday"],
+    next:         &["next"],
+    last:         &["last", "prev", "previous"],
+    weekdays: [
+        &["sunday",    "sun"],
+        &["monday",    "mon"],
+        &["tuesday",   "tue", "tues"],
+        &["wednesday", "wed"],
+        &["thursday",  "thu", "thur", "thurs"],
+        &["friday",    "fri"],
+        &["saturday",  "sat"],
+    ],
+    day_units:    &["day",   "days",   "d"],
+    week_units:   &["week",  "weeks",  "wk",  "wks"],
+    month_units:  &["month", "months", "mo",  "mos"],
+    year_units:   &["year",  "years",  "yr",  "yrs"],
+};
+
+fn nat_matches(s: &str, words: &[&str]) -> bool {
+    words.iter().any(|&w| w == s)
+}
+
+fn nat_weekday(s: &str, table: &NatLangTable) -> Option<u32> {
+    table.weekdays.iter().enumerate()
+        .find(|(_, names)| nat_matches(s, names))
+        .map(|(i, _)| i as u32)
+}
+
+fn nat_next_weekday(y: i32, m: u32, d: u32, target: u32, force_future: bool) -> (i32, u32, u32) {
+    let delta = (target as i32 - date_dow(y, m, d) as i32).rem_euclid(7) as i32;
+    // force_future ("next X"): skip the current week entirely if already on target day
+    let delta = if force_future && delta == 0 { 7 } else { delta };
+    date_add_days(y, m, d, delta)
+}
+
+fn nat_prev_weekday(y: i32, m: u32, d: u32, target: u32) -> (i32, u32, u32) {
+    let mut delta = (date_dow(y, m, d) as i32 - target as i32).rem_euclid(7) as i32;
+    if delta == 0 { delta = 7; }  // "last friday" from a Friday = the Friday before
+    date_add_days(y, m, d, -delta)
+}
+
+/// Attempt to interpret `s` as a natural-language date expression.
+/// Returns `None` if the string does not match any known pattern, allowing
+/// the caller to fall through to numeric parsing.
+pub fn parse_natural_date(
+    s: &str,
+    table: &NatLangTable,
+) -> Option<(i32, u32, u32, u32, u32, u32)> {
+    let sl = s.trim().to_ascii_lowercase();
+    let sl = sl.as_str();
+    let (ty, tm, td) = today();
+
+    // ── Single-keyword matches ────────────────────────────────────────────────
+    if nat_matches(sl, table.today) {
+        return Some((ty, tm, td, 0, 0, 0));
+    }
+    if nat_matches(sl, table.tomorrow) {
+        let (y, m, d) = date_add_days(ty, tm, td, 1);
+        return Some((y, m, d, 0, 0, 0));
+    }
+    if nat_matches(sl, table.yesterday) {
+        let (y, m, d) = date_add_days(ty, tm, td, -1);
+        return Some((y, m, d, 0, 0, 0));
+    }
+    // Plain weekday name → next occurrence, including today
+    if let Some(dow) = nat_weekday(sl, table) {
+        let (y, m, d) = nat_next_weekday(ty, tm, td, dow, false);
+        return Some((y, m, d, 0, 0, 0));
+    }
+
+    // ── Two-token patterns ────────────────────────────────────────────────────
+    let tokens: Vec<&str> = sl.splitn(3, ' ')
+        .map(str::trim).filter(|t| !t.is_empty()).collect();
+
+    if tokens.len() >= 2 {
+        // "next <weekday>"
+        if nat_matches(tokens[0], table.next) {
+            if let Some(dow) = nat_weekday(tokens[1], table) {
+                let (y, m, d) = nat_next_weekday(ty, tm, td, dow, true);
+                return Some((y, m, d, 0, 0, 0));
+            }
+        }
+        // "last <weekday>" / "prev <weekday>"
+        if nat_matches(tokens[0], table.last) {
+            if let Some(dow) = nat_weekday(tokens[1], table) {
+                let (y, m, d) = nat_prev_weekday(ty, tm, td, dow);
+                return Some((y, m, d, 0, 0, 0));
+            }
+        }
+        // "<N> <unit>"  — N may be negative for "in the past"
+        // Also accept "a"/"an" as 1.
+        let n: Option<i32> = match tokens[0] {
+            "a" | "an" => Some(1),
+            t          => t.parse::<i32>().ok(),
+        };
+        if let Some(n) = n {
+            let unit = tokens[1];
+            if nat_matches(unit, table.day_units) {
+                let (y, m, d) = date_add_days(ty, tm, td, n);
+                return Some((y, m, d, 0, 0, 0));
+            }
+            if nat_matches(unit, table.week_units) {
+                let (y, m, d) = date_add_days(ty, tm, td, n * 7);
+                return Some((y, m, d, 0, 0, 0));
+            }
+            if nat_matches(unit, table.month_units) {
+                let (y, m, d) = date_add_months(ty, tm, td, n);
+                return Some((y, m, d, 0, 0, 0));
+            }
+            if nat_matches(unit, table.year_units) {
+                let (y, m, d) = date_add_months(ty, tm, td, n * 12);
+                return Some((y, m, d, 0, 0, 0));
+            }
+        }
+    }
+
+    None
+}
+
 /// Parse a date string that uses `/`, `.`, or `-` as a separator.
 /// Uses `fmt_code` to determine MM/DD vs DD/MM field order.
 fn parse_date_fields(s: &str, fmt_code: DateFmtCode, default_year: i32) -> Option<(i32, u32, u32)> {
@@ -1115,6 +1298,8 @@ pub fn parse_date_input(s: &str, fmt_code: DateFmtCode) -> Option<(i32, u32, u32
     if s.is_empty() { return None; }
     // Full ISO datetime/date takes priority
     if let Some(r) = parse_datetime(s) { return Some(r); }
+    // Natural-language expressions ("tomorrow", "next friday", "2 weeks", …)
+    if let Some(r) = parse_natural_date(s, &ENGLISH_TABLE) { return Some(r); }
     let (today_y, today_m, today_d) = today();
     // Split on first space → potential "date time" pair
     let (date_part, time_part) = match s.find(' ') {
@@ -1174,11 +1359,8 @@ pub fn format_date_value(stored: &str, fmt: &DateFmt) -> String {
         DateDisplay::DateTime => format!("{} {}", date_str, time_str),
     };
     if fmt.show_dow && !matches!(fmt.display, DateDisplay::Time) {
-        // Tomohiko Sakamoto: 0=Sun,1=Mon,...,6=Sat
         static DOW: [&str; 7] = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-        let t = [0i32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
-        let y = if month < 3 { year - 1 } else { year } as i32;
-        let dow = ((y + y/4 - y/100 + y/400 + t[(month as usize)-1] + day as i32) % 7) as usize;
+        let dow = date_dow(year, month, day) as usize;
         format!("{} {}", DOW[dow], body)
     } else {
         body
