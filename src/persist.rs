@@ -258,13 +258,6 @@ pub fn probe(path: &Path) -> io::Result<LoadResult> {
     }
 }
 
-pub fn load_plain(path: &Path) -> io::Result<SaveData> {
-    match probe(path)? {
-        LoadResult::Plain(d) => Ok(d),
-        LoadResult::NeedsPassword => Err(io::Error::new(io::ErrorKind::InvalidData, "file is encrypted")),
-    }
-}
-
 pub fn load_encrypted(path: &Path, password: &str) -> Result<SaveData, LoadError> {
     let bytes = std::fs::read(path).map_err(LoadError::Io)?;
     let (flag, version, rest) = parse_header(&bytes).ok_or(LoadError::Corrupt)?;

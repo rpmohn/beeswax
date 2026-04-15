@@ -1,7 +1,6 @@
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
-    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
@@ -179,10 +178,6 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let right_x  = left_w;   // right column starts here
 
     let yn = |v: bool| if v { "Yes" } else { "No" };
-    let pad_to = |s: &str, w: usize| -> String {
-        let n = s.chars().count();
-        if n >= w { s.chars().take(w).collect() } else { format!("{}{}", s, " ".repeat(w - n)) }
-    };
 
     // Helper: build a Yes/No field line with separate label and value spans.
     let bool_line = |label: &str, val: bool, field: ViewPropsField, right: &str| -> Line<'static> {

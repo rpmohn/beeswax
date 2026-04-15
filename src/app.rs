@@ -65,7 +65,7 @@ pub enum CursorPos {
 
 pub enum Mode {
     Normal,
-    Edit   { original: String, buffer: String, cursor: usize, col: usize },
+    Edit   { buffer: String, cursor: usize, col: usize },
     Create { buffer: String, cursor: usize },
     /// "Remove this item from the section?" confirmation dialog.
     ConfirmDeleteItem { yes: bool },
@@ -109,7 +109,6 @@ pub enum CatMode {
         /// Snapshotted at open time for read-only display.
         parent_name:      String,
         kind:             CategoryKind,
-        has_note:         bool,
         cat_id:           usize,
     },
 }
@@ -2670,27 +2669,17 @@ impl App {
 
     // ── View mode transitions ─────────────────────────────────────────────────
 
-    pub fn begin_create(&mut self, first_char: char) {
-        if !matches!(self.mode, Mode::Normal) { return; }
-        self.mode = Mode::Create { buffer: first_char.to_string(), cursor: 1 };
-    }
-
     /// Typing a printable character in Normal mode:
     /// - On a non-main column item cell → begin editing that cell with `ch` as the first character.
     /// - Otherwise → begin creating a new item (existing behaviour).
     pub fn begin_char_input(&mut self, ch: char) {
         if !matches!(self.mode, Mode::Normal) { return; }
         if self.col_cursor > 0 {
-            if let CursorPos::Item { section, item } = &self.cursor {
+            if let CursorPos::Item { .. } = &self.cursor {
                 let col     = self.col_cursor;
                 let col_idx = col - 1;
                 if col_idx < self.view.columns.len() {
-                    let cat_id   = self.view.columns[col_idx].cat_id;
-                    let gi       = self.global_item_idx(*section, *item).unwrap_or(usize::MAX);
-                    let original = self.items.get(gi)
-                        .and_then(|it| it.values.get(&cat_id)).cloned().unwrap_or_default();
                     self.mode = Mode::Edit {
-                        original,
                         buffer: ch.to_string(),
                         cursor: 1,
                         col,
@@ -2762,7 +2751,7 @@ impl App {
             }
         };
         if !can_edit { return; }
-        self.mode = Mode::Edit { original: original.clone(), buffer: original, cursor: 0, col };
+        self.mode = Mode::Edit { buffer: original, cursor: 0, col };
     }
 
     // ── View input ────────────────────────────────────────────────────────────
@@ -5268,7 +5257,6 @@ impl App {
                 None => return,
             }
         };
-        let has_note    = !cat_note_for_id(&self.categories, cat_id).is_empty();
         let parent_name = find_cat_parent_name(&self.categories, cat_id, None)
             .unwrap_or_else(|| "(top level)".to_string());
         let name_cur         = name.chars().count();
@@ -5282,7 +5270,7 @@ impl App {
             note_file_buf: note_file, note_file_cur,
             excl_children, match_cat_name, match_short_name,
             active_field: CatPropsField::Name,
-            parent_name, kind, has_note, cat_id,
+            parent_name, kind, cat_id,
         };
     }
 
@@ -5377,24 +5365,6 @@ impl App {
         };
         if *cur == 0 { return; }
         *cur -= 1;
-        let byte = char_to_byte(buf, *cur);
-        buf.remove(byte);
-    }
-
-    pub fn cat_props_delete(&mut self) {
-        let CatMode::Props {
-            active_field, name_buf, name_cur, short_name_buf, short_name_cur,
-            also_match_buf, also_match_cur, note_file_buf, note_file_cur, ..
-        } = &mut self.cat_state.mode else { return };
-        let (buf, cur) = match active_field {
-            CatPropsField::Name      => (name_buf,       name_cur),
-            CatPropsField::ShortName => (short_name_buf, short_name_cur),
-            CatPropsField::AlsoMatch => (also_match_buf, also_match_cur),
-            CatPropsField::NoteFile  => (note_file_buf,  note_file_cur),
-            _ => return,
-        };
-        let len = buf.chars().count();
-        if *cur >= len { return; }
         let byte = char_to_byte(buf, *cur);
         buf.remove(byte);
     }

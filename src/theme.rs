@@ -74,19 +74,6 @@ impl ColorScheme {
         }
     }
 
-    pub fn name(self) -> &'static str {
-        match self {
-            ColorScheme::Default      => "Default",
-            ColorScheme::AgendaColor  => "AgendaColor",
-            ColorScheme::AgendaMono   => "AgendaMono",
-            ColorScheme::SolarizedDark  => "SolarizedDark",
-            ColorScheme::SolarizedLight => "SolarizedLight",
-            ColorScheme::GruvboxDark  => "GruvboxDark",
-            ColorScheme::GruvboxLight => "GruvboxLight",
-            ColorScheme::Dracula      => "Dracula",
-            ColorScheme::Custom       => "Custom",
-        }
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,10 +85,6 @@ pub struct Theme {
     pub bar:              Style,
     /// Selected item within a bar (appears un-highlighted against the bar).
     pub bar_cursor:       Style,
-    /// Body area background — fills empty space and sets default text color.
-    pub body:             Style,
-    /// Normal (unselected) item text.
-    pub item:             Style,
     /// Highlighted (selected) field / edit cursor within the selected row.
     pub item_selected_field: Style,
     /// Background highlight for the entire selected item row (toned-down).
@@ -201,9 +184,6 @@ impl Theme {
             apply(Style::default(), barcur_fg, barcur_bg)
         } else { def.bar_cursor };
 
-        let body = apply(Style::default(), body_fg, body_bg);
-        let item = apply(Style::default(), body_fg, body_bg);
-
         let item_selected_field = if sel_fg.is_some() || sel_bg.is_some() {
             apply(Style::default(), sel_fg, sel_bg)
         } else { def.item_selected_field };
@@ -234,7 +214,7 @@ impl Theme {
         let view_sec_head = apply(Style::default(), vsech_fg, None);
         let view_head_bg  = apply(Style::default(), None, vhbg_bg);
 
-        Theme { bar, bar_cursor, body, item, item_selected_field, item_selected_line,
+        Theme { bar, bar_cursor, item_selected_field, item_selected_line,
                 section, cursor, dialog, dialog_border, dialog_label, dialog_label_sel, dim,
                 view_bg, view_item, view_col, view_col_head, view_sec_head, view_head_bg }
     }
@@ -245,8 +225,6 @@ impl Theme {
         Theme {
             bar:                  rev,
             bar_cursor:           Style::default().remove_modifier(Modifier::REVERSED),
-            body:                 Style::default(),
-            item:                 Style::default(),
             item_selected_field:  rev,
             item_selected_line:   rev,
             section:              bold,
@@ -275,8 +253,6 @@ impl Theme {
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
             bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
-            body:                 Style::default().fg(body_fg).bg(body_bg),
-            item:                 Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_COLOR_LINE_BG),
             section:          Style::default().fg(Color::Blue).bg(body_bg).add_modifier(Modifier::BOLD),
@@ -303,8 +279,6 @@ impl Theme {
         Theme {
             bar:                  Style::default().fg(sel_fg).bg(sel_bg),
             bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
-            body:                 Style::default().fg(body_fg).bg(body_bg),
-            item:                 Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_MONO_LINE_BG),
             section:          Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::BOLD),
@@ -336,8 +310,6 @@ impl Theme {
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
             bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
-            body:                 Style::default().fg(body_fg).bg(body_bg),
-            item:                 Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE02),
             section:              Style::default().fg(S_CYAN).bg(body_bg).add_modifier(Modifier::BOLD),
@@ -369,8 +341,6 @@ impl Theme {
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
             bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
-            body:                 Style::default().fg(body_fg).bg(body_bg),
-            item:                 Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE2),
             section:              Style::default().fg(S_BLUE).bg(body_bg).add_modifier(Modifier::BOLD),
@@ -394,8 +364,6 @@ impl Theme {
         Theme {
             bar:                  Style::default().fg(G_FG4).bg(G_BG1),
             bar_cursor:           Style::default().fg(G_FG).bg(G_BG),
-            body:                 Style::default().fg(G_FG).bg(G_BG),
-            item:                 Style::default().fg(G_FG).bg(G_BG),
             item_selected_field:  Style::default().fg(G_BG).bg(G_YELLOW),
             item_selected_line:   Style::default().fg(G_BG).bg(G_BG2),
             section:          Style::default().fg(G_BLUE_D).bg(G_BG).add_modifier(Modifier::BOLD),
@@ -419,8 +387,6 @@ impl Theme {
         Theme {
             bar:                  Style::default().fg(G_BG4_L).bg(G_BG2_L),
             bar_cursor:           Style::default().fg(G_FG_L).bg(G_BG_L),
-            body:                 Style::default().fg(G_FG_L).bg(G_BG_L),
-            item:                 Style::default().fg(G_FG_L).bg(G_BG_L),
             item_selected_field:  Style::default().fg(G_BG_L).bg(G_YELLOW),
             item_selected_line:   Style::default().fg(G_BG_L).bg(G_BG2_L),
             section:          Style::default().fg(G_BLUE_L).bg(G_BG_L).add_modifier(Modifier::BOLD),
@@ -444,8 +410,6 @@ impl Theme {
         Theme {
             bar:                  Style::default().fg(D_FG).bg(D_CUR),
             bar_cursor:           Style::default().fg(D_FG).bg(D_BG),
-            body:                 Style::default().fg(D_FG).bg(D_BG),
-            item:                 Style::default().fg(D_FG).bg(D_BG),
             item_selected_field:  Style::default().fg(D_BG).bg(D_PURPLE),
             item_selected_line:   Style::default().fg(D_BG).bg(D_CUR),
             section:          Style::default().fg(D_CYAN).bg(D_BG).add_modifier(Modifier::BOLD),
