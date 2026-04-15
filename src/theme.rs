@@ -114,6 +114,10 @@ pub struct Theme {
     pub dialog:           Style,
     /// Modal dialog border/frame.
     pub dialog_border:    Style,
+    /// Field label text in dialogs (unselected).
+    pub dialog_label:     Style,
+    /// Field label text in dialogs when that field is selected.
+    pub dialog_label_sel: Style,
     /// Dimmed hint / autocomplete text.
     pub dim:              Style,
 
@@ -169,10 +173,12 @@ impl Theme {
         let sline_bg  = color(&c.selected_line_bg, None);
         let sec_fg    = color(&c.section_fg,  None);
 
-        let dlg_fg    = color(&c.dialog_fg,         body_fg);
-        let dlg_bg    = color(&c.dialog_bg,         body_bg);
-        let dlgbrd_fg = color(&c.dialog_border_fg,  None);
-        let dlgbrd_bg = color(&c.dialog_border_bg,  None);
+        let dlg_fg      = color(&c.dialog_fg,           body_fg);
+        let dlg_bg      = color(&c.dialog_bg,           body_bg);
+        let dlgbrd_fg   = color(&c.dialog_border_fg,    None);
+        let dlgbrd_bg   = color(&c.dialog_border_bg,    None);
+        let dlglbl_fg   = color(&c.dialog_label_fg,     dlg_fg);
+        let dlglblsel_fg = color(&c.dialog_label_sel_fg, sel_fg);
         let vbg_bg    = color(&c.view_bg,            body_bg);
         let vitem_fg  = color(&c.view_item,          body_fg);
         let vcol_fg   = color(&c.view_col,           body_fg);
@@ -216,7 +222,9 @@ impl Theme {
         } else { def.cursor };
 
         let dialog = apply(Style::default(), dlg_fg, dlg_bg);
-        let dialog_border = apply(Style::default(), dlgbrd_fg.or(dlg_fg), dlgbrd_bg.or(dlg_bg));
+        let dialog_border    = apply(Style::default(), dlgbrd_fg.or(dlg_fg), dlgbrd_bg.or(dlg_bg));
+        let dialog_label     = apply(Style::default(), dlglbl_fg, None);
+        let dialog_label_sel = apply(Style::default(), dlglblsel_fg, None);
         let dim = apply(Style::default(), body_fg, body_bg).add_modifier(Modifier::DIM);
 
         let view_bg       = apply(Style::default(), body_fg, vbg_bg);
@@ -227,7 +235,7 @@ impl Theme {
         let view_head_bg  = apply(Style::default(), None, vhbg_bg);
 
         Theme { bar, bar_cursor, body, item, item_selected_field, item_selected_line,
-                section, cursor, dialog, dialog_border, dim,
+                section, cursor, dialog, dialog_border, dialog_label, dialog_label_sel, dim,
                 view_bg, view_item, view_col, view_col_head, view_sec_head, view_head_bg }
     }
 
@@ -245,6 +253,8 @@ impl Theme {
             cursor:           rev,
             dialog:           Style::default(),
             dialog_border:    Style::default(),
+            dialog_label:     Style::default().add_modifier(Modifier::DIM),
+            dialog_label_sel: bold,
             dim:              Style::default().add_modifier(Modifier::DIM),
             view_bg:          Style::default(),
             view_item:        Style::default(),
@@ -273,6 +283,8 @@ impl Theme {
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(Color::Blue).bg(body_bg),
+            dialog_label:     Style::default().fg(Color::Blue),
+            dialog_label_sel: Style::default().fg(Color::Red),
             dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(body_fg).bg(body_bg),
             view_item:        Style::default().fg(body_fg),
@@ -299,6 +311,8 @@ impl Theme {
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(body_fg).bg(body_bg),
+            dialog_label:     Style::default().fg(body_fg).add_modifier(Modifier::DIM),
+            dialog_label_sel: Style::default().fg(body_fg).add_modifier(Modifier::BOLD),
             dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(body_fg).bg(body_bg),
             view_item:        Style::default().fg(body_fg),
@@ -330,6 +344,8 @@ impl Theme {
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
+            dialog_label:     Style::default().fg(S_BASE01),
+            dialog_label_sel: Style::default().fg(S_CYAN),
             dim:              Style::default().fg(S_BASE01).bg(body_bg).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(body_fg).bg(body_bg),
             view_item:        Style::default().fg(body_fg),
@@ -361,6 +377,8 @@ impl Theme {
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
+            dialog_label:     Style::default().fg(S_BASE1),
+            dialog_label_sel: Style::default().fg(S_BLUE),
             dim:              Style::default().fg(S_BASE1).bg(body_bg).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(body_fg).bg(body_bg),
             view_item:        Style::default().fg(body_fg),
@@ -384,6 +402,8 @@ impl Theme {
             cursor:           Style::default().fg(G_BG).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG).bg(G_BG),
             dialog_border:    Style::default().fg(G_BG2).bg(G_BG),
+            dialog_label:     Style::default().fg(G_FG4),
+            dialog_label_sel: Style::default().fg(G_YELLOW),
             dim:              Style::default().fg(G_GRAY).bg(G_BG).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(G_FG).bg(G_BG),
             view_item:        Style::default().fg(G_FG),
@@ -407,6 +427,8 @@ impl Theme {
             cursor:           Style::default().fg(G_BG_L).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG_L).bg(G_BG_L),
             dialog_border:    Style::default().fg(G_BG2_L).bg(G_BG_L),
+            dialog_label:     Style::default().fg(G_FG4_L),
+            dialog_label_sel: Style::default().fg(G_BLUE_L),
             dim:              Style::default().fg(G_FG4_L).bg(G_BG_L).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(G_FG_L).bg(G_BG_L),
             view_item:        Style::default().fg(G_FG_L),
@@ -430,6 +452,8 @@ impl Theme {
             cursor:           Style::default().fg(D_BG).bg(D_PURPLE),
             dialog:           Style::default().fg(D_FG).bg(D_BG),
             dialog_border:    Style::default().fg(D_COMMENT).bg(D_BG),
+            dialog_label:     Style::default().fg(D_COMMENT),
+            dialog_label_sel: Style::default().fg(D_PURPLE),
             dim:              Style::default().fg(D_COMMENT).bg(D_BG).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(D_FG).bg(D_BG),
             view_item:        Style::default().fg(D_FG),

@@ -166,7 +166,9 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         height: inner.height,
     };
 
-    let rev = app.theme.item_selected_field;
+    let rev       = app.theme.item_selected_field;
+    let dlabel    = app.theme.dialog_label;
+    let dlabel_sel = app.theme.dialog_label_sel;
     let iw  = content.width as usize;
 
     // Layout constants
@@ -179,25 +181,27 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         if n >= w { s.chars().take(w).collect() } else { format!("{}{}", s, " ".repeat(w - n)) }
     };
 
-    // Helper: build a Yes/No field line.
-    // left_part: the padded left text, right_part: optional right column text.
+    // Helper: build a Yes/No field line with separate label and value spans.
     let bool_line = |label: &str, val: bool, field: ViewPropsField, right: &str| -> Line<'static> {
         let val_str = yn(val);
-        if active_field == field {
-            let left_str = label.to_string();
-            let used = label.chars().count() + val_str.chars().count();
-            let pad = left_w.saturating_sub(used);
-            let mut spans: Vec<Span<'static>> = vec![
-                Span::raw(left_str.to_string()),
-                Span::styled(format!("{}{}", val_str, " ".repeat(pad)), rev),
-            ];
-            if !right.is_empty() {
-                spans.push(Span::raw(right.to_string()));
-            }
-            Line::from(spans)
+        let val_w   = left_w.saturating_sub(label.chars().count());
+        let is_active = active_field == field;
+        let lbl_style = if is_active { dlabel_sel } else { dlabel };
+        let mut spans: Vec<Span<'static>> = if is_active {
+            vec![
+                Span::styled(label.to_string(), lbl_style),
+                Span::styled(format!("{:<w$}", val_str, w = val_w), rev),
+            ]
         } else {
-            Line::from(format!("{}{:<w$}{}", label, val_str, right, w = left_w.saturating_sub(label.chars().count())))
+            vec![
+                Span::styled(label.to_string(), lbl_style),
+                Span::raw(format!("{:<w$}", val_str, w = val_w)),
+            ]
+        };
+        if !right.is_empty() {
+            spans.push(Span::raw(right.to_string()));
         }
+        Line::from(spans)
     };
 
     // Sections list on right side (visible starting from sec_scroll).
@@ -270,7 +274,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             };
             let pad = name_field_w.saturating_sub(lp.chars().count() + 1 + rp.chars().count());
             rows.push(Line::from(vec![
-                Span::raw(label.to_string()),
+                Span::styled(label.to_string(), dlabel_sel),
                 Span::styled(lp, rev),
                 Span::styled(hi, rev),
                 Span::styled(rp, rev),
@@ -279,87 +283,48 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             ]));
         } else {
             let displayed: String = name_buf.chars().take(name_field_w).collect();
-            let left_str = pad_to(&format!("{}{}", label, displayed), left_w);
-            rows.push(Line::from(format!("{}{}", left_str, right_padded)));
+            let val_w = left_w.saturating_sub(label.chars().count());
+            rows.push(Line::from(vec![
+                Span::styled(label.to_string(), dlabel),
+                Span::raw(format!("{:<w$}", displayed, w = val_w)),
+                Span::raw(right_padded),
+            ]));
         }
     }
+
+    // Helper: build a single sorting-field line with separate label/value spans.
+    let sort_line = |label: &'static str, val: &str, field: ViewPropsField, slot: usize| -> Line<'static> {
+        let val_w = left_w.saturating_sub(label.chars().count());
+        let (right_text, right_hi) = right_slot(slot);
+        let right_span = if right_hi {
+            Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
+        } else {
+            Span::raw(right_text)
+        };
+        if active_field == field {
+            Line::from(vec![
+                Span::styled(label, dlabel_sel),
+                Span::styled(format!("{:<w$}", val, w = val_w), rev),
+                right_span,
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled(label, dlabel),
+                Span::raw(format!("{:<w$}", val, w = val_w)),
+                right_span,
+            ])
+        }
+    };
 
     // Row 2: Item sorting | sec[0]
-    {
-        let label = "Item sorting:      ";
-        let val   = "...";
-        let left_str = if active_field == ViewPropsField::ItemSorting {
-            let full = format!("{}{}", label, val);
-            let padded = pad_to(&full, left_w);
-            let (right_text, hi) = right_slot(1);
-            let right_span = if hi {
-                Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
-            } else {
-                Span::raw(right_text)
-            };
-            rows.push(Line::from(vec![
-                Span::styled(padded, rev),
-                right_span,
-            ]));
-            String::new()
-        } else {
-            pad_to(&format!("{}{}", label, val), left_w)
-        };
-        if !left_str.is_empty() {
-            rows.push(row_with_right(left_str, 1));
-        }
-    }
+    rows.push(sort_line("Item sorting:      ", "...", ViewPropsField::ItemSorting, 1));
 
     // Row 3: Section sorting | sec[1]
-    {
-        let label = "Section sorting:   ";
-        let val   = sec_sort_method.label();
-        let left_str = if active_field == ViewPropsField::SectionSorting {
-            let full = format!("{}{}", label, val);
-            let padded = pad_to(&full, left_w);
-            let (right_text, hi) = right_slot(2);
-            let right_span = if hi {
-                Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
-            } else {
-                Span::raw(right_text)
-            };
-            rows.push(Line::from(vec![
-                Span::styled(padded, rev),
-                right_span,
-            ]));
-            String::new()
-        } else {
-            pad_to(&format!("{}{}", label, val), left_w)
-        };
-        if !left_str.is_empty() {
-            rows.push(row_with_right(left_str, 2));
-        }
-    }
+    rows.push(sort_line("Section sorting:   ", sec_sort_method.label(), ViewPropsField::SectionSorting, 2));
 
     // Row 4: "  Order:" if section sort != None, else blank | sec[2]
     if sec_sort_method != crate::model::SectionSortMethod::None {
-        let label = "  Order:           ";
-        let val   = sec_sort_order.label();
-        let left_str = if active_field == ViewPropsField::SectionSortOrder {
-            let full = format!("{}{}", label, val);
-            let padded = pad_to(&full, left_w);
-            let (right_text, hi) = right_slot(3);
-            let right_span = if hi {
-                Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
-            } else {
-                Span::raw(right_text)
-            };
-            rows.push(Line::from(vec![
-                Span::styled(padded, rev),
-                right_span,
-            ]));
-            String::new()
-        } else {
-            pad_to(&format!("{}{}", label, val), left_w)
-        };
-        if !left_str.is_empty() {
-            rows.push(row_with_right(left_str, 3));
-        }
+        rows.push(sort_line("  Order:           ", sec_sort_order.label(), ViewPropsField::SectionSortOrder, 3));
     } else {
         rows.push(row_with_right(format!("{:<w$}", "", w = left_w), 3));
     }
@@ -384,23 +349,23 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         };
         if active_field == *field {
             let val_str = yn(*val);
-            let used = label.chars().count() + val_str.chars().count();
-            let pad = left_w.saturating_sub(used);
+            let val_w   = left_w.saturating_sub(label.chars().count());
             let right_span = if right_hi {
                 Span::styled(format!("{:<w$}", right_str, w = right_avail), rev)
             } else {
                 Span::raw(right_str)
             };
             rows.push(Line::from(vec![
-                Span::raw(label.to_string()),
-                Span::styled(format!("{}{}", val_str, " ".repeat(pad)), rev),
+                Span::styled(label.to_string(), dlabel_sel),
+                Span::styled(format!("{:<w$}", val_str, w = val_w), rev),
                 right_span,
             ]));
         } else if right_hi {
             let val_str = yn(*val);
-            let left_full = format!("{}{:<w$}", label, val_str, w = left_w.saturating_sub(label.chars().count()));
+            let val_w   = left_w.saturating_sub(label.chars().count());
             rows.push(Line::from(vec![
-                Span::raw(left_full),
+                Span::styled(label.to_string(), dlabel),
+                Span::raw(format!("{:<w$}", val_str, w = val_w)),
                 Span::styled(format!("{:<w$}", right_str, w = right_avail), rev),
             ]));
         } else {
@@ -415,11 +380,17 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     {
         let label = "View statistics:   ";
         let val   = format!("{} items", item_count);
-        let left_str = pad_to(&format!("{}{}", label, val), left_w);
+        let val_w = left_w.saturating_sub(label.chars().count());
         if active_field == ViewPropsField::ViewStatistics {
-            rows.push(Line::from(Span::styled(left_str, rev)));
+            rows.push(Line::from(vec![
+                Span::styled(label, dlabel_sel),
+                Span::styled(format!("{:<w$}", val, w = val_w), rev),
+            ]));
         } else {
-            rows.push(Line::from(left_str));
+            rows.push(Line::from(vec![
+                Span::styled(label, dlabel),
+                Span::raw(format!("{:<w$}", val, w = val_w)),
+            ]));
         }
     }
 
@@ -430,18 +401,24 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     {
         let label = "View protection:   ";
         let val   = "Global (No protection)";
-        let left_str = pad_to(&format!("{}{}", label, val), left_w);
+        let val_w = left_w.saturating_sub(label.chars().count());
         if active_field == ViewPropsField::ViewProtection {
-            rows.push(Line::from(Span::styled(left_str, rev)));
+            rows.push(Line::from(vec![
+                Span::styled(label, dlabel_sel),
+                Span::styled(format!("{:<w$}", val, w = val_w), rev),
+            ]));
         } else {
-            rows.push(Line::from(left_str));
+            rows.push(Line::from(vec![
+                Span::styled(label, dlabel),
+                Span::raw(format!("{:<w$}", val, w = val_w)),
+            ]));
         }
     }
 
     // Row 16: blank
     rows.push(Line::from(""));
 
-    frame.render_widget(Paragraph::new(rows), content);
+    frame.render_widget(Paragraph::new(rows).style(app.theme.dialog), content);
 
     // ── Section sort picker popup ─────────────────────────────────────────────
     if let Some((target, cursor)) = sec_sort_picker {

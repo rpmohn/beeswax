@@ -54,6 +54,8 @@ nav_mode = "Agenda"
 # dialog_bg           = "#073642"
 # dialog_border_fg    = "#268bd2"
 # dialog_border_bg    = "#073642"
+# dialog_label_fg     = "#586e75"   # unselected field label foreground
+# dialog_label_sel_fg = "#2aa198"   # selected field label foreground
 #
 # # View body
 # view_bg             = "#002b36"   # view body background

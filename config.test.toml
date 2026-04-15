@@ -18,6 +18,8 @@
 #   dialog_bg           = #003344  dark TEAL
 #   dialog_border_fg    = #ff69b4  HOT PINK
 #   dialog_border_bg    = #1a0066  dark INDIGO
+#   dialog_label_fg     = #c0c000  dark YELLOW
+#   dialog_label_sel_fg = #ffffff  WHITE
 #   view_bg             = #0a001a  dark VIOLET
 #   view_item           = #ffd700  bright GOLD
 #   view_col            = #40e0d0  TURQUOISE
@@ -44,6 +46,8 @@ dialog_fg           = "#aaff00"   # bright LIME       — dialog body text
 dialog_bg           = "#003344"   # dark TEAL         — dialog body background
 dialog_border_fg    = "#ff69b4"   # HOT PINK          — dialog border characters and title
 dialog_border_bg    = "#1a0066"   # dark INDIGO       — dialog border background
+dialog_label_fg     = "#c0c000"   # dark YELLOW       — unselected field label
+dialog_label_sel_fg = "#ffffff"   # WHITE             — selected field label
 view_bg             = "#0a001a"   # dark VIOLET       — view body background
 view_item           = "#ffd700"   # bright GOLD       — item text foreground
 view_col            = "#40e0d0"   # TURQUOISE         — column value foreground

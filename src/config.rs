@@ -52,6 +52,10 @@ pub struct CustomTheme {
     /// Dialog border foreground and background.
     #[serde(default)] pub dialog_border_fg:    Option<String>,
     #[serde(default)] pub dialog_border_bg:    Option<String>,
+    /// Field label foreground in dialogs (unselected).
+    #[serde(default)] pub dialog_label_fg:     Option<String>,
+    /// Field label foreground in dialogs when that field is selected.
+    #[serde(default)] pub dialog_label_sel_fg: Option<String>,
 
     // ── View body ────────────────────────────────────────────────────────────────
     /// View body background color.
