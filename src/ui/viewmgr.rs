@@ -89,7 +89,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let modal_rect = centered_rect(48, 7, area);
         frame.render_widget(Clear, modal_rect);
-        let del_block = Block::default().borders(Borders::ALL).title(" Delete View? ");
+        let del_block = Block::default().borders(Borders::ALL)
+            .title(" Delete View? ").style(app.theme.dialog_border);
         frame.render_widget(del_block.clone(), modal_rect);
         let del_inner = del_block.inner(modal_rect);
 
@@ -113,7 +114,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             ]),
             Line::from(""),
         ];
-        frame.render_widget(Paragraph::new(del_rows), del_inner);
+        frame.render_widget(Paragraph::new(del_rows).style(app.theme.dialog), del_inner);
     }
 }
 
@@ -438,7 +439,8 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(Clear, pick_rect);
         let pick_block = Block::default()
             .borders(Borders::ALL)
-            .title_top(Line::from(title).alignment(Alignment::Center));
+            .title_top(Line::from(title).alignment(Alignment::Center))
+            .style(app.theme.dialog_border);
         frame.render_widget(pick_block.clone(), pick_rect);
         let pick_inner = pick_block.inner(pick_rect);
         let mut pick_lines: Vec<Line<'static>> = vec![Line::from("")];
@@ -452,7 +454,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
                 pick_lines.push(Line::from(format!(" {}", label)));
             }
         }
-        frame.render_widget(Paragraph::new(pick_lines), pick_inner);
+        frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pick_inner);
     }
 
     // ── Sort dialog overlay (when F3 opens Item Sorting sub-dialog) ───────────

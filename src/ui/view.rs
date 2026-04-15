@@ -562,7 +562,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Clear, modal_rect);
 
         let title = if is_add { " Column Add " } else { " Column Properties " };
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default().borders(Borders::ALL)
+            .title(title).style(app.theme.dialog_border);
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
 
@@ -572,12 +573,15 @@ pub fn render(frame: &mut Frame, app: &App) {
             .map(|c| c.name.as_str())
             .unwrap_or("");
 
-        let rev = app.theme.item_selected_field;
+        let rev        = app.theme.item_selected_field;
+        let dlabel     = app.theme.dialog_label;
+        let dlabel_sel = app.theme.dialog_label_sel;
 
         // Head — fully highlighted when active; show at least one space when blank
         let head_line = {
-            let label = Span::raw(" Column head:  ");
-            if active_field == ColFormField::Head {
+            let head_active = active_field == ColFormField::Head;
+            let label = Span::styled(" Column head:  ", if head_active { dlabel_sel } else { dlabel });
+            if head_active {
                 let display = if cat_name.is_empty() { " " } else { cat_name };
                 Line::from(vec![label, Span::styled(display.to_string(), rev)])
             } else {
@@ -587,8 +591,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Width — fully highlighted when active
         let width_line = {
-            let label = Span::raw(" Width:        ");
-            if active_field == ColFormField::Width {
+            let width_active = active_field == ColFormField::Width;
+            let label = Span::styled(" Width:        ", if width_active { dlabel_sel } else { dlabel });
+            if width_active {
                 Line::from(vec![label, Span::styled(width_buf.to_string(), rev)])
             } else {
                 Line::from(vec![label, Span::raw(width_buf.to_string())])
@@ -601,14 +606,15 @@ pub fn render(frame: &mut Frame, app: &App) {
             ColPos::Left  => "Left of current column",
         };
         let position_line = if is_add {
-            let label = Span::raw(" Position:     ");
-            if active_field == ColFormField::Position {
+            let pos_active = active_field == ColFormField::Position;
+            let label = Span::styled(" Position:     ", if pos_active { dlabel_sel } else { dlabel });
+            if pos_active {
                 Line::from(vec![label, Span::styled(pos_label, rev)])
             } else {
                 Line::from(vec![label, Span::raw(pos_label)])
             }
         } else {
-            Line::from(vec![Span::raw(" Position:     "), Span::raw(pos_label)])
+            Line::from(vec![Span::styled(" Position:     ", dlabel), Span::raw(pos_label)])
         };
 
         let form_lines = vec![
@@ -616,14 +622,14 @@ pub fn render(frame: &mut Frame, app: &App) {
             head_line,
             width_line,
             position_line,
-            Line::from(" Format:       Name only"),
+            Line::from(vec![Span::styled(" Format:       ", dlabel), Span::raw("Name only")]),
             Line::from(""),
             Line::from(" Category type: Standard    Insert in: All sections"),
             Line::from(""),
             Line::from(" \u{2500}\u{2500}\u{2500} Press ENTER when done, ESC to cancel \u{2500}\u{2500}\u{2500}"),
         ];
 
-        frame.render_widget(Paragraph::new(form_lines), inner);
+        frame.render_widget(Paragraph::new(form_lines).style(app.theme.dialog), inner);
     }
 
     // ── Choices picker overlay ────────────────────────────────────────────
@@ -666,7 +672,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         let picker_rect = centered_rect(40, picker_h, area);
         frame.render_widget(Clear, picker_rect);
 
-        let block = Block::default().borders(Borders::ALL).title(" Choices ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Choices ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), picker_rect);
         let inner = block.inner(picker_rect);
 
@@ -679,7 +686,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             .take(visible)
             .collect();
 
-        frame.render_widget(Paragraph::new(visible_lines), inner);
+        frame.render_widget(Paragraph::new(visible_lines).style(app.theme.dialog), inner);
     }
 
     // ── Quick-add category picker (Alt-R / Alt-L) ────────────────────────────
@@ -754,7 +761,8 @@ pub fn render(frame: &mut Frame, app: &App) {
             ColPos::Right => " Add Column Right ",
             ColPos::Left  => " Add Column Left ",
         };
-        let block = Block::default().borders(Borders::ALL).title(box_title);
+        let block = Block::default().borders(Borders::ALL)
+            .title(box_title).style(app.theme.dialog_border);
         frame.render_widget(block.clone(), picker_rect);
         let inner = block.inner(picker_rect);
 
@@ -766,7 +774,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let mut all_lines = vec![Line::from(Span::raw(header_text))];
         all_lines.extend(cat_lines.into_iter().skip(offset).take(list_h));
-        frame.render_widget(Paragraph::new(all_lines), inner);
+        frame.render_widget(Paragraph::new(all_lines).style(app.theme.dialog), inner);
 
         // ── Delete confirmation overlay ───────────────────────────────────
         if *confirm_delete {
@@ -777,7 +785,8 @@ pub fn render(frame: &mut Frame, app: &App) {
             let dlg_w = (msg.chars().count() + 4).max(30).min(area.width as usize) as u16;
             let dlg_rect = centered_rect(dlg_w, 5, area);
             frame.render_widget(Clear, dlg_rect);
-            let dlg_block = Block::default().borders(Borders::ALL).title(" Discard Category? ");
+            let dlg_block = Block::default().borders(Borders::ALL)
+                .title(" Discard Category? ").style(app.theme.dialog_border);
             frame.render_widget(dlg_block.clone(), dlg_rect);
             let dlg_inner = dlg_block.inner(dlg_rect);
             let iw = dlg_inner.width as usize;
@@ -795,7 +804,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Span::raw("  "),
                     Span::raw(no_label),
                 ]),
-            ]), dlg_inner);
+            ]).style(app.theme.dialog), dlg_inner);
         }
     }
 
@@ -806,27 +815,32 @@ pub fn render(frame: &mut Frame, app: &App) {
         let modal_rect = centered_rect(66, modal_h, area);
         frame.render_widget(Clear, modal_rect);
 
-        let block = Block::default().borders(Borders::ALL).title(" Column Properties ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Column Properties ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
 
-        let rev = app.theme.item_selected_field;
+        let rev        = app.theme.item_selected_field;
+        let dlabel     = app.theme.dialog_label;
+        let dlabel_sel = app.theme.dialog_label_sel;
 
-        // Helper: field value span (REVERSED when active)
+        // Helper: field value span (REVERSED when active; label styled dlabel/dlabel_sel)
         let field_span = |label: &'static str, val: String, af: PropsField, target: PropsField| -> Vec<Span<'static>> {
-            if af == target {
-                vec![Span::raw(label), Span::styled(val, rev)]
+            let active = af == target;
+            if active {
+                vec![Span::styled(label, dlabel_sel), Span::styled(val, rev)]
             } else {
-                vec![Span::raw(label), Span::raw(val)]
+                vec![Span::styled(label, dlabel), Span::raw(val)]
             }
         };
 
         // Column head — editable text with cursor
         let head_line = {
-            let label = Span::raw(" Column head:  ");
+            let head_active = *active_field == PropsField::Head;
+            let label = Span::styled(" Column head:  ", if head_active { dlabel_sel } else { dlabel });
             let cat_type = if *is_date { "Date" } else { "Standard" };
             let type_span = Span::raw(format!("    Category type: {}", cat_type));
-            if *active_field == PropsField::Head {
+            if head_active {
                 let (left, hi, right) = cursor_split(head_buf, *head_cur);
                 Line::from(vec![
                     label,
@@ -842,8 +856,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Width — editable text with cursor
         let width_line = {
-            let label = Span::raw(" Width:        ");
-            if *active_field == PropsField::Width {
+            let width_active = *active_field == PropsField::Width;
+            let label = Span::styled(" Width:        ", if width_active { dlabel_sel } else { dlabel });
+            if width_active {
                 let (left, hi, right) = cursor_split(width_buf, *width_cur);
                 Line::from(vec![
                     label,
@@ -955,7 +970,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             " \u{2500}\u{2500}\u{2500} Press ENTER when done, ESC to cancel \u{2500}\u{2500}\u{2500}"
         ));
 
-        frame.render_widget(Paragraph::new(form_lines), inner);
+        frame.render_widget(Paragraph::new(form_lines).style(app.theme.dialog), inner);
     }
 
     // ── Calendar modal ────────────────────────────────────────────────────────
@@ -970,7 +985,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Box: 24 wide (22 inner), 12 tall (10 inner)
         let cal_rect = centered_rect(24, 12, area);
         frame.render_widget(Clear, cal_rect);
-        let block = Block::default().borders(Borders::ALL).title(" Calendar ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Calendar ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), cal_rect);
         let inner = block.inner(cal_rect);
         let iw = inner.width as usize;
@@ -1025,7 +1041,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             "{}{}{}", left_hint, " ".repeat(gap), right_hint
         ))));
 
-        frame.render_widget(Paragraph::new(cal_lines), inner);
+        frame.render_widget(Paragraph::new(cal_lines).style(app.theme.dialog), inner);
     }
 
     // ── SetTime modal ─────────────────────────────────────────────────────────
@@ -1034,7 +1050,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         let st_rect = centered_rect(28, 7, area);
         frame.render_widget(Clear, st_rect);
-        let block = Block::default().borders(Borders::ALL).title(" Set Time ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Set Time ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), st_rect);
         let inner = block.inner(st_rect);
 
@@ -1067,7 +1084,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             time_line,
             Line::from(""),
             help_line,
-        ]), inner);
+        ]).style(app.theme.dialog), inner);
     }
 
     // ── Sub-category picker (F3 on standard column) ───────────────────────────
@@ -1121,7 +1138,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         let block = Block::default()
             .borders(Borders::ALL)
             .title_top(Line::from(" Select Category ").alignment(Alignment::Center))
-            .title_bottom(Line::from(" Press ENTER to accept ").alignment(Alignment::Center));
+            .title_bottom(Line::from(" Press ENTER to accept ").alignment(Alignment::Center))
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
 
@@ -1178,7 +1196,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         }
 
-        frame.render_widget(Paragraph::new(cat_lines), inner);
+        frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
     }
 
     // ── Item Properties modal ─────────────────────────────────────────────────
@@ -1304,7 +1322,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let fpad = iw.saturating_sub(footer.chars().count()) / 2;
         lines.push(Line::from(Span::raw(format!("{}{}", " ".repeat(fpad), footer))));
 
-        frame.render_widget(Paragraph::new(lines), inner);
+        frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
     }
 
     // ── Remove-item confirmation modal ────────────────────────────────────────
@@ -1392,7 +1410,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let dlg_rect = centered_rect(38, 7, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL)
-            .title(" Remove Column ");
+            .title(" Remove Column ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
         let iw = inner.width as usize;
@@ -1420,7 +1438,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Line::from(""),
             btn_line,
             Line::from(""),
-        ]), inner);
+        ]).style(app.theme.dialog), inner);
     }
 
     // ── Remove-section confirmation modal ─────────────────────────────────────
@@ -1428,7 +1446,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         let rev = app.theme.item_selected_field;
         let dlg_rect = centered_rect(44, 7, area);
         frame.render_widget(Clear, dlg_rect);
-        let block = Block::default().borders(Borders::ALL).title(" Remove Section ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Remove Section ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
         let iw = inner.width as usize;
@@ -1456,7 +1475,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Line::from(""),
             btn_line,
             Line::from(""),
-        ]), inner);
+        ]).style(app.theme.dialog), inner);
     }
 
     // ── Assignment Profile modal ──────────────────────────────────────────────
@@ -1488,7 +1507,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let dlg_rect = centered_rect(box_w, box_h, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL)
-            .title(" Assignment Profile ");
+            .title(" Assignment Profile ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
 
@@ -1559,7 +1578,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
         cat_lines.push(help);
 
-        frame.render_widget(Paragraph::new(cat_lines), inner);
+        frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
     }
 
     // ── Section Add modal ─────────────────────────────────────────────────────
@@ -1573,9 +1592,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
         let cats       = flatten_cats(&app.categories);
         let rev        = app.theme.item_selected_field;
+        let dlabel     = app.theme.dialog_label;
+        let dlabel_sel = app.theme.dialog_label_sel;
         let dlg_rect   = centered_rect(52, 11, area);
         frame.render_widget(Clear, dlg_rect);
-        let block = Block::default().borders(Borders::ALL).title(" Section Add ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Section Add ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
         let iw = inner.width as usize;
@@ -1589,9 +1611,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         let field_w = iw.saturating_sub(label_w + 2);
         let cat_disp: String = cat_name.chars().take(field_w).collect();
         let cat_padded = format!("{:<width$}", cat_disp, width = field_w);
-        let cat_style = if active_field == SectionFormField::Category { rev } else { app.theme.dialog };
+        let cat_active = active_field == SectionFormField::Category;
+        let cat_style = if cat_active { rev } else { app.theme.dialog };
         let cat_line = Line::from(vec![
-            Span::raw("  Category:  "),
+            Span::styled("  Category:  ", if cat_active { dlabel_sel } else { dlabel }),
             Span::styled(cat_padded, cat_style),
         ]);
 
@@ -1600,9 +1623,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             SectionInsert::Below => "Below",
             SectionInsert::Above => "Above",
         };
-        let ins_style = if active_field == SectionFormField::Insert { rev } else { app.theme.dialog };
+        let ins_active = active_field == SectionFormField::Insert;
+        let ins_style = if ins_active { rev } else { app.theme.dialog };
         let ins_line = Line::from(vec![
-            Span::raw("  Insert:    "),
+            Span::styled("  Insert:    ", if ins_active { dlabel_sel } else { dlabel }),
             Span::styled(format!("{:<8}", ins_str), ins_style),
             Span::raw("  (Left/Right to toggle)"),
         ]);
@@ -1632,14 +1656,15 @@ pub fn render(frame: &mut Frame, app: &App) {
             Line::from(""),
         ];
 
-        frame.render_widget(Paragraph::new(lines.clone()), inner);
+        frame.render_widget(Paragraph::new(lines.clone()).style(app.theme.dialog), inner);
 
         // Choices picker overlay
         if let Some(picker_cur) = picker_cursor {
             let picker_h = (cats.len().min(10) + 2) as u16;
             let picker_rect = centered_rect(40, picker_h, area);
             frame.render_widget(Clear, picker_rect);
-            let pb = Block::default().borders(Borders::ALL).title(" Choose Category ");
+            let pb = Block::default().borders(Borders::ALL)
+                .title(" Choose Category ").style(app.theme.dialog_border);
             frame.render_widget(pb.clone(), picker_rect);
             let pi = pb.inner(picker_rect);
             let visible = pi.height as usize;
@@ -1653,7 +1678,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Line::from(Span::styled(label, style))
                 })
                 .collect();
-            frame.render_widget(Paragraph::new(pick_lines), pi);
+            frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pi);
         }
 
     }
@@ -1944,22 +1969,24 @@ pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
+        .style(app.theme.dialog_border)
         .title(title);
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
+
+    let dlabel     = app.theme.dialog_label;
+    let dlabel_sel = app.theme.dialog_label_sel;
+    let rev        = app.theme.item_selected_field;
 
     let fw = inner.width.saturating_sub(14) as usize;  // field width
 
     let stars: String = "*".repeat(buf.chars().count());
     let pw_field = format!("{:<width$}", stars, width = fw);
-    let pw_style = if !*confirm_active {
-        app.theme.item_selected_field
-    } else {
-        Style::default()
-    };
+    let pw_active = !*confirm_active;
     let pw_line = Line::from(vec![
-        Span::raw("  Password:  ["),
-        Span::styled(pw_field, pw_style),
+        Span::styled("  Password:  ", if pw_active { dlabel_sel } else { dlabel }),
+        Span::raw("["),
+        Span::styled(pw_field, if pw_active { rev } else { Style::default() }),
         Span::raw("]"),
     ]);
 
@@ -1968,14 +1995,11 @@ pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
     if need_confirm {
         let cf_stars: String = "*".repeat(confirm_buf.chars().count());
         let cf_field = format!("{:<width$}", cf_stars, width = fw);
-        let cf_style = if *confirm_active {
-            app.theme.item_selected_field
-        } else {
-            Style::default()
-        };
+        let cf_active = *confirm_active;
         let cf_line = Line::from(vec![
-            Span::raw("  Confirm:   ["),
-            Span::styled(cf_field, cf_style),
+            Span::styled("  Confirm:   ", if cf_active { dlabel_sel } else { dlabel }),
+            Span::raw("["),
+            Span::styled(cf_field, if cf_active { rev } else { Style::default() }),
             Span::raw("]"),
         ]);
         lines.push(cf_line);
@@ -1995,7 +2019,7 @@ pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from("  \u{2500}\u{2500}\u{2500} ENTER to confirm, ESC to cancel \u{2500}\u{2500}\u{2500}"));
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
 }
 
 // ── View Add dialog ───────────────────────────────────────────────────────────
@@ -2016,7 +2040,8 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title_top(Line::from(" View Add ").alignment(Alignment::Center))
-        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center))
+        .style(app.theme.dialog_border);
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
@@ -2024,12 +2049,15 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let sec_label  = "  Sections:  ";
     let field_w    = 22usize;
     let rev        = app.theme.item_selected_field;
+    let dlabel     = app.theme.dialog_label;
+    let dlabel_sel = app.theme.dialog_label_sel;
 
-    let name_line: Line = if active_field == ViewAddField::Name {
+    let name_active = active_field == ViewAddField::Name;
+    let name_line: Line = if name_active {
         let (left, hi, right) = super::cursor_split(name_buf, name_cur);
         let pad = " ".repeat(field_w.saturating_sub(name_buf.chars().count()));
         Line::from(vec![
-            Span::raw(name_label),
+            Span::styled(name_label, dlabel_sel),
             Span::raw(left),
             Span::styled(hi, rev),
             Span::raw(right),
@@ -2037,15 +2065,18 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw("  Type:          Standard"),
         ])
     } else {
-        Line::from(format!("{}{}  Type:          Standard",
-            name_label, pad_or_trunc(name_buf, field_w)))
+        Line::from(vec![
+            Span::styled(name_label, dlabel),
+            Span::raw(format!("{}  Type:          Standard", pad_or_trunc(name_buf, field_w))),
+        ])
     };
 
-    let sec_line: Line = if active_field == ViewAddField::Section {
+    let sec_active = active_field == ViewAddField::Section;
+    let sec_line: Line = if sec_active {
         let (left, hi, right) = super::cursor_split(sec_buf, sec_cur);
         let pad = " ".repeat(field_w.saturating_sub(sec_buf.chars().count()));
         Line::from(vec![
-            Span::raw(sec_label),
+            Span::styled(sec_label, dlabel_sel),
             Span::raw(left),
             Span::styled(hi, rev),
             Span::raw(right),
@@ -2053,28 +2084,30 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw("  F3 to pick"),
         ])
     } else {
-        Line::from(format!("{}{}  F3 to pick",
-            sec_label, pad_or_trunc(sec_buf, field_w)))
+        Line::from(vec![
+            Span::styled(sec_label, dlabel),
+            Span::raw(format!("{}  F3 to pick", pad_or_trunc(sec_buf, field_w))),
+        ])
     };
 
     let mut lines: Vec<Line> = vec![Line::from(""), name_line, sec_line];
     lines.extend([
-        Line::from("  Item sorting:  ..."),
-        Line::from("  Section sorting:  None"),
+        Line::from(vec![Span::styled("  Item sorting:  ", dlabel),    Span::raw("...")]),
+        Line::from(vec![Span::styled("  Section sorting:  ", dlabel), Span::raw("None")]),
         Line::from(""),
-        Line::from("  Hide empty sections:  No"),
-        Line::from("  Hide done items:      No"),
-        Line::from("  Hide dependent items: No"),
-        Line::from("  Hide inherited items: No"),
-        Line::from("  Hide column heads:    No"),
-        Line::from("  Section separators:   No"),
-        Line::from("  Number items:         No          Filter:"),
+        Line::from(vec![Span::styled("  Hide empty sections:  ", dlabel),  Span::raw("No")]),
+        Line::from(vec![Span::styled("  Hide done items:      ", dlabel),  Span::raw("No")]),
+        Line::from(vec![Span::styled("  Hide dependent items: ", dlabel),  Span::raw("No")]),
+        Line::from(vec![Span::styled("  Hide inherited items: ", dlabel),  Span::raw("No")]),
+        Line::from(vec![Span::styled("  Hide column heads:    ", dlabel),  Span::raw("No")]),
+        Line::from(vec![Span::styled("  Section separators:   ", dlabel),  Span::raw("No")]),
+        Line::from(vec![Span::styled("  Number items:         ", dlabel),  Span::raw("No          Filter:")]),
         Line::from(""),
-        Line::from("  View statistics:  ..."),
+        Line::from(vec![Span::styled("  View statistics:  ", dlabel),  Span::raw("...")]),
         Line::from(""),
-        Line::from("  View protection:  Global (No protection)"),
+        Line::from(vec![Span::styled("  View protection:  ", dlabel),  Span::raw("Global (No protection)")]),
     ]);
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
 
     // Picker overlay
     if let Some(pc) = pick_cur {
@@ -2082,7 +2115,8 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
         let picker_h = (cats.len().min(10) + 2) as u16;
         let picker_rect = centered_rect(40, picker_h, area);
         frame.render_widget(Clear, picker_rect);
-        let pb = Block::default().borders(Borders::ALL).title(" Choose Category ");
+        let pb = Block::default().borders(Borders::ALL)
+            .title(" Choose Category ").style(app.theme.dialog_border);
         frame.render_widget(pb.clone(), picker_rect);
         let pi = pb.inner(picker_rect);
         let visible = pi.height as usize;
@@ -2096,7 +2130,7 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
                 Line::from(Span::styled(label, style))
             })
             .collect();
-        frame.render_widget(Paragraph::new(pick_lines), pi);
+        frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pi);
     }
 }
 
@@ -2114,12 +2148,15 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title_top(Line::from(" Section Properties ").alignment(Alignment::Center))
-        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center))
+        .style(app.theme.dialog_border);
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
-    let rev = app.theme.item_selected_field;
-    let dim = app.theme.dim;
+    let rev        = app.theme.item_selected_field;
+    let dim        = app.theme.dim;
+    let dlabel     = app.theme.dialog_label;
+    let dlabel_sel = app.theme.dialog_label_sel;
     let iw  = inner.width as usize;
 
     // Left column width (labels + field): ~36 chars. Right column: Columns list.
@@ -2206,12 +2243,13 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
 
     // Row 1: head | Columns:
     {
-        let left_part = if active_field == SecPropsField::Head {
+        let head_active = active_field == SecPropsField::Head;
+        let left_part: Vec<Span> = if head_active {
             let (left, hi, right) = super::cursor_split(head_buf, head_cur);
             let used = head_label.len() + head_buf.chars().count();
             let pad = left_w.saturating_sub(used);
             vec![
-                Span::raw(head_label),
+                Span::styled(head_label, dlabel_sel),
                 Span::styled(left, rev),
                 Span::styled(hi, rev),
                 Span::styled(right, rev),
@@ -2219,12 +2257,15 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
             ]
         } else {
             let displayed: String = head_buf.chars().take(field_w).collect();
-            let padded = pad_to(&format!("{}{}", head_label, displayed), left_w);
-            vec![Span::raw(padded)]
+            let val_pad = left_w.saturating_sub(head_label.len() + displayed.chars().count());
+            vec![
+                Span::styled(head_label, dlabel),
+                Span::raw(format!("{}{}", displayed, " ".repeat(val_pad))),
+            ]
         };
         let mut spans = left_part;
         if !col_names.is_empty() {
-            spans.push(Span::raw(col_header));
+            spans.push(Span::styled(col_header, dlabel));
         }
         final_lines.push(Line::from(spans));
     }
@@ -2250,16 +2291,22 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
 
         if ci == 1 && active_field == SecPropsField::ItemSorting {
             // Sort field row with reverse styling
-            let left_str = format!("{}", sort_label);
-            let padded_left = pad_to(&left_str, left_w);
-            let pad_needed = left_w.saturating_sub(left_str.len());
+            let pad_needed = left_w.saturating_sub(sort_label.len() + sort_val.len());
             final_lines.push(Line::from(vec![
-                Span::raw(sort_label),
+                Span::styled(sort_label, dlabel_sel),
                 Span::styled(sort_val, rev),
-                Span::raw(" ".repeat(pad_needed.saturating_sub(sort_val.len()))),
+                Span::raw(" ".repeat(pad_needed)),
                 Span::raw(format!("  {}", name_display)),
             ]));
-            let _ = padded_left;
+        } else if ci == 1 {
+            // Sort field row — inactive
+            let pad_needed = left_w.saturating_sub(sort_label.len() + sort_val.len());
+            final_lines.push(Line::from(vec![
+                Span::styled(sort_label, dlabel),
+                Span::raw(sort_val),
+                Span::raw(" ".repeat(pad_needed)),
+                Span::raw(format!("  {}", name_display)),
+            ]));
         } else if ci == 2 {
             final_lines.push(Line::from(vec![
                 Span::styled(format!("{:<width$}", "Section statistics: ...", width = left_w), dim),
@@ -2275,14 +2322,16 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let col_rows_filled = col_names.len();
     if col_rows_filled <= 1 {
         // Item sorting row
-        let sort_str = format!("{}{}", sort_label, sort_val);
         if active_field == SecPropsField::ItemSorting {
             final_lines.push(Line::from(vec![
-                Span::raw(sort_label),
+                Span::styled(sort_label, dlabel_sel),
                 Span::styled(sort_val, rev),
             ]));
         } else {
-            final_lines.push(Line::from(sort_str));
+            final_lines.push(Line::from(vec![
+                Span::styled(sort_label, dlabel),
+                Span::raw(sort_val),
+            ]));
         }
     }
     if col_rows_filled <= 2 {
@@ -2316,7 +2365,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let is_active = active_field == SecPropsField::Filter;
 
     // Label line — never highlighted.
-    final_lines.push(Line::from("Filter:"));
+    final_lines.push(Line::from(Span::styled("Filter:", dlabel)));
     // Entry line 1.
     final_lines.push(Line::from(if is_active {
         vec![
@@ -2336,7 +2385,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
         vec![Span::raw(format!("{} {}", arrow2, row2_str))]
     }));
 
-    frame.render_widget(Paragraph::new(final_lines), inner);
+    frame.render_widget(Paragraph::new(final_lines).style(app.theme.dialog), inner);
     let _ = lines; // unused above
 
     // ── Filter picker overlay ─────────────────────────────────────────────────
@@ -2354,7 +2403,8 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
             .title_top(Line::from(" Filter ").alignment(Alignment::Center))
-            .title_bottom(Line::from(" Press ENTER to accept ").alignment(Alignment::Center));
+            .title_bottom(Line::from(" Press ENTER to accept ").alignment(Alignment::Center))
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
 
@@ -2383,7 +2433,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
                 cat_lines.push(Line::from(row_text));
             }
         }
-        frame.render_widget(Paragraph::new(cat_lines), inner);
+        frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
     }
 
     // ── Sort dialog overlay ───────────────────────────────────────────────────
@@ -2432,13 +2482,18 @@ pub fn render_sort_dialog(
     let block = Block::default()
         .borders(Borders::ALL)
         .title_top(Line::from(title.to_string()).alignment(Alignment::Center))
-        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center))
+        .style(app.theme.dialog_border);
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
-    let rev = app.theme.item_selected_field;
-    let unsel = app.theme.dialog;
-    let fs  = |active: bool| if active { rev } else { unsel };
+    let rev        = app.theme.item_selected_field;
+    let dlabel     = app.theme.dialog_label;
+    let dlabel_sel = app.theme.dialog_label_sel;
+    // Value style: rev when active, plain (inherit dialog) when inactive.
+    let fval = |active: bool| if active { rev } else { Style::default() };
+    // Label style: dlabel_sel when active, dlabel when inactive.
+    let flbl = |active: bool| if active { dlabel_sel } else { dlabel };
 
     let sort_new_label = "Sort new items:  ";
     let sort_on_label  = "  Sort on:       ";
@@ -2450,70 +2505,87 @@ pub fn render_sort_dialog(
 
     let mut rows: Vec<Line> = Vec::new();
     rows.push(Line::from(""));
-    rows.push(Line::from(vec![
-        Span::raw(sort_new_label),
-        Span::styled(sort_new.label(), fs(active_field == SortField::SortNewItems)),
-    ]));
-    rows.push(Line::from(""));
-    rows.push(Line::from(format!("Primary sort key{}", vd)));
-    rows.push(Line::from(vec![
-        Span::raw(sort_on_label),
-        Span::styled(primary_on.label(), fs(active_field == SortField::PrimaryOn)),
-    ]));
-    if primary_on != SortOn::None {
+    {
+        let a = active_field == SortField::SortNewItems;
         rows.push(Line::from(vec![
-            Span::raw(order_label),
-            Span::styled(primary_order.label(), fs(active_field == SortField::PrimaryOrder)),
+            Span::styled(sort_new_label, flbl(a)),
+            Span::styled(sort_new.label(), fval(a)),
         ]));
+    }
+    rows.push(Line::from(""));
+    rows.push(Line::from(Span::styled(format!("Primary sort key{}", vd), dlabel)));
+    {
+        let a = active_field == SortField::PrimaryOn;
         rows.push(Line::from(vec![
-            Span::raw(na_label),
-            Span::styled(primary_na.label(), fs(active_field == SortField::PrimaryNa)),
+            Span::styled(sort_on_label, flbl(a)),
+            Span::styled(primary_on.label(), fval(a)),
+        ]));
+    }
+    if primary_on != SortOn::None {
+        let a = active_field == SortField::PrimaryOrder;
+        rows.push(Line::from(vec![
+            Span::styled(order_label, flbl(a)),
+            Span::styled(primary_order.label(), fval(a)),
+        ]));
+        let a = active_field == SortField::PrimaryNa;
+        rows.push(Line::from(vec![
+            Span::styled(na_label, flbl(a)),
+            Span::styled(primary_na.label(), fval(a)),
         ]));
     }
     if primary_on == SortOn::Category {
         let display = primary_cat_id.map(cat_name).unwrap_or("(choose)");
+        let a = active_field == SortField::PrimaryCategory;
         rows.push(Line::from(vec![
-            Span::raw(cat_label),
-            Span::styled(display, fs(active_field == SortField::PrimaryCategory)),
+            Span::styled(cat_label, flbl(a)),
+            Span::styled(display, fval(a)),
         ]));
         if let Some(_) = primary_cat_id {
+            let a = active_field == SortField::PrimarySequence;
             rows.push(Line::from(vec![
-                Span::raw(seq_label),
-                Span::styled(primary_seq.label(), fs(active_field == SortField::PrimarySequence)),
+                Span::styled(seq_label, flbl(a)),
+                Span::styled(primary_seq.label(), fval(a)),
             ]));
         }
     }
     rows.push(Line::from(""));
-    rows.push(Line::from(format!("Secondary sort key{}", vd)));
-    rows.push(Line::from(vec![
-        Span::raw(sort_on_label),
-        Span::styled(secondary_on.label(), fs(active_field == SortField::SecondaryOn)),
-    ]));
-    if secondary_on != SortOn::None {
+    rows.push(Line::from(Span::styled(format!("Secondary sort key{}", vd), dlabel)));
+    {
+        let a = active_field == SortField::SecondaryOn;
         rows.push(Line::from(vec![
-            Span::raw(order_label),
-            Span::styled(secondary_order.label(), fs(active_field == SortField::SecondaryOrder)),
+            Span::styled(sort_on_label, flbl(a)),
+            Span::styled(secondary_on.label(), fval(a)),
         ]));
+    }
+    if secondary_on != SortOn::None {
+        let a = active_field == SortField::SecondaryOrder;
         rows.push(Line::from(vec![
-            Span::raw(na_label),
-            Span::styled(secondary_na.label(), fs(active_field == SortField::SecondaryNa)),
+            Span::styled(order_label, flbl(a)),
+            Span::styled(secondary_order.label(), fval(a)),
+        ]));
+        let a = active_field == SortField::SecondaryNa;
+        rows.push(Line::from(vec![
+            Span::styled(na_label, flbl(a)),
+            Span::styled(secondary_na.label(), fval(a)),
         ]));
     }
     if secondary_on == SortOn::Category {
         let display = secondary_cat_id.map(cat_name).unwrap_or("(choose)");
+        let a = active_field == SortField::SecondaryCategory;
         rows.push(Line::from(vec![
-            Span::raw(cat_label),
-            Span::styled(display, fs(active_field == SortField::SecondaryCategory)),
+            Span::styled(cat_label, flbl(a)),
+            Span::styled(display, fval(a)),
         ]));
         if let Some(_) = secondary_cat_id {
+            let a = active_field == SortField::SecondarySequence;
             rows.push(Line::from(vec![
-                Span::raw(seq_label),
-                Span::styled(secondary_seq.label(), fs(active_field == SortField::SecondarySequence)),
+                Span::styled(seq_label, flbl(a)),
+                Span::styled(secondary_seq.label(), fval(a)),
             ]));
         }
     }
 
-    frame.render_widget(Paragraph::new(rows), inner);
+    frame.render_widget(Paragraph::new(rows).style(app.theme.dialog), inner);
 
     // ── Sort picker overlay ───────────────────────────────────────────────────
     if let Some(p) = picker {
@@ -2525,7 +2597,8 @@ pub fn render_sort_dialog(
                 let w = 36u16;
                 let pick_rect = centered_rect(w, h, area);
                 frame.render_widget(Clear, pick_rect);
-                let pick_block = Block::default().borders(Borders::ALL).title(" Choose Category ");
+                let pick_block = Block::default().borders(Borders::ALL)
+                    .title(" Choose Category ").style(app.theme.dialog_border);
                 frame.render_widget(pick_block.clone(), pick_rect);
                 let pick_inner = pick_block.inner(pick_rect);
                 let vis = pick_inner.height as usize;
@@ -2535,11 +2608,11 @@ pub fn render_sort_dialog(
                     .map(|(i, e)| {
                         let indent = "  ".repeat(e.depth);
                         let label  = format!("{}{}", indent, e.name);
-                        let style  = if i == p.cursor { rev } else { app.theme.dialog };
+                        let style  = if i == p.cursor { rev } else { Style::default() };
                         Line::from(Span::styled(label, style))
                     })
                     .collect();
-                frame.render_widget(Paragraph::new(pick_lines), pick_inner);
+                frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pick_inner);
             }
             _ => {
                 // Simple choices list
@@ -2556,16 +2629,17 @@ pub fn render_sort_dialog(
                 let w = choices.iter().map(|s| s.len()).max().unwrap_or(10) as u16 + 4;
                 let pick_rect = centered_rect(w, h, area);
                 frame.render_widget(Clear, pick_rect);
-                let pick_block = Block::default().borders(Borders::ALL).title(" Choices ");
+                let pick_block = Block::default().borders(Borders::ALL)
+                    .title(" Choices ").style(app.theme.dialog_border);
                 frame.render_widget(pick_block.clone(), pick_rect);
                 let pick_inner = pick_block.inner(pick_rect);
                 let pick_lines: Vec<Line> = choices.iter().enumerate()
                     .map(|(i, label)| {
-                        let style = if i == p.cursor { rev } else { app.theme.dialog };
+                        let style = if i == p.cursor { rev } else { Style::default() };
                         Line::from(Span::styled(*label, style))
                     })
                     .collect();
-                frame.render_widget(Paragraph::new(pick_lines), pick_inner);
+                frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pick_inner);
             }
         }
     }

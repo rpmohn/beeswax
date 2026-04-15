@@ -191,7 +191,8 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
     } = &app.cat_state.mode {
         let modal_rect = centered_rect(64, 17, area);
         frame.render_widget(Clear, modal_rect);
-        let block = Block::default().borders(Borders::ALL).title(" Category Properties ");
+        let block = Block::default().borders(Borders::ALL)
+            .title(" Category Properties ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
 
@@ -204,7 +205,9 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
             CategoryKind::Unindexed => "Unindexed",
         };
 
-        let sel = app.theme.item_selected_field;
+        let sel        = app.theme.item_selected_field;
+        let dlabel     = app.theme.dialog_label;
+        let dlabel_sel = app.theme.dialog_label_sel;
 
         // Active: whole field content in selected style, padded to field_w.
         // Inactive: plain text padded to field_w.
@@ -263,7 +266,7 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
 
         // Row 1: " Category name:  "(17) + field(20) + "    Type: <kind>"
         let row1 = Line::from(vec![
-            Span::raw(" Category name:  "),
+            Span::styled(" Category name:  ", if name_active { dlabel_sel } else { dlabel }),
             text_field(name_buf, fw, name_active, sel),
             Span::raw(format!("    Type: {}", kind_str)),
         ]);
@@ -272,49 +275,49 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
         let parent_disp: String = parent_name.chars().take(rc.saturating_sub(11)).collect();
         let parent_pad = rc.saturating_sub(11 + parent_disp.chars().count());
         let row2 = Line::from(vec![
-            Span::raw(format!(" Parent is {}{}", parent_disp, " ".repeat(parent_pad))),
-            Span::raw("Match cat name:  "),
+            Span::styled(format!(" Parent is {}{}", parent_disp, " ".repeat(parent_pad)), dlabel),
+            Span::styled("Match cat name:  ", if mcat_active { dlabel_sel } else { dlabel }),
             bool_field(*match_cat_name, mcat_active, sel),
         ]);
 
         // Row 3: " Short name:     "(17) + field(20) + "    Match short name: " + bool
         let row3 = Line::from(vec![
-            Span::raw(" Short name:     "),
+            Span::styled(" Short name:     ", if short_active { dlabel_sel } else { dlabel }),
             text_field(short_name_buf, fw, short_active, sel),
-            Span::raw("    Match short name: "),
+            Span::styled("    Match short name: ", if mshort_active { dlabel_sel } else { dlabel }),
             bool_field(*match_short_name, mshort_active, sel),
         ]);
 
         // Row 4: " Also match:     "(17) + field(20)
         let row4 = Line::from(vec![
-            Span::raw(" Also match:     "),
+            Span::styled(" Also match:     ", if also_active { dlabel_sel } else { dlabel }),
             text_field(also_match_buf, fw, also_active, sel),
         ]);
 
         // Row 5: " Note:           "(17) + note_field(20) + "Assignment conditions:"
         let row5 = Line::from(vec![
-            Span::raw(" Note:           "),
+            Span::styled(" Note:           ", if note_active { dlabel_sel } else { dlabel }),
             note_field(&note_text, fw, note_active, sel),
-            Span::raw("Assignment conditions:"),
+            Span::styled("Assignment conditions:", dlabel),
         ]);
 
         // Row 6: " Note file:      "(17) + field(20)
         let row6 = Line::from(vec![
-            Span::raw(" Note file:      "),
+            Span::styled(" Note file:      ", if nfile_active { dlabel_sel } else { dlabel }),
             text_field(note_file_buf, fw, nfile_active, sel),
         ]);
 
         // Row 7: " Exclusive children: "(21) + bool(3) + padding + "Assignment actions:"
         let excl_pad = rc.saturating_sub(21 + 3);
         let row7 = Line::from(vec![
-            Span::raw(" Exclusive children: "),
+            Span::styled(" Exclusive children: ", if excl_active { dlabel_sel } else { dlabel }),
             bool_field(*excl_children, excl_active, sel),
             Span::raw(" ".repeat(excl_pad)),
-            Span::raw("Assignment actions:"),
+            Span::styled("Assignment actions:", dlabel),
         ]);
 
         // Row 8: Special actions
-        let row8 = Line::from(Span::raw(" Special actions:    No action"));
+        let row8 = Line::from(Span::styled(" Special actions:    No action", dlabel));
 
         // Row 9: blank
         let row9 = Line::from("");
@@ -340,7 +343,7 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
             Paragraph::new(vec![
                 row0, row1, row2, row3, row4, row5, row6, row7, row8,
                 row9, row10, row11, row12, row13, row14,
-            ]),
+            ]).style(app.theme.dialog),
             inner,
         );
     }
