@@ -1109,6 +1109,23 @@ fn handle_vmgr_delete(app: &mut App, code: KeyCode) {
 }
 
 fn handle_vmgr_props(app: &mut App, code: KeyCode) {
+    // Section add picker (F3 on Sections field).
+    let has_sec_add_picker = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { sec_add_picker: Some(_), .. }
+    );
+    if has_sec_add_picker {
+        match code {
+            KeyCode::Enter               => app.vmgr_sec_pick_confirm(),
+            KeyCode::Esc                 => app.vmgr_sec_pick_cancel(),
+            KeyCode::Up                  => app.vmgr_sec_pick_up(),
+            KeyCode::Down                => app.vmgr_sec_pick_down(),
+            KeyCode::Char(' ')           => app.vmgr_sec_pick_toggle(),
+            _ => {}
+        }
+        return;
+    }
+
     // Section sort picker (choices popup for method or order).
     let has_sec_sort_picker = matches!(
         app.vmgr_state.mode,
@@ -1161,6 +1178,7 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode) {
         KeyCode::Down if is_sections                                 => app.vmgr_props_sec_down(),
         KeyCode::Tab | KeyCode::Down                                 => app.vmgr_props_field_next(),
         KeyCode::BackTab | KeyCode::Up                               => app.vmgr_props_field_prev(),
+        KeyCode::F(3) if is_sections                                 => app.vmgr_sec_pick_open(),
         KeyCode::F(3) if is_item_sorting                             => app.vmgr_open_item_sort(),
         KeyCode::F(3) if is_sec_sorting || is_sec_order              => app.vmgr_sec_sort_open_picker(),
         KeyCode::Char(' ') if is_sec_sorting                         => app.vmgr_sec_sort_cycle(),

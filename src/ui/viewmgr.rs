@@ -5,7 +5,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
-use crate::app::{App, SortPicker, ViewMgrMode, ViewPropsField, section_item_indices};
+use crate::app::{App, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator};
+use crate::model::CategoryKind;
 use crate::app::SortState;
 use super::cursor_split;
 
@@ -126,11 +127,12 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             sec_cursor,
             sort_state,
             sec_sort_method, sec_sort_order, sec_sort_picker,
+            sec_add_picker,
             hide_empty_sections, hide_done_items, hide_dependent_items,
             hide_inherited_items, hide_column_heads, section_separators, number_items,
             active_field, sec_scroll,
         } => (name_buf, *name_cur, *sec_cursor, sort_state,
-              *sec_sort_method, *sec_sort_order, sec_sort_picker,
+              *sec_sort_method, *sec_sort_order, sec_sort_picker, sec_add_picker,
               *hide_empty_sections, *hide_done_items,
               *hide_dependent_items, *hide_inherited_items, *hide_column_heads,
               *section_separators, *number_items, *active_field, *sec_scroll),
@@ -138,7 +140,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         _ => return,
     };
     let (name_buf, name_cur, sec_cursor, sort_state,
-         sec_sort_method, sec_sort_order, sec_sort_picker,
+         sec_sort_method, sec_sort_order, sec_sort_picker, sec_add_picker,
          hes, hdi, hdep, hii, hch, ss, ni, active_field, sec_scroll) = props;
 
     // The view being edited
@@ -453,6 +455,59 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 pick_lines.push(Line::from(format!(" {}", label)));
             }
+        }
+        frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pick_inner);
+    }
+
+    // ── Section Select picker (F3 on Sections field) ──────────────────────────
+    if let Some(picker_cur) = sec_add_picker {
+        let cats = flatten_cats(&app.categories);
+        // Collect cat_ids already used as sections in this view
+        let used_ids: std::collections::HashSet<usize> =
+            view_ref.sections.iter().map(|s| s.cat_id).collect();
+
+        let visible_rows = cats.len().min(16);
+        let picker_h = (visible_rows as u16 + 3).max(6).min(area.height.saturating_sub(4));
+        let picker_w = 50u16.min(area.width.saturating_sub(4));
+        let pick_rect = centered_rect(picker_w, picker_h, area);
+        frame.render_widget(Clear, pick_rect);
+        let pick_block = Block::default()
+            .borders(Borders::ALL)
+            .style(app.theme.dialog_border)
+            .title_top(Line::from(" Section Select ").alignment(Alignment::Center))
+            .title_bottom(Line::from(" Press ENTER to accept ").alignment(Alignment::Center));
+        frame.render_widget(pick_block.clone(), pick_rect);
+        let pick_inner = pick_block.inner(pick_rect);
+
+        let view_name = view_ref.name.as_str();
+        let view_label = format!(" Current View: {}", view_name);
+        let view_line = Line::from(Span::styled(view_label, app.theme.dialog_label));
+
+        let visible = (pick_inner.height as usize).saturating_sub(1); // -1 for header line
+        let start = if *picker_cur >= visible { picker_cur - visible + 1 } else { 0 };
+        let rev = app.theme.item_selected_field;
+
+        let mut pick_lines: Vec<Line<'static>> = vec![view_line];
+        for (i, entry) in cats.iter().enumerate().skip(start).take(visible) {
+            let is_section = used_ids.contains(&entry.id);
+            let marker = if is_section { "*" } else { " " };
+            let note_ind = cat_note_indicator(&app.categories, entry.id);
+            let type_ind = match entry.kind {
+                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
+                CategoryKind::Date      => "*",
+                CategoryKind::Numeric   => "#",
+                CategoryKind::Unindexed => "\u{25A1}",
+            };
+            let indent = "  ".repeat(entry.depth);
+            let highlighted = i == *picker_cur;
+            pick_lines.push(Line::from(vec![
+                Span::raw(format!(" {}\u{2502}{} {}", marker, type_ind, indent)),
+                if highlighted {
+                    Span::styled(entry.name.clone(), rev)
+                } else {
+                    Span::raw(entry.name.clone())
+                },
+            ]));
         }
         frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pick_inner);
     }

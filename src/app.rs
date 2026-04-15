@@ -200,6 +200,7 @@ pub enum ViewMgrMode {
         sec_sort_method:      SectionSortMethod,
         sec_sort_order:       SortOrder,
         sec_sort_picker:      Option<(SecSortTarget, usize)>, // (target, cursor)
+        sec_add_picker:       Option<usize>,                  // F3 on Sections: cat picker cursor
         hide_empty_sections:  bool,
         hide_done_items:      bool,
         hide_dependent_items: bool,
@@ -6333,6 +6334,7 @@ impl App {
             sec_cursor:   0,
             sort_state:   SortState::Closed,
             sec_sort_method, sec_sort_order, sec_sort_picker: None,
+            sec_add_picker: None,
             hide_empty_sections, hide_done_items, hide_dependent_items,
             hide_inherited_items, hide_column_heads, section_separators, number_items,
             active_field: ViewPropsField::Name,
@@ -6490,6 +6492,91 @@ impl App {
                         else { self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)).map(|v| v.sections.len()).unwrap_or(0) };
         if let ViewMgrMode::Props { sec_cursor, .. } = &mut self.vmgr_state.mode {
             if *sec_cursor + 1 < sec_count { *sec_cursor += 1; }
+        }
+    }
+
+    // ── Section Add picker (F3 on Sections field) ────────────────────────────
+
+    pub fn vmgr_sec_pick_open(&mut self) {
+        if let ViewMgrMode::Props { active_field: ViewPropsField::Sections, sec_add_picker, .. }
+            = &mut self.vmgr_state.mode
+        {
+            *sec_add_picker = Some(0);
+        }
+    }
+
+    pub fn vmgr_sec_pick_up(&mut self) {
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            if *cursor > 0 { *cursor -= 1; }
+        }
+    }
+
+    pub fn vmgr_sec_pick_down(&mut self) {
+        let max = flatten_cats(&self.categories).len().saturating_sub(1);
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            if *cursor < max { *cursor += 1; }
+        }
+    }
+
+    /// Space: toggle the cursor category as a section.
+    /// If the view already has one or more sections with this cat_id, remove the last one.
+    /// If none, add a new one.  The asterisk in the picker reflects the new state on the
+    /// next render because it reads directly from view.sections each frame.
+    pub fn vmgr_sec_pick_toggle(&mut self) {
+        let idx = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } => *cursor,
+            _ => return,
+        };
+        let flat = flatten_cats(&self.categories);
+        let entry = match flat.get(idx) { Some(e) => e, None => return };
+        let cat_id   = entry.id;
+        let sec_name = entry.name.clone();
+
+        let v_idx = self.vmgr_state.cursor;
+        let voi   = self.view_order_idx;
+
+        // Phase 1: check (immutable) whether the cat is already a section.
+        let remove_pos = {
+            let view_ref = if v_idx == voi { &self.view }
+                           else { match self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)) {
+                               Some(v) => v, None => return,
+                           }};
+            view_ref.sections.iter().rposition(|s| s.cat_id == cat_id)
+        };
+
+        // Phase 2: allocate an id only when adding (avoids wasting ids on the remove path).
+        let sec_id = if remove_pos.is_none() { Some(self.alloc_id()) } else { None };
+
+        // Phase 3: mutate.
+        let view = if v_idx == voi { &mut self.view }
+                   else { match self.inactive_views.get_mut(Self::vmgr_inact_idx(v_idx, voi)) {
+                       Some(v) => v, None => return,
+                   }};
+        if let Some(pos) = remove_pos {
+            view.sections.remove(pos);
+        } else if let Some(id) = sec_id {
+            view.sections.push(Section {
+                id, name: sec_name, cat_id,
+                sort_new:         SortNewItems::OnLeavingSection,
+                primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
+                primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
+                secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
+                secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
+                filter:           vec![],
+            });
+        }
+    }
+
+    /// Enter: close the picker, accepting whatever toggles were made.
+    pub fn vmgr_sec_pick_confirm(&mut self) {
+        if let ViewMgrMode::Props { sec_add_picker, .. } = &mut self.vmgr_state.mode {
+            *sec_add_picker = None;
+        }
+    }
+
+    pub fn vmgr_sec_pick_cancel(&mut self) {
+        if let ViewMgrMode::Props { sec_add_picker, .. } = &mut self.vmgr_state.mode {
+            *sec_add_picker = None;
         }
     }
 
