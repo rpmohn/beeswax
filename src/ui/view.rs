@@ -125,11 +125,16 @@ pub fn render(frame: &mut Frame, app: &App) {
         let sec_display_name = section.name.clone();
 
         // Left column header cells
+        let head_col_text_style = if cursor_on_head && matches!(app.mode, Mode::Normal) {
+            app.theme.item_selected_line
+        } else {
+            app.theme.view_col_head
+        };
         let left_head_vals: Vec<String> = left_cols.iter().map(|c| c.name.clone()).collect();
         let left_active  = if cursor_on_head { active_col.filter(|&i| i < lc) } else { None };
         let left_head_edit = head_cell_edit(left_active, &app.mode);
         let left_head_spans = col_cells(left_cols, &left_head_vals,
-                                        left_active, left_head_edit, None, "", app.theme.view_col_head, app.theme.item_selected);
+                                        left_active, left_head_edit, None, "", head_col_text_style, app.theme.item_selected_field);
 
         // Main column content
         // When left columns exist, indent section header to align with item text.
@@ -144,12 +149,16 @@ pub fn render(frame: &mut Frame, app: &App) {
                 Mode::Normal => {
                     let name: String = sec_display_name.chars().take(max_name_w).collect();
                     let w = pfx_w + name.chars().count();
-                    let style = if app.col_cursor == 0 {
-                        app.theme.item_selected.add_modifier(Modifier::BOLD)
+                    let name_style = if app.col_cursor == 0 {
+                        app.theme.item_selected_field.add_modifier(Modifier::BOLD)
                     } else {
-                        app.theme.view_sec_head.add_modifier(Modifier::BOLD)
+                        app.theme.item_selected_line.add_modifier(Modifier::BOLD)
                     };
-                    (vec![Span::raw(ind), Span::raw(sec_prefix), Span::styled(name, style)], w)
+                    (vec![
+                        Span::styled(ind, app.theme.item_selected_line),
+                        Span::styled(sec_prefix, app.theme.item_selected_line),
+                        Span::styled(name, name_style),
+                    ], w)
                 }
                 Mode::Edit { buffer, cursor, col, .. } if *col == 0 => {
                     let (left, hi, right) = cursor_split(buffer, *cursor);
@@ -159,7 +168,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::raw(ind),
                         Span::raw(sec_prefix),
                         Span::styled(left,  sec_style),
-                        Span::styled(hi,    app.theme.item_selected),
+                        Span::styled(hi,    app.theme.item_selected_field),
                         Span::styled(right, sec_style),
                     ], w)
                 }
@@ -177,7 +186,12 @@ pub fn render(frame: &mut Frame, app: &App) {
                   Span::styled(name, app.theme.view_sec_head.add_modifier(Modifier::BOLD))], w)
         };
         if head_used < main_col_w {
-            head_spans.push(Span::raw(" ".repeat(main_col_w - head_used)));
+            let pad = " ".repeat(main_col_w - head_used);
+            if cursor_on_head && matches!(app.mode, Mode::Normal) {
+                head_spans.push(Span::styled(pad, app.theme.item_selected_line));
+            } else {
+                head_spans.push(Span::raw(pad));
+            }
         }
 
         // Right column header cells
@@ -185,15 +199,29 @@ pub fn render(frame: &mut Frame, app: &App) {
         let right_active = if cursor_on_head { active_col.filter(|&i| i >= lc).map(|i| i - lc) } else { None };
         let right_head_edit = head_cell_edit(right_active.map(|i| i + lc), &app.mode);
         let right_head_spans = col_cells(right_cols, &right_head_vals,
-                                         right_active, right_head_edit, None, "", app.theme.view_col_head, app.theme.item_selected);
+                                         right_active, right_head_edit, None, "", head_col_text_style, app.theme.item_selected_field);
 
         let mut row = left_head_spans;
         row.extend(head_spans);
-        if !right_cols.is_empty() { row.push(Span::raw(" ")); }
+        if !right_cols.is_empty() {
+            if cursor_on_head && matches!(app.mode, Mode::Normal) {
+                row.push(Span::styled(" ", app.theme.item_selected_line));
+            } else {
+                row.push(Span::raw(" "));
+            }
+        }
         row.extend(right_head_spans);
+        if cursor_on_head && matches!(app.mode, Mode::Normal) {
+            row.push(Span::styled(" ".repeat(total_body_w), app.theme.item_selected_line));
+        }
         if cursor_on_head { cursor_first_line = lines.len(); cursor_line_found = true; }
         let head_first = lines.len();
-        lines.push(Line::from(row).style(app.theme.view_head_bg));
+        let head_line_style = if cursor_on_head && matches!(app.mode, Mode::Normal) {
+            app.theme.item_selected_line
+        } else {
+            app.theme.view_head_bg
+        };
+        lines.push(Line::from(row).style(head_line_style));
 
         if cursor_on_head {
             if let Mode::Create { buffer, cursor } = &app.mode {
@@ -201,11 +229,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let empty: Vec<String> = app.view.columns.iter().map(|_| String::new()).collect();
                 let left_empty  = &empty[..lc];
                 let right_empty = &empty[lc..];
-                let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected);
-                spans.extend(input_row_spans(buffer, *cursor, app.theme.view_item, app.theme.item_selected));
+                let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field);
+                spans.extend(input_row_spans(buffer, *cursor, app.theme.view_item, app.theme.item_selected_field));
                 if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
                 if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
-                spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected));
+                spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field));
                 lines.push(Line::from(spans));
             }
             cursor_last_line = lines.len() - 1;
@@ -337,9 +365,14 @@ pub fn render(frame: &mut Frame, app: &App) {
                     (None, None, None, None, None)
                 };
 
+                let col_text_style = if cursor_on_item && matches!(app.mode, Mode::Normal) {
+                    app.theme.item_selected_line
+                } else {
+                    app.theme.view_col
+                };
                 let left_item_spans = col_cells(left_cols, &left_vals_row,
                                                 left_active, left_edit,
-                                                hint_ref.filter(|_| left_active.is_some()), "\u{00B7}", app.theme.view_col, app.theme.item_selected);
+                                                hint_ref.filter(|_| left_active.is_some()), "\u{00B7}", col_text_style, app.theme.item_selected_field);
 
                 // Main column content: item text (word-wrapped) across rows.
                 let is_text_row = row_i < n_text_rows;
@@ -349,13 +382,16 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let mut item_spans: Vec<Span<'static>> = if cursor_on_item && is_text_row {
                     match &app.mode {
                         Mode::Normal => {
-                            // Highlight all wrapped lines when selected
-                            let style = if app.col_cursor == 0 {
-                                app.theme.item_selected
+                            // Prefix (indent + icon) always gets line style; only the text gets field style.
+                            let text_style = if app.col_cursor == 0 {
+                                app.theme.item_selected_field
                             } else {
-                                app.theme.view_item.add_modifier(Modifier::BOLD)
+                                app.theme.item_selected_line
                             };
-                            vec![Span::raw(indent), Span::styled(line_text, style)]
+                            vec![
+                                Span::styled(indent, app.theme.item_selected_line),
+                                Span::styled(line_text, text_style),
+                            ]
                         }
                         Mode::Edit { col, .. } if *col == 0 => {
                             if let Some((dcl, dcc)) = edit_cursor_display {
@@ -364,7 +400,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                                     vec![
                                         Span::styled(indent, app.theme.view_item),
                                         Span::styled(left,   app.theme.view_item),
-                                        Span::styled(hi,     app.theme.item_selected),
+                                        Span::styled(hi,     app.theme.item_selected_field),
                                         Span::styled(right,  app.theme.view_item),
                                     ]
                                 } else {
@@ -400,17 +436,31 @@ pub fn render(frame: &mut Frame, app: &App) {
                     main_col_w
                 };
                 if text_chars < main_col_w {
-                    item_spans.push(Span::raw(" ".repeat(main_col_w - text_chars)));
+                    let pad = " ".repeat(main_col_w - text_chars);
+                    if cursor_on_item && matches!(app.mode, Mode::Normal) {
+                        item_spans.push(Span::styled(pad, app.theme.item_selected_line));
+                    } else {
+                        item_spans.push(Span::raw(pad));
+                    }
                 }
 
                 let right_item_spans = col_cells(right_cols, &right_vals_row,
                                                  right_active, right_edit,
-                                                 hint_ref.filter(|_| right_active.is_some()), "\u{00B7}", app.theme.view_col, app.theme.item_selected);
+                                                 hint_ref.filter(|_| right_active.is_some()), "\u{00B7}", col_text_style, app.theme.item_selected_field);
 
                 let mut row = left_item_spans;
                 row.extend(item_spans);
-                if !right_cols.is_empty() { row.push(Span::raw(" ")); }
+                if !right_cols.is_empty() {
+                    if cursor_on_item && matches!(app.mode, Mode::Normal) {
+                        row.push(Span::styled(" ", app.theme.item_selected_line));
+                    } else {
+                        row.push(Span::raw(" "));
+                    }
+                }
                 row.extend(right_item_spans);
+                if cursor_on_item && matches!(app.mode, Mode::Normal) {
+                    row.push(Span::styled(" ".repeat(total_body_w), app.theme.item_selected_line));
+                }
                 lines.push(Line::from(row));
             }
 
@@ -442,17 +492,17 @@ pub fn render(frame: &mut Frame, app: &App) {
                             (line.clone(), String::new(), String::new())
                         };
                         let mut spans = if row_i == 0 {
-                            col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected)
+                            col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field)
                         } else {
                             let blanks: Vec<String> = left_empty.iter().map(|_| String::new()).collect();
-                            col_cells(left_cols, &blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected)
+                            col_cells(left_cols, &blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field)
                         };
                         spans.push(Span::styled(indent, app.theme.view_item));
                         spans.push(Span::styled(left,   app.theme.view_item));
                         if !hi.is_empty() || row_i == dcl {
                             spans.push(Span::styled(
                                 if hi.is_empty() { " ".to_string() } else { hi },
-                                app.theme.item_selected,
+                                app.theme.item_selected_field,
                             ));
                         }
                         spans.push(Span::styled(right, app.theme.view_item));
@@ -461,7 +511,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
                         if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
                         let right_blanks: Vec<String> = right_empty.iter().map(|_| String::new()).collect();
-                        spans.extend(col_cells(right_cols, &right_blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected));
+                        spans.extend(col_cells(right_cols, &right_blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field));
                         lines.push(Line::from(spans));
                     }
                 }
@@ -522,7 +572,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             .map(|c| c.name.as_str())
             .unwrap_or("");
 
-        let rev = app.theme.item_selected;
+        let rev = app.theme.item_selected_field;
 
         // Head — fully highlighted when active; show at least one space when blank
         let head_line = {
@@ -578,7 +628,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Choices picker overlay ────────────────────────────────────────────
     if let ColMode::Choices { picker_cursor, kind, .. } = &app.col_mode {
-        let rev = app.theme.item_selected;
+        let rev = app.theme.item_selected_field;
 
         let lines: Vec<Line> = match kind {
             ChoicesKind::Category => {
@@ -634,7 +684,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Quick-add category picker (Alt-R / Alt-L) ────────────────────────────
     if let ColMode::QuickAdd { position, picker_cursor, confirm_delete } = &app.col_mode {
-        let rev  = app.theme.item_selected;
+        let rev  = app.theme.item_selected_field;
         let dim  = Style::default().add_modifier(Modifier::DIM);
         let flat = flatten_cats(&app.categories);
         let pc   = *picker_cursor;
@@ -721,7 +771,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         // ── Delete confirmation overlay ───────────────────────────────────
         if *confirm_delete {
             let cat_name = flat.get(pc).map(|e| e.name.as_str()).unwrap_or("?");
-            let rev = app.theme.item_selected;
+            let rev = app.theme.item_selected_field;
             // Make the dialog wide enough to show the category name.
             let msg = format!("Discard \"{}\"?", cat_name);
             let dlg_w = (msg.chars().count() + 4).max(30).min(area.width as usize) as u16;
@@ -760,7 +810,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
 
-        let rev = app.theme.item_selected;
+        let rev = app.theme.item_selected_field;
 
         // Helper: field value span (REVERSED when active)
         let field_span = |label: &'static str, val: String, af: PropsField, target: PropsField| -> Vec<Span<'static>> {
@@ -925,7 +975,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let inner = block.inner(cal_rect);
         let iw = inner.width as usize;
 
-        let rev  = app.theme.item_selected;
+        let rev  = app.theme.item_selected_field;
         let bold = Style::default().add_modifier(Modifier::BOLD);
 
         // Title: centre "Month YYYY" in iw chars
@@ -980,7 +1030,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── SetTime modal ─────────────────────────────────────────────────────────
     if let ColMode::SetTime { year, month, day, hour_buf, min_buf, sec_buf, active, .. } = &app.col_mode {
-        let rev = app.theme.item_selected;
+        let rev = app.theme.item_selected_field;
 
         let st_rect = centered_rect(28, 7, area);
         frame.render_widget(Clear, st_rect);
@@ -1056,7 +1106,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let item_vals   = item_vals.unwrap_or(&empty_vals);
         let cond_cats   = cond_cats.unwrap_or(&empty_conds);
 
-        let rev  = app.theme.item_selected;
+        let rev  = app.theme.item_selected_field;
         let bold = Style::default().add_modifier(Modifier::BOLD);
 
         // Scroll window: same 16-row limit as Assignment Profile.
@@ -1136,7 +1186,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let gi       = *gi;
         let cursor   = *cursor;
         let edit_buf = edit_buf.clone();
-        let rev = app.theme.item_selected;
+        let rev = app.theme.item_selected_field;
         let dim = app.theme.dim;
 
         let item = match app.items.get(gi) { Some(it) => it, None => return };
@@ -1259,7 +1309,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Remove-item confirmation modal ────────────────────────────────────────
     if let Mode::ConfirmDeleteItem { yes } = &app.mode {
-        let rev   = app.theme.item_selected;
+        let rev   = app.theme.item_selected_field;
         let unsel = app.theme.dialog;
         let dim   = app.theme.dim;
         let dlg_rect = centered_rect(46, 9, area);
@@ -1299,7 +1349,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Discard-item confirmation modal ───────────────────────────────────────
     if let Mode::ConfirmDiscardItem { yes } = &app.mode {
-        let rev   = app.theme.item_selected;
+        let rev   = app.theme.item_selected_field;
         let unsel = app.theme.dialog;
         let dlg_rect = centered_rect(46, 9, area);
         frame.render_widget(Clear, dlg_rect);
@@ -1338,7 +1388,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Remove-column confirmation modal ──────────────────────────────────────
     if let ColMode::ConfirmRemove { yes } = &app.col_mode {
-        let rev = app.theme.item_selected;
+        let rev = app.theme.item_selected_field;
         let dlg_rect = centered_rect(38, 7, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL)
@@ -1375,7 +1425,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Remove-section confirmation modal ─────────────────────────────────────
     if let SectionMode::ConfirmRemove { yes } = &app.sec_mode {
-        let rev = app.theme.item_selected;
+        let rev = app.theme.item_selected_field;
         let dlg_rect = centered_rect(44, 7, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL).title(" Remove Section ");
@@ -1413,7 +1463,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     if let AssignMode::Profile { gi, cursor: prof_cursor, on_sub } = &app.assign_mode {
         let (gi, prof_cur, prof_on_sub) = (*gi, *prof_cursor, *on_sub);
         let cats    = flatten_cats(&app.categories);
-        let rev     = app.theme.item_selected;
+        let rev     = app.theme.item_selected_field;
         let bold    = Style::default().add_modifier(Modifier::BOLD);
         let dim     = Style::default().add_modifier(Modifier::DIM);
 
@@ -1522,7 +1572,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
     if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
         let cats       = flatten_cats(&app.categories);
-        let rev        = app.theme.item_selected;
+        let rev        = app.theme.item_selected_field;
         let dlg_rect   = centered_rect(52, 11, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL).title(" Section Add ");
@@ -1741,7 +1791,7 @@ fn col_cells(
             let cell = pad_or_trunc(&display_val, text_w);
             spans.push(Span::styled(cell, text_style));
         }
-        spans.push(Span::raw(" "));
+        spans.push(Span::styled(" ", text_style));
     }
     spans
 }
@@ -1846,7 +1896,7 @@ pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
-    let rev = app.theme.item_selected;
+    let rev = app.theme.item_selected_field;
     let unsel = app.theme.dialog;
 
     let yes_style    = if *choice == AskChoice::Yes    { rev } else { unsel };
@@ -1903,7 +1953,7 @@ pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let stars: String = "*".repeat(buf.chars().count());
     let pw_field = format!("{:<width$}", stars, width = fw);
     let pw_style = if !*confirm_active {
-        app.theme.item_selected
+        app.theme.item_selected_field
     } else {
         Style::default()
     };
@@ -1919,7 +1969,7 @@ pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
         let cf_stars: String = "*".repeat(confirm_buf.chars().count());
         let cf_field = format!("{:<width$}", cf_stars, width = fw);
         let cf_style = if *confirm_active {
-            app.theme.item_selected
+            app.theme.item_selected_field
         } else {
             Style::default()
         };
@@ -1973,7 +2023,7 @@ pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let name_label = "  View name: ";
     let sec_label  = "  Sections:  ";
     let field_w    = 22usize;
-    let rev        = app.theme.item_selected;
+    let rev        = app.theme.item_selected_field;
 
     let name_line: Line = if active_field == ViewAddField::Name {
         let (left, hi, right) = super::cursor_split(name_buf, name_cur);
@@ -2068,7 +2118,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
-    let rev = app.theme.item_selected;
+    let rev = app.theme.item_selected_field;
     let dim = app.theme.dim;
     let iw  = inner.width as usize;
 
@@ -2386,7 +2436,7 @@ pub fn render_sort_dialog(
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
-    let rev = app.theme.item_selected;
+    let rev = app.theme.item_selected_field;
     let unsel = app.theme.dialog;
     let fs  = |active: bool| if active { rev } else { unsel };
 

@@ -90,7 +90,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Span::raw(" "),  // blank indicator
                     Span::raw(" "),  // separator
                     Span::raw(left),
-                    Span::styled(hi, app.theme.item_selected),
+                    Span::styled(hi, app.theme.item_selected_field),
                     Span::raw(right),
                 ]));
             }
@@ -114,7 +114,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::raw(ind),
                         Span::raw(kchar),
                         Span::raw(" "),
-                        Span::styled(entry.name.clone(), app.theme.item_selected),
+                        Span::styled(entry.name.clone(), app.theme.item_selected_field),
                     ]),
                     CatMode::Edit { buffer, cursor: buf_cur } => {
                         // Indicator stays; only the name is being edited
@@ -124,7 +124,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                             Span::raw(kchar),
                             Span::raw(" "),
                             Span::raw(left),
-                            Span::styled(hi, app.theme.item_selected),
+                            Span::styled(hi, app.theme.item_selected_field),
                             Span::raw(right),
                         ])
                     }
@@ -140,7 +140,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::raw(ind),
                         Span::raw(kchar),
                         Span::raw(" "),
-                        Span::styled(entry.name.clone(), app.theme.item_selected),
+                        Span::styled(entry.name.clone(), app.theme.item_selected_field),
                     ]),
                 }
             } else {
@@ -164,7 +164,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::raw(" "),  // blank indicator — new cats are Standard
                         Span::raw(" "),  // separator
                         Span::raw(left),
-                        Span::styled(hi, app.theme.item_selected),
+                        Span::styled(hi, app.theme.item_selected_field),
                         Span::raw(right),
                     ]));
                 }
@@ -204,7 +204,7 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
             CategoryKind::Unindexed => "Unindexed",
         };
 
-        let sel = app.theme.item_selected;
+        let sel = app.theme.item_selected_field;
 
         // Active: whole field content in selected style, padded to field_w.
         // Inactive: plain text padded to field_w.

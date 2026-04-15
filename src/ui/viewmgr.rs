@@ -58,13 +58,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Line::from(vec![
                         Span::raw(format!("{} ", marker)),
                         Span::raw(left),
-                        Span::styled(hi, app.theme.item_selected),
+                        Span::styled(hi, app.theme.item_selected_field),
                         Span::raw(right),
                     ])
                 }
                 _ => Line::from(vec![
                     Span::raw(format!("{} ", marker)),
-                    Span::styled(view.name.clone(), app.theme.item_selected),
+                    Span::styled(view.name.clone(), app.theme.item_selected_field),
                 ]),
             }
         } else {
@@ -93,7 +93,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(del_block.clone(), modal_rect);
         let del_inner = del_block.inner(modal_rect);
 
-        let rev = app.theme.item_selected;
+        let rev = app.theme.item_selected_field;
         let yes_span = if *yes { Span::styled("[ Yes ]", rev) } else { Span::raw("[ Yes ]") };
         let no_span  = if !*yes { Span::styled("[ No ]", rev)  } else { Span::raw("[ No ]")  };
 
@@ -166,7 +166,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         height: inner.height,
     };
 
-    let rev = app.theme.item_selected;
+    let rev = app.theme.item_selected_field;
     let iw  = content.width as usize;
 
     // Layout constants
@@ -469,7 +469,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             if i == *cursor {
                 pick_lines.push(Line::from(Span::styled(
                     format!(" {}", label),
-                    app.theme.item_selected,
+                    app.theme.item_selected_field,
                 )));
             } else {
                 pick_lines.push(Line::from(format!(" {}", label)));

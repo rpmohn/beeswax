@@ -40,6 +40,10 @@ const D_COMMENT: Color = Color::Rgb(0x62, 0x72, 0xa4);
 const D_PURPLE:  Color = Color::Rgb(0xbd, 0x93, 0xf9);
 const D_CYAN:    Color = Color::Rgb(0x8b, 0xe9, 0xfd);
 
+// ── Built-in line-selection backgrounds ──────────────────────────────────────
+const AGENDA_COLOR_LINE_BG: Color = Color::Rgb(0x99, 0x00, 0x00);  // dark red (toned-down Red)
+const AGENDA_MONO_LINE_BG:  Color = Color::Rgb(0x80, 0x80, 0x80);  // mid-gray (toned-down White)
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
@@ -98,8 +102,10 @@ pub struct Theme {
     pub body:             Style,
     /// Normal (unselected) item text.
     pub item:             Style,
-    /// Highlighted (selected) item or section head.
-    pub item_selected:    Style,
+    /// Highlighted (selected) field / edit cursor within the selected row.
+    pub item_selected_field: Style,
+    /// Background highlight for the entire selected item row (toned-down).
+    pub item_selected_line:  Style,
     /// Unselected section head.
     pub section:          Style,
     /// Edit/create text cursor character.
@@ -157,8 +163,10 @@ impl Theme {
         let bar_bg    = color(&c.bar_bg,    None);
         let barcur_fg = color(&c.bar_cursor_fg, body_fg);
         let barcur_bg = color(&c.bar_cursor_bg, body_bg);
-        let sel_fg    = color(&c.selected_fg, None);
-        let sel_bg    = color(&c.selected_bg, None);
+        let sel_fg    = color(&c.selected_field_fg, None);
+        let sel_bg    = color(&c.selected_field_bg, None);
+        let sline_fg  = color(&c.selected_line_fg, sel_fg);
+        let sline_bg  = color(&c.selected_line_bg, None);
         let sec_fg    = color(&c.section_fg,  None);
 
         let dlg_fg    = color(&c.dialog_fg,         body_fg);
@@ -190,9 +198,13 @@ impl Theme {
         let body = apply(Style::default(), body_fg, body_bg);
         let item = apply(Style::default(), body_fg, body_bg);
 
-        let item_selected = if sel_fg.is_some() || sel_bg.is_some() {
+        let item_selected_field = if sel_fg.is_some() || sel_bg.is_some() {
             apply(Style::default(), sel_fg, sel_bg)
-        } else { def.item_selected };
+        } else { def.item_selected_field };
+
+        let item_selected_line = if sline_fg.is_some() || sline_bg.is_some() {
+            apply(Style::default(), sline_fg, sline_bg)
+        } else { def.item_selected_line };
 
         let section = if sec_fg.is_some() || body_bg.is_some() {
             apply(Style::default(), sec_fg.or(body_fg), body_bg)
@@ -214,7 +226,7 @@ impl Theme {
         let view_sec_head = apply(Style::default(), vsech_fg, None);
         let view_head_bg  = apply(Style::default(), None, vhbg_bg);
 
-        Theme { bar, bar_cursor, body, item, item_selected,
+        Theme { bar, bar_cursor, body, item, item_selected_field, item_selected_line,
                 section, cursor, dialog, dialog_border, dim,
                 view_bg, view_item, view_col, view_col_head, view_sec_head, view_head_bg }
     }
@@ -223,12 +235,13 @@ impl Theme {
         let rev  = Style::default().add_modifier(Modifier::REVERSED);
         let bold = Style::default().add_modifier(Modifier::BOLD);
         Theme {
-            bar:              rev,
-            bar_cursor:       Style::default().remove_modifier(Modifier::REVERSED),
-            body:             Style::default(),
-            item:             Style::default(),
-            item_selected:    rev,
-            section:          bold,
+            bar:                  rev,
+            bar_cursor:           Style::default().remove_modifier(Modifier::REVERSED),
+            body:                 Style::default(),
+            item:                 Style::default(),
+            item_selected_field:  rev,
+            item_selected_line:   rev,
+            section:              bold,
             cursor:           rev,
             dialog:           Style::default(),
             dialog_border:    Style::default(),
@@ -250,11 +263,12 @@ impl Theme {
         let bar_fg  = Color::White;
         let bar_bg  = Color::Blue;
         Theme {
-            bar:              Style::default().fg(bar_fg).bg(bar_bg),
-            bar_cursor:       Style::default().fg(body_fg).bg(body_bg),
-            body:             Style::default().fg(body_fg).bg(body_bg),
-            item:             Style::default().fg(body_fg).bg(body_bg),
-            item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
+            bar:                  Style::default().fg(bar_fg).bg(bar_bg),
+            bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
+            body:                 Style::default().fg(body_fg).bg(body_bg),
+            item:                 Style::default().fg(body_fg).bg(body_bg),
+            item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
+            item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_COLOR_LINE_BG),
             section:          Style::default().fg(Color::Blue).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
@@ -275,11 +289,12 @@ impl Theme {
         let sel_fg  = Color::Black;
         let sel_bg  = Color::White;
         Theme {
-            bar:              Style::default().fg(sel_fg).bg(sel_bg),
-            bar_cursor:       Style::default().fg(body_fg).bg(body_bg),
-            body:             Style::default().fg(body_fg).bg(body_bg),
-            item:             Style::default().fg(body_fg).bg(body_bg),
-            item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
+            bar:                  Style::default().fg(sel_fg).bg(sel_bg),
+            bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
+            body:                 Style::default().fg(body_fg).bg(body_bg),
+            item:                 Style::default().fg(body_fg).bg(body_bg),
+            item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
+            item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_MONO_LINE_BG),
             section:          Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
@@ -305,12 +320,13 @@ impl Theme {
         let sel_fg   = S_BASE3;   // #fdf6e3
         let sel_bg   = S_BLUE;    // #268bd2
         Theme {
-            bar:              Style::default().fg(bar_fg).bg(bar_bg),
-            bar_cursor:       Style::default().fg(body_fg).bg(body_bg),
-            body:             Style::default().fg(body_fg).bg(body_bg),
-            item:             Style::default().fg(body_fg).bg(body_bg),
-            item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
-            section:          Style::default().fg(S_CYAN).bg(body_bg).add_modifier(Modifier::BOLD),
+            bar:                  Style::default().fg(bar_fg).bg(bar_bg),
+            bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
+            body:                 Style::default().fg(body_fg).bg(body_bg),
+            item:                 Style::default().fg(body_fg).bg(body_bg),
+            item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
+            item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE02),
+            section:              Style::default().fg(S_CYAN).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
@@ -335,12 +351,13 @@ impl Theme {
         let sel_fg   = S_BASE3;   // #fdf6e3
         let sel_bg   = S_BLUE;    // #268bd2
         Theme {
-            bar:              Style::default().fg(bar_fg).bg(bar_bg),
-            bar_cursor:       Style::default().fg(body_fg).bg(body_bg),
-            body:             Style::default().fg(body_fg).bg(body_bg),
-            item:             Style::default().fg(body_fg).bg(body_bg),
-            item_selected:    Style::default().fg(sel_fg).bg(sel_bg),
-            section:          Style::default().fg(S_BLUE).bg(body_bg).add_modifier(Modifier::BOLD),
+            bar:                  Style::default().fg(bar_fg).bg(bar_bg),
+            bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
+            body:                 Style::default().fg(body_fg).bg(body_bg),
+            item:                 Style::default().fg(body_fg).bg(body_bg),
+            item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
+            item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE2),
+            section:              Style::default().fg(S_BLUE).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
@@ -357,11 +374,12 @@ impl Theme {
     fn gruvbox_dark() -> Self {
         // warm cream text on charcoal; bright yellow selection; muted blue section heads
         Theme {
-            bar:              Style::default().fg(G_FG4).bg(G_BG1),
-            bar_cursor:       Style::default().fg(G_FG).bg(G_BG),
-            body:             Style::default().fg(G_FG).bg(G_BG),
-            item:             Style::default().fg(G_FG).bg(G_BG),
-            item_selected:    Style::default().fg(G_BG).bg(G_YELLOW),
+            bar:                  Style::default().fg(G_FG4).bg(G_BG1),
+            bar_cursor:           Style::default().fg(G_FG).bg(G_BG),
+            body:                 Style::default().fg(G_FG).bg(G_BG),
+            item:                 Style::default().fg(G_FG).bg(G_BG),
+            item_selected_field:  Style::default().fg(G_BG).bg(G_YELLOW),
+            item_selected_line:   Style::default().fg(G_BG).bg(G_BG2),
             section:          Style::default().fg(G_BLUE_D).bg(G_BG).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(G_BG).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG).bg(G_BG),
@@ -379,11 +397,12 @@ impl Theme {
     fn gruvbox_light() -> Self {
         // dark warm text on cream; bright yellow selection; dark blue section heads
         Theme {
-            bar:              Style::default().fg(G_BG4_L).bg(G_BG2_L),
-            bar_cursor:       Style::default().fg(G_FG_L).bg(G_BG_L),
-            body:             Style::default().fg(G_FG_L).bg(G_BG_L),
-            item:             Style::default().fg(G_FG_L).bg(G_BG_L),
-            item_selected:    Style::default().fg(G_BG_L).bg(G_YELLOW),
+            bar:                  Style::default().fg(G_BG4_L).bg(G_BG2_L),
+            bar_cursor:           Style::default().fg(G_FG_L).bg(G_BG_L),
+            body:                 Style::default().fg(G_FG_L).bg(G_BG_L),
+            item:                 Style::default().fg(G_FG_L).bg(G_BG_L),
+            item_selected_field:  Style::default().fg(G_BG_L).bg(G_YELLOW),
+            item_selected_line:   Style::default().fg(G_BG_L).bg(G_BG2_L),
             section:          Style::default().fg(G_BLUE_L).bg(G_BG_L).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(G_BG_L).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG_L).bg(G_BG_L),
@@ -401,11 +420,12 @@ impl Theme {
     fn dracula() -> Self {
         // light fg on dark purple-grey bg; purple selection; cyan section heads
         Theme {
-            bar:              Style::default().fg(D_FG).bg(D_CUR),
-            bar_cursor:       Style::default().fg(D_FG).bg(D_BG),
-            body:             Style::default().fg(D_FG).bg(D_BG),
-            item:             Style::default().fg(D_FG).bg(D_BG),
-            item_selected:    Style::default().fg(D_BG).bg(D_PURPLE),
+            bar:                  Style::default().fg(D_FG).bg(D_CUR),
+            bar_cursor:           Style::default().fg(D_FG).bg(D_BG),
+            body:                 Style::default().fg(D_FG).bg(D_BG),
+            item:                 Style::default().fg(D_FG).bg(D_BG),
+            item_selected_field:  Style::default().fg(D_BG).bg(D_PURPLE),
+            item_selected_line:   Style::default().fg(D_BG).bg(D_CUR),
             section:          Style::default().fg(D_CYAN).bg(D_BG).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(D_BG).bg(D_PURPLE),
             dialog:           Style::default().fg(D_FG).bg(D_BG),
