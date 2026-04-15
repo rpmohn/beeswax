@@ -1074,6 +1074,8 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Home     => app.vmgr_cursor_home(),
         KeyCode::End      => app.vmgr_cursor_end(),
         KeyCode::Enter    => app.vmgr_select(),
+        KeyCode::Insert   => app.view_add_open(),
+        KeyCode::Delete   => app.vmgr_open_confirm_delete(),
         KeyCode::F(2)  => app.vmgr_begin_rename(),
         KeyCode::F(4)  => app.vmgr_open_confirm_delete(),
         KeyCode::F(6)  => app.vmgr_begin_props(),
@@ -1081,6 +1083,7 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(9)  => { app.close_view_mgr(); app.toggle_catmgr(); }
         KeyCode::F(10) => app.open_menu(),
         KeyCode::Char('i') if app.nav_mode == NavMode::Vi => app.vmgr_begin_rename(),
+        KeyCode::Char('o') | KeyCode::Char('O') if app.nav_mode == NavMode::Vi => app.view_add_open(),
         _ => {}
     }
 }

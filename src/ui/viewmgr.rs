@@ -25,6 +25,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .style(app.theme.dialog_border)
         .title_top(Line::from(" View Manager ").alignment(Alignment::Center))
         .title_bottom(
             Line::from(" Press ENTER when done, ESC to cancel ")
@@ -75,7 +76,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         lines.push(line);
     }
 
-    frame.render_widget(Paragraph::new(lines).style(Style::default()), inner);
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
 
     // ── ConfirmDelete overlay ─────────────────────────────────────────────────
     if let ViewMgrMode::ConfirmDelete { yes } = &app.vmgr_state.mode {
