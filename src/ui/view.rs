@@ -1539,7 +1539,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             let indent = "  ".repeat(e.depth);
             let highlighted = i == prof_cur && !prof_on_sub;
             let cat_line = Line::from(vec![
-                Span::raw(format!(" {}\u{2502}{} {}", marker, type_ind, indent)),
+                Span::raw(format!(" {}\u{2502} {}{} ", marker, indent, type_ind)),
                 if highlighted {
                     Span::styled(e.name.clone(), rev)
                 } else {

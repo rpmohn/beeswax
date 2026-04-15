@@ -501,7 +501,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             let indent = "  ".repeat(entry.depth);
             let highlighted = i == *picker_cur;
             pick_lines.push(Line::from(vec![
-                Span::raw(format!(" {}\u{2502}{} {}", marker, type_ind, indent)),
+                Span::raw(format!(" {}\u{2502} {}{} ", marker, indent, type_ind)),
                 if highlighted {
                     Span::styled(entry.name.clone(), rev)
                 } else {
