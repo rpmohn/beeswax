@@ -1148,7 +1148,11 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode) {
 
     let is_name = matches!(
         app.vmgr_state.mode,
-        ViewMgrMode::Props { active_field: ViewPropsField::Name, .. }
+        ViewMgrMode::Props { active_field: ViewPropsField::Name, name_editing: true, .. }
+    );
+    let is_name_inactive = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field: ViewPropsField::Name, name_editing: false, .. }
     );
     let is_sections = matches!(
         app.vmgr_state.mode,
@@ -1174,6 +1178,8 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Enter                                               => app.vmgr_props_confirm(),
         KeyCode::Esc                                                 => app.vmgr_props_cancel(),
+        KeyCode::F(2) if is_name_inactive                            => app.vmgr_props_name_begin_edit(),
+        KeyCode::Char('i') if is_name_inactive                       => app.vmgr_props_name_begin_edit(),
         KeyCode::Up   if is_sections                                 => app.vmgr_props_sec_up(),
         KeyCode::Down if is_sections                                 => app.vmgr_props_sec_down(),
         KeyCode::Tab | KeyCode::Down                                 => app.vmgr_props_field_next(),

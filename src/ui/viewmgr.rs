@@ -122,7 +122,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let props = match &app.vmgr_state.mode {
         ViewMgrMode::Props { .. } => match &app.vmgr_state.mode { ViewMgrMode::Props {
-            name_buf, name_cur,
+            name_buf, name_cur, name_editing,
             sec_cursor,
             sort_state,
             sec_sort_method, sec_sort_order, sec_sort_picker,
@@ -130,7 +130,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             hide_empty_sections, hide_done_items, hide_dependent_items,
             hide_inherited_items, hide_column_heads, section_separators, number_items,
             active_field, sec_scroll,
-        } => (name_buf, *name_cur, *sec_cursor, sort_state,
+        } => (name_buf, *name_cur, *name_editing, *sec_cursor, sort_state,
               *sec_sort_method, *sec_sort_order, sec_sort_picker, sec_add_picker,
               *hide_empty_sections, *hide_done_items,
               *hide_dependent_items, *hide_inherited_items, *hide_column_heads,
@@ -138,7 +138,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         _ => return },
         _ => return,
     };
-    let (name_buf, name_cur, sec_cursor, sort_state,
+    let (name_buf, name_cur, name_editing, sec_cursor, sort_state,
          sec_sort_method, sec_sort_order, sec_sort_picker, sec_add_picker,
          hes, hdi, hdep, hii, hch, ss, ni, active_field, sec_scroll) = props;
 
@@ -161,12 +161,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
-    let content = Rect {
-        x:      inner.x + 1,
-        y:      inner.y,
-        width:  inner.width.saturating_sub(2),
-        height: inner.height,
-    };
+    let content = inner;
 
     let rev       = app.theme.item_selected_field;
     let dlabel    = app.theme.dialog_label;
@@ -186,9 +181,11 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let is_active = active_field == field;
         let lbl_style = if is_active { dlabel_sel } else { dlabel };
         let mut spans: Vec<Span<'static>> = if is_active {
+            let pad = val_w.saturating_sub(val_str.chars().count());
             vec![
                 Span::styled(label.to_string(), lbl_style),
-                Span::styled(format!("{:<w$}", val_str, w = val_w), rev),
+                Span::styled(val_str.to_string(), rev),
+                Span::raw(" ".repeat(pad)),
             ]
         } else {
             vec![
@@ -209,41 +206,44 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let can_scroll_up   = sec_scroll > 0;
     let can_scroll_down = sec_scroll + 6 < sec_names.len();
 
-    // Returns (text, highlight) for each right-column slot.
+    // Returns (prefix, text, highlight) for each right-column slot.
+    // prefix is unstyled (arrow indicator + space for section rows, empty otherwise).
     // slot 0 → blank, slot 1 → "Sections:" header, slots 2-7 → up to 6 section names.
-    let right_slot = |slot: usize| -> (String, bool) {
+    let right_slot = |slot: usize| -> (String, String, bool) {
         match slot {
-            0 => (String::new(), false),
-            1 => ("Sections:".chars().take(right_avail).collect(), false),
+            0 => (String::new(), String::new(), false),
+            1 => (String::new(), "Sections:".chars().take(right_avail).collect(), false),
             n if n >= 2 && n <= 7 => {
                 let offset = n - 2;
                 let idx = sec_scroll + offset;
-                let text = if let Some(name) = sec_names.get(idx) {
+                if let Some(name) = sec_names.get(idx) {
                     let arrow = if offset == 0 && can_scroll_up { "↑" }
                                 else if offset == 5 && can_scroll_down { "↓" }
                                 else { " " };
-                    format!("{} {}", arrow, name).chars().take(right_avail).collect()
+                    let prefix = format!("{} ", arrow);
+                    let name_text: String = name.chars()
+                        .take(right_avail.saturating_sub(2)).collect();
+                    let hi = is_secs_active && idx == sec_cursor;
+                    (prefix, name_text, hi)
                 } else {
-                    String::new()
-                };
-                let hi = is_secs_active && idx == sec_cursor;
-                (text, hi)
+                    (String::new(), String::new(), false)
+                }
             }
-            _ => (String::new(), false),
+            _ => (String::new(), String::new(), false),
         }
     };
 
     // Build a single Line from left text (already padded to left_w) and right slot.
     let row_with_right = |left_padded: String, slot: usize| -> Line<'static> {
-        let (right_text, highlight) = right_slot(slot);
+        let (prefix, right_text, highlight) = right_slot(slot);
         if highlight {
-            let padded = format!("{:<w$}", right_text, w = right_avail);
             Line::from(vec![
                 Span::raw(left_padded),
-                Span::styled(padded, rev),
+                Span::raw(prefix),
+                Span::styled(right_text, rev),
             ])
         } else {
-            Line::from(format!("{}{}", left_padded, right_text))
+            Line::from(format!("{}{}{}", left_padded, prefix, right_text))
         }
     };
 
@@ -266,23 +266,32 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
     // Row 1: View name | Sections:
     {
-        let label = "View name:   ";
-        let (right_text, _) = right_slot(0);
+        let label = " View name:   ";
+        let (_, right_text, _) = right_slot(0);
         let right_padded = format!("{:>width$}", right_text, width = right_avail);
-        if active_field == ViewPropsField::Name {
+        if active_field == ViewPropsField::Name && name_editing {
             let (left, hi, rt) = cursor_split(name_buf, name_cur);
             let lp: String = left.chars().take(name_field_w).collect();
             let rp: String = {
                 let used = lp.chars().count() + 1;
                 rt.chars().take(name_field_w.saturating_sub(used)).collect()
             };
-            let pad = name_field_w.saturating_sub(lp.chars().count() + 1 + rp.chars().count());
             rows.push(Line::from(vec![
                 Span::styled(label.to_string(), dlabel_sel),
                 Span::styled(lp, rev),
                 Span::styled(hi, rev),
                 Span::styled(rp, rev),
-                Span::styled(" ".repeat(pad), rev),
+                Span::raw(right_padded),
+            ]));
+        } else if active_field == ViewPropsField::Name {
+            // Selected but not editing — highlight only the text characters.
+            let displayed: String = name_buf.chars().take(name_field_w).collect();
+            let val_w = left_w.saturating_sub(label.chars().count());
+            let pad = val_w.saturating_sub(displayed.chars().count());
+            rows.push(Line::from(vec![
+                Span::styled(label.to_string(), dlabel_sel),
+                Span::styled(displayed, rev),
+                Span::raw(" ".repeat(pad)),
                 Span::raw(right_padded),
             ]));
         } else {
@@ -299,53 +308,57 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     // Helper: build a single sorting-field line with separate label/value spans.
     let sort_line = |label: &'static str, val: &str, field: ViewPropsField, slot: usize| -> Line<'static> {
         let val_w = left_w.saturating_sub(label.chars().count());
-        let (right_text, right_hi) = right_slot(slot);
-        let right_span = if right_hi {
-            Span::styled(format!("{:<w$}", right_text, w = right_avail), rev)
+        let (right_prefix, right_text, right_hi) = right_slot(slot);
+        let right_spans: Vec<Span<'static>> = if right_hi {
+            vec![Span::raw(right_prefix), Span::styled(right_text, rev)]
         } else {
-            Span::raw(right_text)
+            vec![Span::raw(format!("{}{}", right_prefix, right_text))]
         };
         if active_field == field {
-            Line::from(vec![
+            let pad = val_w.saturating_sub(val.chars().count());
+            let mut spans = vec![
                 Span::styled(label, dlabel_sel),
-                Span::styled(format!("{:<w$}", val, w = val_w), rev),
-                right_span,
-            ])
+                Span::styled(val.to_string(), rev),
+                Span::raw(" ".repeat(pad)),
+            ];
+            spans.extend(right_spans);
+            Line::from(spans)
         } else {
-            Line::from(vec![
+            let mut spans = vec![
                 Span::styled(label, dlabel),
                 Span::raw(format!("{:<w$}", val, w = val_w)),
-                right_span,
-            ])
+            ];
+            spans.extend(right_spans);
+            Line::from(spans)
         }
     };
 
     // Row 2: Item sorting | sec[0]
-    rows.push(sort_line("Item sorting:      ", "...", ViewPropsField::ItemSorting, 1));
+    rows.push(sort_line(" Item sorting:      ", "...", ViewPropsField::ItemSorting, 1));
 
     // Row 3: Section sorting | sec[1]
-    rows.push(sort_line("Section sorting:   ", sec_sort_method.label(), ViewPropsField::SectionSorting, 2));
+    rows.push(sort_line(" Section sorting:   ", sec_sort_method.label(), ViewPropsField::SectionSorting, 2));
 
     // Row 4: "  Order:" if section sort != None, else blank | sec[2]
     if sec_sort_method != crate::model::SectionSortMethod::None {
-        rows.push(sort_line("  Order:           ", sec_sort_order.label(), ViewPropsField::SectionSortOrder, 3));
+        rows.push(sort_line("   Order:           ", sec_sort_order.label(), ViewPropsField::SectionSortOrder, 3));
     } else {
         rows.push(row_with_right(format!("{:<w$}", "", w = left_w), 3));
     }
 
     // Row 5-11: Yes/No fields, right column continues
     let bool_fields: &[(_, _, ViewPropsField)] = &[
-        ("Hide empty sections:   ", hes,  ViewPropsField::HideEmptySections),
-        ("Hide done items:       ", hdi,  ViewPropsField::HideDoneItems),
-        ("Hide dependent items:  ", hdep, ViewPropsField::HideDependentItems),
-        ("Hide inherited items:  ", hii,  ViewPropsField::HideInheritedItems),
-        ("Hide column heads:     ", hch,  ViewPropsField::HideColumnHeads),
-        ("Section separators:    ", ss,   ViewPropsField::SectionSeparators),
-        ("Number items:          ", ni,   ViewPropsField::NumberItems),
+        (" Hide empty sections:   ", hes,  ViewPropsField::HideEmptySections),
+        (" Hide done items:       ", hdi,  ViewPropsField::HideDoneItems),
+        (" Hide dependent items:  ", hdep, ViewPropsField::HideDependentItems),
+        (" Hide inherited items:  ", hii,  ViewPropsField::HideInheritedItems),
+        (" Hide column heads:     ", hch,  ViewPropsField::HideColumnHeads),
+        (" Section separators:    ", ss,   ViewPropsField::SectionSeparators),
+        (" Number items:          ", ni,   ViewPropsField::NumberItems),
     ];
     for (row_offset, (label, val, field)) in bool_fields.iter().enumerate() {
         let slot = 4 + row_offset;
-        let (right_text, right_hi) = right_slot(slot);
+        let (right_prefix, right_text, right_hi) = right_slot(slot);
         let right_str = if *field == ViewPropsField::NumberItems && right_text.is_empty() {
             "Filter:".to_string()
         } else {
@@ -354,26 +367,30 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         if active_field == *field {
             let val_str = yn(*val);
             let val_w   = left_w.saturating_sub(label.chars().count());
-            let right_span = if right_hi {
-                Span::styled(format!("{:<w$}", right_str, w = right_avail), rev)
+            let pad     = val_w.saturating_sub(val_str.chars().count());
+            let right_spans: Vec<Span<'static>> = if right_hi {
+                vec![Span::raw(right_prefix), Span::styled(right_str, rev)]
             } else {
-                Span::raw(right_str)
+                vec![Span::raw(format!("{}{}", right_prefix, right_str))]
             };
-            rows.push(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(label.to_string(), dlabel_sel),
-                Span::styled(format!("{:<w$}", val_str, w = val_w), rev),
-                right_span,
-            ]));
+                Span::styled(val_str.to_string(), rev),
+                Span::raw(" ".repeat(pad)),
+            ];
+            spans.extend(right_spans);
+            rows.push(Line::from(spans));
         } else if right_hi {
             let val_str = yn(*val);
             let val_w   = left_w.saturating_sub(label.chars().count());
             rows.push(Line::from(vec![
                 Span::styled(label.to_string(), dlabel),
                 Span::raw(format!("{:<w$}", val_str, w = val_w)),
-                Span::styled(format!("{:<w$}", right_str, w = right_avail), rev),
+                Span::raw(right_prefix),
+                Span::styled(right_str, rev),
             ]));
         } else {
-            rows.push(bool_line(label, *val, *field, &right_str));
+            rows.push(bool_line(label, *val, *field, &format!("{}{}", right_prefix, right_str)));
         }
     }
 
@@ -382,13 +399,13 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
     // Row 13: View statistics
     {
-        let label = "View statistics:   ";
+        let label = " View statistics:   ";
         let val   = format!("{} items", item_count);
         let val_w = left_w.saturating_sub(label.chars().count());
         if active_field == ViewPropsField::ViewStatistics {
             rows.push(Line::from(vec![
                 Span::styled(label, dlabel_sel),
-                Span::styled(format!("{:<w$}", val, w = val_w), rev),
+                Span::styled(val, rev),
             ]));
         } else {
             rows.push(Line::from(vec![
@@ -403,13 +420,13 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
     // Row 15: View protection
     {
-        let label = "View protection:   ";
+        let label = " View protection:   ";
         let val   = "Global (No protection)";
         let val_w = left_w.saturating_sub(label.chars().count());
         if active_field == ViewPropsField::ViewProtection {
             rows.push(Line::from(vec![
                 Span::styled(label, dlabel_sel),
-                Span::styled(format!("{:<w$}", val, w = val_w), rev),
+                Span::styled(val, rev),
             ]));
         } else {
             rows.push(Line::from(vec![

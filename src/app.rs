@@ -194,6 +194,7 @@ pub enum ViewMgrMode {
     Props {
         name_buf:             String,
         name_cur:             usize,
+        name_editing:         bool,       // true only after F2/i activates the name field
         sec_cursor:           usize,      // cursor within the sections list
         sort_state:           SortState,  // for the Item Sorting sub-dialog
         sec_sort_method:      SectionSortMethod,
@@ -6304,6 +6305,7 @@ impl App {
         let name_cur = name_buf.chars().count();
         self.vmgr_state.mode = ViewMgrMode::Props {
             name_buf, name_cur,
+            name_editing: false,
             sec_cursor:   0,
             sort_state:   SortState::Closed,
             sec_sort_method, sec_sort_order, sec_sort_picker: None,
@@ -6321,8 +6323,18 @@ impl App {
         self.vmgr_begin_props();
     }
 
+    pub fn vmgr_props_name_begin_edit(&mut self) {
+        if let ViewMgrMode::Props { active_field: ViewPropsField::Name, name_editing, name_buf, name_cur, .. }
+            = &mut self.vmgr_state.mode
+        {
+            *name_editing = true;
+            *name_cur = name_buf.chars().count();
+        }
+    }
+
     pub fn vmgr_props_field_next(&mut self) {
-        if let ViewMgrMode::Props { active_field, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+            *name_editing = false;
             let mut next = active_field.next();
             if next == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
                 next = next.next();
@@ -6332,7 +6344,8 @@ impl App {
     }
 
     pub fn vmgr_props_field_prev(&mut self) {
-        if let ViewMgrMode::Props { active_field, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+            *name_editing = false;
             let mut prev = active_field.prev();
             if prev == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
                 prev = prev.prev();
