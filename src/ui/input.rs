@@ -1189,9 +1189,11 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode) {
         KeyCode::F(3) if is_sec_sorting || is_sec_order              => app.vmgr_sec_sort_open_picker(),
         KeyCode::Char(' ') if is_sec_sorting                         => app.vmgr_sec_sort_cycle(),
         KeyCode::Char(' ') if is_sec_order                           => app.vmgr_sec_order_cycle(),
-        KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right if is_bool => app.vmgr_props_toggle(),
+        KeyCode::Char(' ') if is_bool                                => app.vmgr_props_toggle(),
         KeyCode::Left      if is_name                                => app.vmgr_props_name_left(),
         KeyCode::Right     if is_name                                => app.vmgr_props_name_right(),
+        KeyCode::Left                                                => app.vmgr_props_field_left(),
+        KeyCode::Right                                               => app.vmgr_props_field_right(),
         KeyCode::Backspace if is_name                                => app.vmgr_props_name_backspace(),
         KeyCode::Char(ch)  if is_name                                => app.vmgr_props_name_char(ch),
         _ => {}

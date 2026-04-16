@@ -6332,6 +6332,50 @@ impl App {
         }
     }
 
+    pub fn vmgr_props_field_right(&mut self) {
+        if let ViewMgrMode::Props { active_field, name_editing, .. } = &mut self.vmgr_state.mode {
+            *name_editing = false;
+            *active_field = match *active_field {
+                // Row 1 — "Sections:" header is not a navigable field → next left below
+                ViewPropsField::Name               => ViewPropsField::ItemSorting,
+                // Row 2 — same; Sections area hasn't started yet → next left below
+                ViewPropsField::ItemSorting        => ViewPropsField::SectionSorting,
+                // Rows 3-8 — right column contains the Sections field
+                ViewPropsField::SectionSorting     |
+                ViewPropsField::SectionSortOrder   |
+                ViewPropsField::HideEmptySections  |
+                ViewPropsField::HideDoneItems      |
+                ViewPropsField::HideDependentItems |
+                ViewPropsField::HideInheritedItems => ViewPropsField::Sections,
+                // Sections (right col): nothing further right → first left field below Sections area
+                ViewPropsField::Sections           => ViewPropsField::HideColumnHeads,
+                // Rows 9-15: no right field → next left field below, wrapping at bottom
+                ViewPropsField::HideColumnHeads    => ViewPropsField::SectionSeparators,
+                ViewPropsField::SectionSeparators  => ViewPropsField::NumberItems,
+                ViewPropsField::NumberItems        => ViewPropsField::ViewStatistics,
+                ViewPropsField::ViewStatistics     => ViewPropsField::ViewProtection,
+                ViewPropsField::ViewProtection     => ViewPropsField::Name,
+            };
+        }
+    }
+
+    pub fn vmgr_props_field_left(&mut self) {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+            *name_editing = false;
+            if *active_field == ViewPropsField::Sections {
+                // Right column → jump back to left column (Name is the left neighbour in tab order)
+                *active_field = ViewPropsField::Name;
+            } else {
+                // Already on left column → go to previous field
+                let mut prev = active_field.prev();
+                if prev == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
+                    prev = prev.prev();
+                }
+                *active_field = prev;
+            }
+        }
+    }
+
     pub fn vmgr_props_field_next(&mut self) {
         if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
             *name_editing = false;
