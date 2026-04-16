@@ -6453,8 +6453,13 @@ impl App {
     }
 
     pub fn vmgr_props_sec_up(&mut self) {
-        if let ViewMgrMode::Props { sec_cursor, .. } = &mut self.vmgr_state.mode {
-            if *sec_cursor > 0 { *sec_cursor -= 1; }
+        if let ViewMgrMode::Props { sec_cursor, sec_scroll, .. } = &mut self.vmgr_state.mode {
+            if *sec_cursor > 0 {
+                *sec_cursor -= 1;
+                if *sec_cursor < *sec_scroll {
+                    *sec_scroll = *sec_cursor;
+                }
+            }
         }
     }
 
@@ -6463,8 +6468,13 @@ impl App {
         let voi   = self.view_order_idx;
         let sec_count = if v_idx == voi { self.view.sections.len() }
                         else { self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)).map(|v| v.sections.len()).unwrap_or(0) };
-        if let ViewMgrMode::Props { sec_cursor, .. } = &mut self.vmgr_state.mode {
-            if *sec_cursor + 1 < sec_count { *sec_cursor += 1; }
+        if let ViewMgrMode::Props { sec_cursor, sec_scroll, .. } = &mut self.vmgr_state.mode {
+            if *sec_cursor + 1 < sec_count {
+                *sec_cursor += 1;
+                if *sec_cursor >= *sec_scroll + 6 {
+                    *sec_scroll = sec_cursor.saturating_sub(5);
+                }
+            }
         }
     }
 

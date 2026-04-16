@@ -206,24 +206,30 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let sec_names: Vec<&str> = view_ref.sections.iter().map(|s| s.name.as_str()).collect();
     let right_avail = iw.saturating_sub(right_x);
     let is_secs_active = active_field == ViewPropsField::Sections;
+    let can_scroll_up   = sec_scroll > 0;
+    let can_scroll_down = sec_scroll + 6 < sec_names.len();
 
     // Returns (text, highlight) for each right-column slot.
-    // slot 0 → blank, slot 1 → "Sections:" header, slot 2+ → section names.
+    // slot 0 → blank, slot 1 → "Sections:" header, slots 2-7 → up to 6 section names.
     let right_slot = |slot: usize| -> (String, bool) {
         match slot {
             0 => (String::new(), false),
             1 => ("Sections:".chars().take(right_avail).collect(), false),
-            n => {
-                let idx = sec_scroll + n - 2;
+            n if n >= 2 && n <= 7 => {
+                let offset = n - 2;
+                let idx = sec_scroll + offset;
                 let text = if let Some(name) = sec_names.get(idx) {
-                    let indented = format!("  {}", name);
-                    indented.chars().take(right_avail).collect()
+                    let arrow = if offset == 0 && can_scroll_up { "↑" }
+                                else if offset == 5 && can_scroll_down { "↓" }
+                                else { " " };
+                    format!("{} {}", arrow, name).chars().take(right_avail).collect()
                 } else {
                     String::new()
                 };
                 let hi = is_secs_active && idx == sec_cursor;
                 (text, hi)
             }
+            _ => (String::new(), false),
         }
     };
 
