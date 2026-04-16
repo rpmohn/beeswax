@@ -38,11 +38,9 @@ nav_mode = "Agenda"
 # body_fg             = "#839496"
 # body_bg             = "#002b36"
 #
-# # Highlighted (selected) field / edit cursor
-# selected_field_fg   = "#002b36"
-# selected_field_bg   = "#839496"
-#
-# # Highlighted (selected) row background (toned-down version of selected_field_bg)
+# # Selected field / cursor and selected line row
+# selected_fg         = "#002b36"
+# selected_bg         = "#839496"
 # selected_line_fg    = "#002b36"
 # selected_line_bg    = "#5e6e73"
 #

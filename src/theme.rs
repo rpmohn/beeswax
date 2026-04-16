@@ -150,8 +150,8 @@ impl Theme {
         let bar_bg    = color(&c.bar_bg,    None);
         let barcur_fg = color(&c.bar_cursor_fg, body_fg);
         let barcur_bg = color(&c.bar_cursor_bg, body_bg);
-        let sel_fg    = color(&c.selected_field_fg, None);
-        let sel_bg    = color(&c.selected_field_bg, None);
+        let sel_fg    = color(&c.selected_fg, None);
+        let sel_bg    = color(&c.selected_bg, None);
         let sline_fg  = color(&c.selected_line_fg, sel_fg);
         let sline_bg  = color(&c.selected_line_bg, None);
         let sec_fg    = color(&c.section_fg,  None);
@@ -258,7 +258,7 @@ impl Theme {
             section:          Style::default().fg(Color::Blue).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
-            dialog_border:    Style::default().fg(Color::Blue).bg(body_bg),
+            dialog_border:    Style::default().fg(Color::Red).bg(body_bg),
             dialog_label:     Style::default().fg(Color::Blue),
             dialog_label_sel: Style::default().fg(Color::Red),
             dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
@@ -311,11 +311,11 @@ impl Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
             bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
-            item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE02),
+            item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE01),
             section:              Style::default().fg(S_CYAN).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
-            dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
+            dialog_border:    Style::default().fg(S_CYAN).bg(body_bg),
             dialog_label:     Style::default().fg(S_BASE01),
             dialog_label_sel: Style::default().fg(S_CYAN),
             dim:              Style::default().fg(S_BASE01).bg(body_bg).add_modifier(Modifier::DIM),
@@ -369,7 +369,7 @@ impl Theme {
             section:          Style::default().fg(G_BLUE_D).bg(G_BG).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(G_BG).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG).bg(G_BG),
-            dialog_border:    Style::default().fg(G_BG2).bg(G_BG),
+            dialog_border:    Style::default().fg(G_YELLOW).bg(G_BG),
             dialog_label:     Style::default().fg(G_FG4),
             dialog_label_sel: Style::default().fg(G_YELLOW),
             dim:              Style::default().fg(G_GRAY).bg(G_BG).add_modifier(Modifier::DIM),
@@ -392,7 +392,7 @@ impl Theme {
             section:          Style::default().fg(G_BLUE_L).bg(G_BG_L).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(G_BG_L).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG_L).bg(G_BG_L),
-            dialog_border:    Style::default().fg(G_BG2_L).bg(G_BG_L),
+            dialog_border:    Style::default().fg(G_BLUE_L).bg(G_BG_L),
             dialog_label:     Style::default().fg(G_FG4_L),
             dialog_label_sel: Style::default().fg(G_BLUE_L),
             dim:              Style::default().fg(G_FG4_L).bg(G_BG_L).add_modifier(Modifier::DIM),
@@ -415,7 +415,7 @@ impl Theme {
             section:          Style::default().fg(D_CYAN).bg(D_BG).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(D_BG).bg(D_PURPLE),
             dialog:           Style::default().fg(D_FG).bg(D_BG),
-            dialog_border:    Style::default().fg(D_COMMENT).bg(D_BG),
+            dialog_border:    Style::default().fg(D_PURPLE).bg(D_BG),
             dialog_label:     Style::default().fg(D_COMMENT),
             dialog_label_sel: Style::default().fg(D_PURPLE),
             dim:              Style::default().fg(D_COMMENT).bg(D_BG).add_modifier(Modifier::DIM),

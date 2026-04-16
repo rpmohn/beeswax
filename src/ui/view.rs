@@ -365,7 +365,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     (None, None, None, None, None)
                 };
 
-                let col_text_style = if cursor_on_item && matches!(app.mode, Mode::Normal) {
+                let col_text_style = if cursor_on_item {
                     app.theme.item_selected_line
                 } else {
                     app.theme.view_col
@@ -394,30 +394,31 @@ pub fn render(frame: &mut Frame, app: &App) {
                             ]
                         }
                         Mode::Edit { col, .. } if *col == 0 => {
+                            let body_style = app.theme.view_bg.patch(app.theme.view_item);
                             if let Some((dcl, dcc)) = edit_cursor_display {
                                 if row_i == dcl {
                                     let (left, hi, right) = cursor_split(&line_text, dcc);
                                     vec![
-                                        Span::styled(indent, app.theme.view_item),
-                                        Span::styled(left,   app.theme.view_item),
+                                        Span::styled(indent, app.theme.item_selected_line),
+                                        Span::styled(left,   body_style),
                                         Span::styled(hi,     app.theme.item_selected_field),
-                                        Span::styled(right,  app.theme.view_item),
+                                        Span::styled(right,  body_style),
                                     ]
                                 } else {
-                                    vec![Span::styled(indent, app.theme.view_item),
-                                         Span::styled(line_text, app.theme.view_item)]
+                                    vec![Span::styled(indent, app.theme.item_selected_line),
+                                         Span::styled(line_text, body_style)]
                                 }
                             } else {
-                                vec![Span::styled(indent, app.theme.view_item),
-                                     Span::styled(line_text, app.theme.view_item)]
+                                vec![Span::styled(indent, app.theme.item_selected_line),
+                                     Span::styled(line_text, body_style)]
                             }
                         }
                         Mode::Edit { .. } =>
-                            vec![Span::styled(indent, app.theme.view_item),
-                                 Span::styled(line_text, app.theme.view_item)],
+                            vec![Span::styled(indent, app.theme.item_selected_line),
+                                 Span::styled(line_text, app.theme.item_selected_line)],
                         Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. } | Mode::ItemProps { .. } =>
-                            vec![Span::styled(indent, app.theme.view_item),
-                                 Span::styled(line_text, app.theme.view_item)],
+                            vec![Span::styled(indent, app.theme.item_selected_line),
+                                 Span::styled(line_text, app.theme.item_selected_line)],
                     }
                 } else if is_text_row {
                     vec![Span::styled(indent, app.theme.view_item), Span::styled(line_text, app.theme.view_item)]
@@ -437,7 +438,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 };
                 if text_chars < main_col_w {
                     let pad = " ".repeat(main_col_w - text_chars);
-                    if cursor_on_item && matches!(app.mode, Mode::Normal) {
+                    if cursor_on_item {
                         item_spans.push(Span::styled(pad, app.theme.item_selected_line));
                     } else {
                         item_spans.push(Span::raw(pad));
@@ -451,14 +452,14 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let mut row = left_item_spans;
                 row.extend(item_spans);
                 if !right_cols.is_empty() {
-                    if cursor_on_item && matches!(app.mode, Mode::Normal) {
+                    if cursor_on_item {
                         row.push(Span::styled(" ", app.theme.item_selected_line));
                     } else {
                         row.push(Span::raw(" "));
                     }
                 }
                 row.extend(right_item_spans);
-                if cursor_on_item && matches!(app.mode, Mode::Normal) {
+                if cursor_on_item {
                     row.push(Span::styled(" ".repeat(total_body_w), app.theme.item_selected_line));
                 }
                 lines.push(Line::from(row));

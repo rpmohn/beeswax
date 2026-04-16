@@ -35,12 +35,11 @@ pub struct CustomTheme {
     #[serde(default)] pub body_fg:             Option<String>,
     #[serde(default)] pub body_bg:             Option<String>,
 
-    // ── Selected field / edit cursor (active column) ─────────────────────────
-    #[serde(default)] pub selected_field_fg:   Option<String>,
-    #[serde(default)] pub selected_field_bg:   Option<String>,
-    // ── Selected line (entire row background) ────────────────────────────────
-    #[serde(default)] pub selected_line_fg:    Option<String>,
-    #[serde(default)] pub selected_line_bg:    Option<String>,
+    // ── Selected field / line ────────────────────────────────────────────────
+    #[serde(default)] pub selected_fg:          Option<String>,
+    #[serde(default)] pub selected_bg:          Option<String>,
+    #[serde(default)] pub selected_line_fg:     Option<String>,
+    #[serde(default)] pub selected_line_bg:     Option<String>,
 
     // ── Section heads ────────────────────────────────────────────────────────
     /// Unselected section head foreground (background = body_bg).
