@@ -9,7 +9,7 @@ use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ChoicesKind, Co
                  CursorPos, FilterState, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
                  SecPropsField, SectionFormField, SectionInsert, SectionMode, SortField, SortState,
                  TimeField, ViewAddField, ViewMode, cat_note_indicator, col_autocomplete_match,
-                 col_display_values, flatten_cats, format_date_value, section_item_indices,
+                 col_display_values, flatten_cats, format_date_value,
                  visible_item_indices};
 use crate::model::{FilterOp, SortNewItems, SortOn, SortOrder, SortSeq};
 use crate::model::ColFormat;
@@ -1108,7 +1108,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Current item: global index and its assigned values.
         let (item_text, item_vals, cond_cats) = match &app.cursor {
             CursorPos::Item { section, item } => {
-                let gi = section_item_indices(&app.items, &app.view, *section, &app.categories)
+                let gi = visible_item_indices(&app.items, &app.view, *section, &app.categories)
                     .get(*item).copied();
                 let it = gi.and_then(|gi| app.items.get(gi));
                 (

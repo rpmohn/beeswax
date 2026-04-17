@@ -2871,15 +2871,16 @@ impl App {
                 }
                 // Auto-assign item to the section's backing category.
                 values.entry(self.view.sections[sec_idx].cat_id).or_insert_with(String::new);
-                // Determine global insert position: after local item `insert_after`, or at end.
-                let indices = section_item_indices(&self.items, &self.view, sec_idx, &self.categories);
+                // Determine global insert position: after local item `insert_after`, or before first.
+                // Must use visible_item_indices — the cursor's `item` value is always relative to it.
+                let indices = visible_item_indices(&self.items, &self.view, sec_idx, &self.categories);
                 let global_pos = match insert_after {
                     Some(local) => indices.get(local).map(|&g| g + 1).unwrap_or(self.items.len()),
                     None        => indices.first().copied().unwrap_or(self.items.len()),
                 };
                 self.items.insert(global_pos, Item { id, text, values, cond_cats, note: String::new(), note_file: String::new() });
-                // Local index is position within section after insertion.
-                let new_local = section_item_indices(&self.items, &self.view, sec_idx, &self.categories)
+                // Local index is position within section after insertion (same visible basis).
+                let new_local = visible_item_indices(&self.items, &self.view, sec_idx, &self.categories)
                     .iter().position(|&g| g == global_pos).unwrap_or(0);
                 self.cursor = CursorPos::Item { section: sec_idx, item: new_local };
             }
