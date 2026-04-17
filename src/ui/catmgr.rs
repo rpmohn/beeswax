@@ -80,7 +80,12 @@ pub fn render(frame: &mut Frame, app: &App) {
         app.cat_state.cursor.min(flat.len() - 1)
     };
 
+    let body_h = body_inner.height as usize;
+    app.cat_state.body_height.set(body_h);
     let mut lines: Vec<Line> = Vec::new();
+    let mut cursor_first_line: usize = 0;
+    let mut cursor_last_line:  usize = 0;
+    let mut cursor_line_found = false;
 
     if flat.is_empty() {
         match &app.cat_state.mode {
@@ -95,6 +100,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Span::styled(hi, app.theme.item_selected_field),
                     Span::raw(right),
                 ]));
+                cursor_first_line = 0;
+                cursor_last_line  = 0;
+                cursor_line_found = true;
             }
             _ => {
                 lines.push(Line::from(Span::styled(
@@ -167,7 +175,15 @@ pub fn render(frame: &mut Frame, app: &App) {
                     Span::raw(entry.name.clone()),
                 ])
             };
+
+            if cursor_here && !cursor_line_found {
+                cursor_first_line = lines.len();
+                cursor_line_found = true;
+            }
             lines.push(line);
+            if cursor_here {
+                cursor_last_line = lines.len() - 1;
+            }
 
             // ── Create-mode input row ─────────────────────────────────────
             if Some(row) == create_show_after {
@@ -178,6 +194,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         flat[cursor].depth
                     };
                     let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                    let create_line_idx = lines.len();
                     lines.push(Line::from(vec![
                         Span::raw(base_indent(create_depth)),
                         Span::raw(" "),  // blank indicator — new cats are Standard
@@ -186,12 +203,29 @@ pub fn render(frame: &mut Frame, app: &App) {
                         Span::styled(hi, app.theme.item_selected_field),
                         Span::raw(right),
                     ]));
+                    // The create input row is the cursor row for scrolling purposes
+                    cursor_first_line = create_line_idx;
+                    cursor_last_line  = create_line_idx;
                 }
             }
         }
     }
 
-    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), body_inner);
+    // ── Scroll to keep cursor visible ────────────────────────────────────────
+    let mut off = app.cat_state.scroll_offset.get();
+    if cursor_line_found && body_h > 0 {
+        if cursor_first_line < off {
+            off = cursor_first_line;
+        }
+        if cursor_last_line >= off + body_h {
+            off = cursor_last_line + 1 - body_h;
+            if cursor_first_line < off { off = cursor_first_line; }
+        }
+    }
+    app.cat_state.scroll_offset.set(off);
+
+    let visible: Vec<Line> = lines.into_iter().skip(off).take(body_h).collect();
+    frame.render_widget(Paragraph::new(visible).style(app.theme.dialog), body_inner);
 
     // ── Protected-category warning modal ─────────────────────────────────────
     render_cat_protected_warning_modal(frame, app, area);

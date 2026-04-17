@@ -118,8 +118,10 @@ pub enum CatMode {
 }
 
 pub struct CatMgrState {
-    pub cursor: usize,
-    pub mode:   CatMode,
+    pub cursor:        usize,
+    pub mode:          CatMode,
+    pub scroll_offset: std::cell::Cell<usize>,
+    pub body_height:   std::cell::Cell<usize>,
 }
 
 // ── ViewMgr state ─────────────────────────────────────────────────────────────
@@ -1708,7 +1710,7 @@ impl App {
             cursor:     CursorPos::SectionHead(0),
             mode:       Mode::Normal,
             categories: vec![main_cat],
-            cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal },
+            cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal, scroll_offset: std::cell::Cell::new(0), body_height: std::cell::Cell::new(0) },
             vmgr_state:  ViewMgrState { cursor: 0, mode: ViewMgrMode::Normal },
             col_cursor:  0,
             col_mode:    ColMode::Normal,
@@ -1758,7 +1760,7 @@ impl App {
             cursor:     CursorPos::SectionHead(0),
             mode:       Mode::Normal,
             categories: data.categories,
-            cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal },
+            cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal, scroll_offset: std::cell::Cell::new(0), body_height: std::cell::Cell::new(0) },
             vmgr_state:  ViewMgrState { cursor: 0, mode: ViewMgrMode::Normal },
             col_cursor:  0,
             col_mode:    ColMode::Normal,
@@ -5107,17 +5109,26 @@ impl App {
 
     pub fn cat_cursor_home(&mut self) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
-        self.cat_state.cursor = 0;
+        let off = self.cat_state.scroll_offset.get();
+        self.cat_state.cursor = off;
     }
     pub fn cat_cursor_middle(&mut self) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
         let flat = flatten_cats(&self.categories);
-        self.cat_state.cursor = flat.len() / 2;
+        if flat.is_empty() { return; }
+        let off = self.cat_state.scroll_offset.get();
+        let body_h = self.cat_state.body_height.get();
+        let last_vis = (off + body_h).saturating_sub(1).min(flat.len() - 1);
+        self.cat_state.cursor = (off + last_vis) / 2;
     }
     pub fn cat_cursor_end(&mut self) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
         let flat = flatten_cats(&self.categories);
-        if !flat.is_empty() { self.cat_state.cursor = flat.len() - 1; }
+        if flat.is_empty() { return; }
+        let off = self.cat_state.scroll_offset.get();
+        let body_h = self.cat_state.body_height.get();
+        let last_vis = (off + body_h).saturating_sub(1).min(flat.len() - 1);
+        self.cat_state.cursor = last_vis;
     }
 
     // ── CatMgr buffer cursor ──────────────────────────────────────────────────
