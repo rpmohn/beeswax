@@ -427,6 +427,10 @@ fn handle_view_normal_vi(app: &mut App, ch: char) {
         'O' => app.begin_create_above(),
         'g' => app.vi_pending = Some('g'),
         'z' => app.vi_pending = Some('z'),
+        'x' => match app.cursor {
+            CursorPos::SectionHead(_) => app.sec_open_confirm_remove(),
+            CursorPos::Item { .. }    => app.item_open_confirm_delete(),
+        },
         _   => {}   // all other printable keys are no-ops in vi normal mode
     }
 }
@@ -566,6 +570,7 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                     'i' => app.cat_begin_edit(),
                     'o' => app.cat_begin_create(false),
                     '/' => app.cat_search_open(),
+                    'x' => app.cat_open_confirm_delete(),
                     _   => {}
                 },
                 NavMode::Agenda => app.cat_search_char(ch),
@@ -854,6 +859,7 @@ fn handle_item_props(app: &mut App, code: KeyCode) {
         KeyCode::PageDown                   => app.item_props_cursor_pgdn(10),
         KeyCode::Delete                     => app.item_props_remove(),
         KeyCode::Char('i') if app.nav_mode == NavMode::Vi => app.item_props_edit(),
+        KeyCode::Char('x') if app.nav_mode == NavMode::Vi => app.item_props_remove(),
         _ => {}
     }
 }
@@ -1098,6 +1104,7 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(10) => app.open_menu(),
         KeyCode::Char('i') if app.nav_mode == NavMode::Vi => app.vmgr_begin_rename(),
         KeyCode::Char('o') | KeyCode::Char('O') if app.nav_mode == NavMode::Vi => app.view_add_open(),
+        KeyCode::Char('x') if app.nav_mode == NavMode::Vi => app.vmgr_open_confirm_delete(),
         _ => {}
     }
 }
