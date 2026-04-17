@@ -3101,8 +3101,11 @@ impl App {
             _ => return,
         };
         let Some(gi) = self.global_item_idx(s, i) else { return; };
+        let count = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
         self.items.remove(gi);
-        self.cursor = if i > 0 {
+        self.cursor = if i + 1 < count {
+            CursorPos::Item { section: s, item: i }
+        } else if i > 0 {
             CursorPos::Item { section: s, item: i - 1 }
         } else {
             CursorPos::SectionHead(s)
