@@ -878,7 +878,7 @@ fn handle_item_confirm_discard(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Enter                 => app.item_confirm_discard_confirm(),
         KeyCode::Esc                   => app.item_confirm_discard_cancel(),
-        KeyCode::Left | KeyCode::Right => app.item_confirm_discard_toggle(),
+        KeyCode::Char(' ')              => app.item_confirm_discard_toggle(),
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             if let Mode::ConfirmDiscardItem { yes } = &mut app.mode { *yes = true; }
             app.item_confirm_discard_confirm();
