@@ -1914,37 +1914,30 @@ fn cal_first_dow(year: i32, month: u32) -> u32 {
 pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let SaveState::AskOnQuit { choice } = &app.save_state else { return };
 
-    let dlg = centered_rect(46, 7, area);
+    let dlg = centered_rect(48, 5, area);
     frame.render_widget(Clear, dlg);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Save Changes? ")
+        .title_bottom(
+            ratatui::text::Line::from(" Press ENTER to accept, ESC to cancel ")
+                .alignment(ratatui::layout::Alignment::Center),
+        )
         .style(app.theme.dialog_border);
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
 
     let rev = app.theme.item_selected_field;
-    let unsel = app.theme.dialog;
-
-    let yes_style    = if *choice == AskChoice::Yes    { rev } else { unsel };
-    let no_style     = if *choice == AskChoice::No     { rev } else { unsel };
-    let cancel_style = if *choice == AskChoice::Cancel { rev } else { unsel };
-
-    let btn_line = Line::from(vec![
-        Span::raw("     "),
-        Span::styled("[ Yes ]", yes_style),
-        Span::raw("      "),
-        Span::styled("No", no_style),
-        Span::raw("       "),
-        Span::styled("Cancel", cancel_style),
-    ]);
+    let yes = *choice == AskChoice::Yes;
+    let val_span = if yes { Span::styled("Yes", rev) } else { Span::styled("No", rev) };
 
     let lines = vec![
         Line::from(""),
-        Line::from("  Save changes before quitting?"),
-        Line::from(""),
-        btn_line,
+        Line::from(vec![
+            Span::raw("  Save changes before quitting?  "),
+            val_span,
+        ]),
         Line::from(""),
     ];
 

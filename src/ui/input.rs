@@ -238,8 +238,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
 fn handle_ask_save(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Left  => app.ask_save_move_left(),
-        KeyCode::Right => app.ask_save_move_right(),
+        KeyCode::Char(' ')                      => app.ask_save_toggle(),
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             app.ask_save_set_choice(AskChoice::Yes);
             app.ask_save_confirm();
@@ -248,9 +247,7 @@ fn handle_ask_save(app: &mut App, code: KeyCode) {
             app.ask_save_set_choice(AskChoice::No);
             app.ask_save_no();
         }
-        KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
-            app.ask_save_cancel();
-        }
+        KeyCode::Esc => app.ask_save_cancel(),
         KeyCode::Enter => {
             let choice = if let SaveState::AskOnQuit { choice } = &app.save_state {
                 *choice
@@ -258,9 +255,8 @@ fn handle_ask_save(app: &mut App, code: KeyCode) {
                 return;
             };
             match choice {
-                AskChoice::Yes    => app.ask_save_confirm(),
-                AskChoice::No     => app.ask_save_no(),
-                AskChoice::Cancel => app.ask_save_cancel(),
+                AskChoice::Yes => app.ask_save_confirm(),
+                _              => app.ask_save_no(),
             }
         }
         _ => {}

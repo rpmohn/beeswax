@@ -422,7 +422,7 @@ pub enum MenuState {
 // ── Save/password state ───────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum AskChoice { Yes, No, Cancel }
+pub enum AskChoice { Yes, No }
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum PasswordPurpose { Enable, Change, Disable }
@@ -6047,22 +6047,11 @@ impl App {
         }
     }
 
-    pub fn ask_save_move_left(&mut self) {
+    pub fn ask_save_toggle(&mut self) {
         if let SaveState::AskOnQuit { choice } = &mut self.save_state {
             *choice = match choice {
-                AskChoice::Yes    => AskChoice::Cancel,
-                AskChoice::No     => AskChoice::Yes,
-                AskChoice::Cancel => AskChoice::No,
-            };
-        }
-    }
-
-    pub fn ask_save_move_right(&mut self) {
-        if let SaveState::AskOnQuit { choice } = &mut self.save_state {
-            *choice = match choice {
-                AskChoice::Yes    => AskChoice::No,
-                AskChoice::No     => AskChoice::Cancel,
-                AskChoice::Cancel => AskChoice::Yes,
+                AskChoice::Yes => AskChoice::No,
+                _              => AskChoice::Yes,
             };
         }
     }
