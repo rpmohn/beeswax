@@ -1328,41 +1328,31 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Remove-item confirmation modal ────────────────────────────────────────
     if let Mode::ConfirmDeleteItem { yes } = &app.mode {
-        let rev   = app.theme.item_selected_field;
-        let unsel = app.theme.dialog;
-        let dim   = app.theme.dim;
-        let dlg_rect = centered_rect(46, 9, area);
+        let rev      = app.theme.item_selected_field;
+        let dlabel_sel = app.theme.dialog_label_sel;
+        let dlabel   = app.theme.dialog_label;
+        let dlg_rect = centered_rect(55, 6, area);
         frame.render_widget(Clear, dlg_rect);
-        let block = Block::default().borders(Borders::ALL)
-            .title(" Remove Item ").style(app.theme.dialog_border);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .title_bottom(
+                Line::from(" Press ENTER to accept, ESC to cancel ")
+                    .alignment(Alignment::Center),
+            )
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
-        let iw = inner.width as usize;
 
-        let msg = "Remove this item from the section?";
-        let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
-        let hint = "(Use Alt-F4 to discard the item completely.)";
-        let hpad = (iw.saturating_sub(hint.chars().count())) / 2;
-
-        let yes_label = " Yes ";
-        let no_label  = " No  ";
-        let yes_style = if *yes { rev } else { unsel };
-        let no_style  = if !yes { rev } else { unsel };
-        let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
-        let lpad = gap / 2;
-
+        let val_str = if *yes { "Yes" } else { "No" };
         frame.render_widget(Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg))),
-            Line::from(""),
             Line::from(vec![
-                Span::raw(" ".repeat(lpad)),
-                Span::styled(yes_label, yes_style),
-                Span::raw("  "),
-                Span::styled(no_label, no_style),
+                Span::styled(" Remove this item from the section?  ", dlabel_sel),
+                Span::styled(val_str, rev),
             ]),
+            Line::from(Span::styled("   (Use Shift+Del to discard the item completely.)", dlabel)),
             Line::from(""),
-            Line::from(Span::styled(format!("{}{}", " ".repeat(hpad), hint), dim)),
         ]).style(app.theme.dialog), inner);
     }
 

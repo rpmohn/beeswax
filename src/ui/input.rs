@@ -862,9 +862,9 @@ fn handle_item_props(app: &mut App, code: KeyCode) {
 
 fn handle_item_confirm_delete(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Enter                 => app.item_confirm_delete_confirm(),
-        KeyCode::Esc                   => app.item_confirm_delete_cancel(),
-        KeyCode::Left | KeyCode::Right => app.item_confirm_delete_toggle(),
+        KeyCode::Enter                  => app.item_confirm_delete_confirm(),
+        KeyCode::Esc                    => app.item_confirm_delete_cancel(),
+        KeyCode::Char(' ')              => app.item_confirm_delete_toggle(),
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             if let Mode::ConfirmDeleteItem { yes } = &mut app.mode { *yes = true; }
             app.item_confirm_delete_confirm();
