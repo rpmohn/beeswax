@@ -106,7 +106,7 @@ pub struct FilterEntry {
     pub op:     FilterOp,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Section {
     pub id:     usize,
     pub name:   String,

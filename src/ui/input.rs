@@ -187,6 +187,16 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // Undo / Redo — Ctrl+Z / Ctrl+Y (universal); Ctrl+R in vi mode
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('z') => { app.undo(); return; }
+            KeyCode::Char('y') => { app.redo(); return; }
+            KeyCode::Char('r') if app.nav_mode == NavMode::Vi => { app.redo(); return; }
+            _ => {}
+        }
+    }
+
     // View Properties dialog can appear over any screen
     if matches!(app.vmgr_state.mode, ViewMgrMode::Props { .. }) {
         handle_vmgr_props(app, code);
@@ -431,6 +441,7 @@ fn handle_view_normal_vi(app: &mut App, ch: char) {
             CursorPos::SectionHead(_) => app.sec_open_confirm_remove(),
             CursorPos::Item { .. }    => app.item_open_confirm_delete(),
         },
+        'u' => app.undo(),
         _   => {}   // all other printable keys are no-ops in vi normal mode
     }
 }
@@ -571,6 +582,7 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                     'o' => app.cat_begin_create(false),
                     '/' => app.cat_search_open(),
                     'x' => app.cat_open_confirm_delete(),
+                    'u' => app.undo(),
                     _   => {}
                 },
                 NavMode::Agenda => app.cat_search_char(ch),
@@ -1105,6 +1117,7 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('i') if app.nav_mode == NavMode::Vi => app.vmgr_begin_rename(),
         KeyCode::Char('o') | KeyCode::Char('O') if app.nav_mode == NavMode::Vi => app.view_add_open(),
         KeyCode::Char('x') if app.nav_mode == NavMode::Vi => app.vmgr_open_confirm_delete(),
+        KeyCode::Char('u') if app.nav_mode == NavMode::Vi => app.undo(),
         _ => {}
     }
 }

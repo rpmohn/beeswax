@@ -27,7 +27,7 @@ impl SectionSortMethod {
     ];
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct View {
     pub id:         usize,
     pub name:       String,

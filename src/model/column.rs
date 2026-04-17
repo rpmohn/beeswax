@@ -47,7 +47,7 @@ impl Default for ColFormat {
     fn default() -> Self { ColFormat::NameOnly }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Column {
     pub id:       usize,
     pub name:     String,   // "Column head" (category name)

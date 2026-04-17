@@ -451,6 +451,20 @@ pub struct FlatCat {
     pub kind:  CategoryKind,
 }
 
+// ── Undo / Redo ───────────────────────────────────────────────────────────────
+
+struct Snapshot {
+    items:          Vec<Item>,
+    categories:     Vec<Category>,
+    view:           View,
+    inactive_views: Vec<View>,
+    view_order_idx: usize,
+    cursor:         CursorPos,
+    col_cursor:     usize,
+    sub_row:        usize,
+    next_id:        usize,
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 pub struct App {
@@ -515,6 +529,9 @@ pub struct App {
     pub vi_pending:       Option<char>,
     /// Active color scheme / theme. Set from config on startup.
     pub theme:            crate::theme::Theme,
+    // Undo / Redo stacks (session-length, unbounded)
+    undo_stack: Vec<Snapshot>,
+    redo_stack: Vec<Snapshot>,
 }
 
 // ── Byte-offset helper ────────────────────────────────────────────────────────
@@ -1737,6 +1754,8 @@ impl App {
             line_map:        std::cell::RefCell::new(Vec::new()),
             vi_pending:      None,
             theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::Default),
+            undo_stack:      Vec::new(),
+            redo_stack:      Vec::new(),
         }
     }
 
@@ -1787,7 +1806,63 @@ impl App {
             line_map:        std::cell::RefCell::new(Vec::new()),
             vi_pending:      None,
             theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::Default),
+            undo_stack:      Vec::new(),
+            redo_stack:      Vec::new(),
         }
+    }
+
+    // ── Undo / Redo ───────────────────────────────────────────────────────────
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            items:          self.items.clone(),
+            categories:     self.categories.clone(),
+            view:           self.view.clone(),
+            inactive_views: self.inactive_views.clone(),
+            view_order_idx: self.view_order_idx,
+            cursor:         self.cursor,
+            col_cursor:     self.col_cursor,
+            sub_row:        self.sub_row,
+            next_id:        self.next_id,
+        }
+    }
+
+    /// Call at the start of every mutation method. Saves current state for undo
+    /// and clears the redo stack.
+    fn push_undo(&mut self) {
+        let snap = self.snapshot();
+        self.undo_stack.push(snap);
+        self.redo_stack.clear();
+    }
+
+    pub fn undo(&mut self) {
+        let Some(snap) = self.undo_stack.pop() else { return };
+        self.redo_stack.push(self.snapshot());
+        self.apply_snapshot(snap);
+    }
+
+    pub fn redo(&mut self) {
+        let Some(snap) = self.redo_stack.pop() else { return };
+        self.undo_stack.push(self.snapshot());
+        self.apply_snapshot(snap);
+    }
+
+    fn apply_snapshot(&mut self, snap: Snapshot) {
+        self.items          = snap.items;
+        self.categories     = snap.categories;
+        self.view           = snap.view;
+        self.inactive_views = snap.inactive_views;
+        self.view_order_idx = snap.view_order_idx;
+        self.cursor         = snap.cursor;
+        self.col_cursor     = snap.col_cursor;
+        self.sub_row        = snap.sub_row;
+        self.next_id        = snap.next_id;
+        // Cancel any in-progress UI state so it doesn't reference stale indices.
+        self.mode      = Mode::Normal;
+        self.col_mode  = ColMode::Normal;
+        self.sec_mode  = SectionMode::Normal;
+        self.screen    = AppScreen::View;
+        if self.file_path.is_some() { self.dirty = true; }
     }
 
     /// Resolve a (section, local_item_pos) cursor to a global index into `view.items`.
@@ -1991,6 +2066,7 @@ impl App {
         }
     }
     pub fn view_add_confirm(&mut self) {
+        self.push_undo();
         let (name, sec_name, sec_cat_idx) = match &self.view_mode {
             ViewMode::Add { name_buf, sec_buf, sec_cat_idx, .. } =>
                 (name_buf.trim().to_string(), sec_buf.trim().to_string(), *sec_cat_idx),
@@ -2133,6 +2209,7 @@ impl App {
 
     /// Write the edited note back to the data model.
     pub fn apply_note(&mut self, target: NoteTarget, content: String) {
+        self.push_undo();
         match target {
             NoteTarget::Item(gi) => {
                 if let Some(item) = self.items.get_mut(gi) {
@@ -2835,6 +2912,7 @@ impl App {
     }
 
     pub fn confirm(&mut self) {
+        self.push_undo();
         // Date validation: peek at mode before consuming it
         if let Mode::Edit { ref buffer, col, .. } = self.mode {
             if col > 0 {
@@ -3006,6 +3084,7 @@ impl App {
 
     pub fn col_delete(&mut self) {
         if self.view.columns.is_empty() || self.col_cursor == 0 { return; }
+        self.push_undo();
         let idx = (self.col_cursor - 1).min(self.view.columns.len() - 1);
         self.view.columns.remove(idx);
         if idx < self.view.left_count {
@@ -3096,6 +3175,7 @@ impl App {
 
     /// Remove the item entirely from the global pool (all category assignments discarded).
     fn item_discard(&mut self) {
+        self.push_undo();
         let (s, i) = match self.cursor {
             CursorPos::Item { section, item } => (section, item),
             _ => return,
@@ -3325,6 +3405,7 @@ impl App {
             _ => return,
         };
         if cur < 4 { return; }
+        self.push_undo();
         let list = self.item_props_assigned(gi);
         if let Some((cat_id, _, _, _)) = list.get(cur - 4) {
             let cat_id = *cat_id;
@@ -3342,6 +3423,7 @@ impl App {
     /// Remove the currently focused item from its section and adjust the cursor.
     /// Toggle the "Done" timestamp on the current item.
     pub fn item_mark_done(&mut self) {
+        self.push_undo();
         let CursorPos::Item { section, item } = self.cursor else { return; };
         let Some(gi) = self.global_item_idx(section, item) else { return; };
         let flat = flatten_cats(&self.categories);
@@ -3395,6 +3477,7 @@ impl App {
 
     /// Sort the current section immediately (Alt-S, "On demand").
     pub fn sec_sort_now(&mut self) {
+        self.push_undo();
         let sec_idx = match &self.cursor {
             CursorPos::SectionHead(s)        => *s,
             CursorPos::Item { section, .. }  => *section,
@@ -3410,6 +3493,7 @@ impl App {
         };
         if s >= self.view.sections.len() { return; }
         let Some(gi) = self.global_item_idx(s, i) else { return; };
+        self.push_undo();
 
         // Count visible items in the section before removal (same basis as the cursor index).
         let count = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
@@ -3506,6 +3590,7 @@ impl App {
 
     pub fn col_quick_add_confirm(&mut self) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; } // don't confirm mid-create
+        self.push_undo();
         let (position, picker_cursor) = match &self.col_mode {
             ColMode::QuickAdd { position, picker_cursor, .. } => (*position, *picker_cursor),
             _ => return,
@@ -3602,6 +3687,7 @@ impl App {
     pub fn col_form_confirm(&mut self) {
         // Column head may not be blank.
         if matches!(&self.col_mode, ColMode::Form { head_cat_idx: None, .. }) { return; }
+        self.push_undo();
 
         let old_mode = std::mem::replace(&mut self.col_mode, ColMode::Normal);
         if let ColMode::Form { is_add, head_cat_idx, width_buf, position, .. } = old_mode {
@@ -3860,6 +3946,7 @@ impl App {
     }
 
     pub fn col_props_confirm(&mut self) {
+        self.push_undo();
         let old = std::mem::replace(&mut self.col_mode, ColMode::Normal);
         if let ColMode::Props { head_buf, width_buf, format, date_fmt, .. } = old {
             if self.view.columns.is_empty() || self.col_cursor == 0 { return; }
@@ -4451,6 +4538,7 @@ impl App {
     }
 
     pub fn sec_form_confirm(&mut self) {
+        self.push_undo();
         let (cat_idx, insert) = match &self.sec_mode {
             SectionMode::Add { cat_idx, insert, .. } => (*cat_idx, *insert),
             _ => return,
@@ -4519,6 +4607,7 @@ impl App {
 
     /// Remove the currently focused section; items in it remain in the global pool.
     fn sec_remove(&mut self) {
+        self.push_undo();
         let s = match self.cursor {
             CursorPos::SectionHead(s) => s,
             _ => return,
@@ -4730,6 +4819,7 @@ impl App {
     }
 
     pub fn sec_props_confirm(&mut self) {
+        self.push_undo();
         if let SectionMode::Props { sec_idx, ref head_buf, .. } = self.sec_mode {
             let trimmed = head_buf.trim().to_string();
             if !trimmed.is_empty() && sec_idx < self.view.sections.len() {
@@ -4828,6 +4918,7 @@ impl App {
 
     /// Confirm the filter picker: write working entries to the section.
     pub fn sec_filter_picker_confirm(&mut self) {
+        self.push_undo();
         let flat = flatten_cats(&self.categories);
         let (sec_idx, entries) = match &self.sec_mode {
             SectionMode::Props {
@@ -4903,6 +4994,7 @@ impl App {
     }
 
     pub fn sec_sort_confirm(&mut self) {
+        self.push_undo();
         if let SectionMode::Props {
             sec_idx,
             sort_state: SortState::Dialog {
@@ -5252,6 +5344,7 @@ impl App {
     }
 
     pub fn cat_confirm(&mut self) {
+        self.push_undo();
         match std::mem::replace(&mut self.cat_state.mode, CatMode::Normal) {
             CatMode::Edit { buffer, .. } => {
                 let text = buffer.trim().to_string();
@@ -5338,6 +5431,7 @@ impl App {
     }
 
     pub fn cat_props_confirm(&mut self) {
+        self.push_undo();
         let old = std::mem::replace(&mut self.cat_state.mode, CatMode::Normal);
         let CatMode::Props {
             name_buf, short_name_buf, also_match_buf, note_file_buf,
@@ -5474,6 +5568,7 @@ impl App {
         if flat.is_empty() { return; }
         let idx  = self.cat_state.cursor.min(flat.len() - 1);
         if cat_is_protected(&flat[idx]) { return; }
+        self.push_undo();
         let path = flat[idx].path.clone();
         take_cat(&mut self.categories, &path);
         let new_flat = flatten_cats(&self.categories);
@@ -5562,6 +5657,7 @@ impl App {
     /// Promote: move current category up one level (become sibling of its parent).
     pub fn cat_promote(&mut self) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
+        self.push_undo();
         let flat = flatten_cats(&self.categories);
         if flat.is_empty() { return; }
         let idx  = self.cat_state.cursor.min(flat.len() - 1);
@@ -5585,6 +5681,7 @@ impl App {
     /// Demote: make current category the last child of its previous sibling.
     pub fn cat_demote(&mut self) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
+        self.push_undo();
         let flat = flatten_cats(&self.categories);
         if flat.is_empty() { return; }
         let idx  = self.cat_state.cursor.min(flat.len() - 1);
@@ -5627,7 +5724,10 @@ impl App {
         let Some(entry) = flat.get(self.cat_state.cursor) else { return };
         let id = entry.id;
         let path = entry.path.clone();
+        let snap = self.snapshot();
         if swap_cat_in_tree(&mut self.categories, &path, true) {
+            self.undo_stack.push(snap);
+            self.redo_stack.clear();
             let new_flat = flatten_cats(&self.categories);
             if let Some(pos) = new_flat.iter().position(|f| f.id == id) {
                 self.cat_state.cursor = pos;
@@ -5641,7 +5741,10 @@ impl App {
         let Some(entry) = flat.get(self.cat_state.cursor) else { return };
         let id = entry.id;
         let path = entry.path.clone();
+        let snap = self.snapshot();
         if swap_cat_in_tree(&mut self.categories, &path, false) {
+            self.undo_stack.push(snap);
+            self.redo_stack.clear();
             let new_flat = flatten_cats(&self.categories);
             if let Some(pos) = new_flat.iter().position(|f| f.id == id) {
                 self.cat_state.cursor = pos;
@@ -5811,6 +5914,7 @@ impl App {
     /// - Selecting the head: clears all descendant assignments, toggles the head.
     /// - Selecting a descendant: clears the head assignment, toggles the descendant.
     pub fn col_sub_pick_toggle(&mut self) {
+        self.push_undo();
         let (col_idx, picker_cursor) = match &self.col_mode {
             ColMode::SubPick { col_idx, picker_cursor } => (*col_idx, *picker_cursor),
             _ => return,
@@ -5922,6 +6026,7 @@ impl App {
     }
 
     pub fn col_calendar_confirm(&mut self) {
+        self.push_undo();
         let (year, month, day, hour, min, sec) = match &self.col_mode {
             ColMode::Calendar { year, month, day, hour, min, sec } =>
                 (*year, *month, *day, *hour, *min, *sec),
@@ -5965,6 +6070,7 @@ impl App {
     }
 
     pub fn col_set_time_confirm(&mut self) {
+        self.push_undo();
         let (year, month, day, h, m, s) = match &self.col_mode {
             ColMode::SetTime { year, month, day, hour_buf, min_buf, sec_buf, .. } => {
                 let h = hour_buf.trim().parse::<u32>().unwrap_or(0).min(23);
@@ -6261,6 +6367,7 @@ impl App {
     }
 
     pub fn vmgr_move_up(&mut self) {
+        self.push_undo();
         let p   = self.vmgr_state.cursor;
         let voi = self.view_order_idx;
         if p == 0 { return; }
@@ -6282,6 +6389,7 @@ impl App {
     }
 
     pub fn vmgr_move_down(&mut self) {
+        self.push_undo();
         let p     = self.vmgr_state.cursor;
         let voi   = self.view_order_idx;
         let count = 1 + self.inactive_views.len();
@@ -6304,6 +6412,7 @@ impl App {
     }
 
     pub fn vmgr_select(&mut self) {
+        self.push_undo();
         let idx = self.vmgr_state.cursor;
         let voi = self.view_order_idx;
         if idx != voi {
@@ -6397,6 +6506,7 @@ impl App {
         if let ViewMgrMode::Rename { buffer, .. } = &self.vmgr_state.mode {
             let name = buffer.trim().to_string();
             if !name.is_empty() {
+                self.push_undo();
                 self.vmgr_set_view_name_at_cursor(name);
                 if self.file_path.is_some() { self.dirty = true; }
             }
@@ -6578,6 +6688,7 @@ impl App {
     }
 
     pub fn vmgr_props_confirm(&mut self) {
+        self.push_undo();
         let idx = self.vmgr_state.cursor;
         let (name, hes, hdi, hdep, hii, hch, ss, ni, ssm, sso) = match &self.vmgr_state.mode {
             ViewMgrMode::Props {
@@ -6885,6 +6996,7 @@ impl App {
     }
 
     pub fn vmgr_sort_confirm(&mut self) {
+        self.push_undo();
         let v_idx = self.vmgr_state.cursor;
         let vals = match &self.vmgr_state.mode {
             ViewMgrMode::Props { sort_state: SortState::Dialog {
@@ -7048,6 +7160,7 @@ impl App {
     }
 
     pub fn vmgr_delete_confirm(&mut self) {
+        self.push_undo();
         let idx = self.vmgr_state.cursor;
         let voi = self.view_order_idx;
         if idx == voi {
