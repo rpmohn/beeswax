@@ -104,6 +104,20 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         }
     } else {
+        // For sibling-create (Ins): input row appears after all descendants of cursor.
+        // For child-create (Alt+R): input row appears immediately after cursor.
+        let create_show_after: Option<usize> = match &app.cat_state.mode {
+            CatMode::Create { as_child: false, .. } => {
+                let cursor_path = &flat[cursor].path;
+                Some(flat.iter().enumerate().rev()
+                    .find(|(_, e)| e.path.starts_with(cursor_path.as_slice()))
+                    .map(|(i, _)| i)
+                    .unwrap_or(cursor))
+            }
+            CatMode::Create { as_child: true, .. } => Some(cursor),
+            _ => None,
+        };
+
         for (row, entry) in flat.iter().enumerate() {
             let cursor_here = row == cursor;
             let note_ind     = cat_note_indicator(&app.categories, entry.id);
@@ -130,7 +144,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                             Span::raw(right),
                         ])
                     }
-                    // Create mode: cursor row loses highlight; input row appears below
+                    // Create mode: cursor row loses highlight; input row appears below subtree
                     CatMode::Create { .. } => Line::from(vec![
                         Span::raw(ind),
                         Span::raw(kchar),
@@ -155,11 +169,14 @@ pub fn render(frame: &mut Frame, app: &App) {
             };
             lines.push(line);
 
-            // ── Create-mode input row after cursor ────────────────────────
-            if cursor_here {
-                if let CatMode::Create { buffer, cursor: buf_cur, as_child } = &app.cat_state.mode {
-                    let create_depth =
-                        if *as_child { entry.depth + 1 } else { entry.depth };
+            // ── Create-mode input row ─────────────────────────────────────
+            if Some(row) == create_show_after {
+                if let CatMode::Create { buffer, cursor: buf_cur, as_child, .. } = &app.cat_state.mode {
+                    let create_depth = if *as_child {
+                        flat[cursor].depth + 1
+                    } else {
+                        flat[cursor].depth
+                    };
                     let (left, hi, right) = cursor_split(buffer, *buf_cur);
                     lines.push(Line::from(vec![
                         Span::raw(base_indent(create_depth)),

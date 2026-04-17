@@ -94,8 +94,8 @@ pub enum CatMode {
     /// Warning shown when Del is pressed on a protected system category.
     ProtectedWarning { message: String },
     Edit   { buffer: String, cursor: usize },
-    /// `as_child`: insert below as child (Alt-R) vs sibling (INS)
-    Create { buffer: String, cursor: usize, as_child: bool },
+    /// `as_child`: insert as child vs sibling. `first_child`: insert at position 0 vs append.
+    Create { buffer: String, cursor: usize, as_child: bool, first_child: bool },
     /// Category Properties modal (F6).
     Props {
         name_buf:         String,
@@ -5152,10 +5152,16 @@ impl App {
         self.cat_state.mode = CatMode::Edit { buffer: name, cursor: 0 };
     }
 
-    /// `as_child = false` → sibling below (INS), `true` → child (Alt-R)
+    /// `as_child = false` → sibling below (INS), `true` → child (Alt-R).
+    /// On a depth-0 (root) category a sibling is impossible, so always creates a child.
     pub fn cat_begin_create(&mut self, as_child: bool) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
-        self.cat_state.mode = CatMode::Create { buffer: String::new(), cursor: 0, as_child };
+        let flat = flatten_cats(&self.categories);
+        let at_root = !flat.is_empty()
+            && flat[self.cat_state.cursor.min(flat.len() - 1)].depth == 0;
+        let first_child = at_root && !as_child;  // Ins on root → first child
+        let as_child    = as_child || at_root;
+        self.cat_state.mode = CatMode::Create { buffer: String::new(), cursor: 0, as_child, first_child };
     }
 
     // ── CatMgr input ─────────────────────────────────────────────────────────
@@ -5207,7 +5213,7 @@ impl App {
                 let idx = self.cat_state.cursor.min(flat.len() - 1);
                 rename_cat(&mut self.categories, &flat[idx].path.clone(), text);
             }
-            CatMode::Create { buffer, as_child, .. } => {
+            CatMode::Create { buffer, as_child, first_child, .. } => {
                 let text = buffer.trim().to_string();
                 if text.is_empty() { return; }
                 let id  = self.alloc_id();
@@ -5222,8 +5228,8 @@ impl App {
                     let idx  = self.cat_state.cursor.min(flat.len() - 1);
                     let path = flat[idx].path.clone();
                     if as_child {
-                        let n = children_count(&self.categories, &path);
-                        insert_at(&mut self.categories, &path, n, cat);
+                        let pos = if first_child { 0 } else { children_count(&self.categories, &path) };
+                        insert_at(&mut self.categories, &path, pos, cat);
                     } else {
                         let my_idx     = *path.last().unwrap();
                         let parent     = &path[..path.len() - 1];

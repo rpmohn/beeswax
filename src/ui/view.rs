@@ -739,7 +739,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
                 // Inline create row appears after the cursor row
                 if is_cur {
-                    if let CatMode::Create { buffer, cursor: buf_cur, as_child } = &app.cat_state.mode {
+                    if let CatMode::Create { buffer, cursor: buf_cur, as_child, .. } = &app.cat_state.mode {
                         let d = if *as_child { cat.depth + 1 } else { cat.depth };
                         let cr_indent = " ".repeat(d * 2 + 1);
                         let (left, hi, right) = cursor_split(buffer, *buf_cur);
