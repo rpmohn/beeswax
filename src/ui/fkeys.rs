@@ -180,6 +180,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         } else {
             &SUB_PICK_FKEYS
         }
+    } else if matches!(app.cat_state.mode, CatMode::ProtectedWarning { .. } | CatMode::ConfirmDelete { .. }) {
+        &MENU_FKEYS   // self-describing dialog
     } else if matches!(app.cat_state.mode, CatMode::Move) {
         &CATMGR_MOVE_FKEYS
     } else if matches!(app.cat_state.mode, CatMode::Props { .. }) {

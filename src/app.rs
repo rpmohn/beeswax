@@ -89,6 +89,10 @@ pub enum CatMode {
     Normal,
     /// Category reorder mode (Alt+F10): Up/Down swap with adjacent siblings.
     Move,
+    /// Delete confirmation dialog (Del key).
+    ConfirmDelete { yes: bool, has_assignments: bool, has_children: bool },
+    /// Warning shown when Del is pressed on a protected system category.
+    ProtectedWarning { message: String },
     Edit   { buffer: String, cursor: usize },
     /// `as_child`: insert below as child (Alt-R) vs sibling (INS)
     Create { buffer: String, cursor: usize, as_child: bool },
@@ -766,12 +770,16 @@ fn item_is_na(
 
 // ── Tree helpers (free functions) ─────────────────────────────────────────────
 
+/// IDs of the three reserved system date categories (Entry, When, Done).
+/// These may be renamed but must never be deleted.
+pub const SYSTEM_DATE_CAT_IDS: [usize; 3] = [3, 4, 5];
+
 /// Returns true if a category may never be deleted:
 /// - top-level categories (depth 0) — only one is allowed
-/// - the reserved system categories: Entry, When, Done
+/// - the reserved system date categories (Entry, When, Done), identified by ID
 pub fn cat_is_protected(entry: &FlatCat) -> bool {
     entry.depth == 0
-        || matches!(entry.name.as_str(), "Entry" | "When" | "Done")
+        || SYSTEM_DATE_CAT_IDS.contains(&entry.id)
 }
 
 /// Returns true if `candidate_id` is equal to `descendant_id` or is an ancestor of it.
@@ -5119,7 +5127,7 @@ impl App {
             CatMode::Edit { cursor, .. } | CatMode::Create { cursor, .. } => {
                 if *cursor > 0 { *cursor -= 1; }
             }
-            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => {}
+            CatMode::Normal | CatMode::Move | CatMode::ConfirmDelete { .. } | CatMode::ProtectedWarning { .. } | CatMode::Props { .. } => {}
         }
     }
 
@@ -5129,7 +5137,7 @@ impl App {
                 let len = buffer.chars().count();
                 if *cursor < len { *cursor += 1; }
             }
-            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => {}
+            CatMode::Normal | CatMode::Move | CatMode::ConfirmDelete { .. } | CatMode::ProtectedWarning { .. } | CatMode::Props { .. } => {}
         }
     }
 
@@ -5156,7 +5164,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => return,
+            CatMode::Normal | CatMode::Move | CatMode::ConfirmDelete { .. } | CatMode::ProtectedWarning { .. } | CatMode::Props { .. } => return,
         };
         let byte_pos = char_to_byte(buffer, *cursor);
         buffer.insert(byte_pos, ch);
@@ -5167,7 +5175,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => return,
+            CatMode::Normal | CatMode::Move | CatMode::ConfirmDelete { .. } | CatMode::ProtectedWarning { .. } | CatMode::Props { .. } => return,
         };
         if *cursor > 0 {
             *cursor -= 1;
@@ -5180,7 +5188,7 @@ impl App {
         let (buffer, cursor) = match &mut self.cat_state.mode {
             CatMode::Edit   { buffer, cursor }     => (buffer, cursor),
             CatMode::Create { buffer, cursor, .. } => (buffer, cursor),
-            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => return,
+            CatMode::Normal | CatMode::Move | CatMode::ConfirmDelete { .. } | CatMode::ProtectedWarning { .. } | CatMode::Props { .. } => return,
         };
         let len = buffer.chars().count();
         if *cursor < len {
@@ -5227,7 +5235,7 @@ impl App {
                     }
                 }
             }
-            CatMode::Normal | CatMode::Move | CatMode::Props { .. } => {}
+            CatMode::Normal | CatMode::Move | CatMode::ConfirmDelete { .. } | CatMode::ProtectedWarning { .. } | CatMode::Props { .. } => {}
         }
     }
 
@@ -5417,6 +5425,82 @@ impl App {
         let new_flat = flatten_cats(&self.categories);
         self.cat_state.cursor =
             self.cat_state.cursor.min(new_flat.len().saturating_sub(1));
+    }
+
+    /// Open the delete confirmation dialog for the category at the cursor.
+    /// Checks whether any items are assigned to the category or its descendants.
+    pub fn cat_open_confirm_delete(&mut self) {
+        if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
+        let flat = flatten_cats(&self.categories);
+        if flat.is_empty() { return; }
+        let idx = self.cat_state.cursor.min(flat.len() - 1);
+        // Depth-0 (root category): show a named warning.
+        if flat[idx].depth == 0 {
+            let message = format!(
+                "You can't discard the {} root category.",
+                flat[idx].name,
+            );
+            self.cat_state.mode = CatMode::ProtectedWarning { message };
+            return;
+        }
+        let cat_id = flat[idx].id;
+        // System date categories (Entry, When, Done): show a named warning.
+        if SYSTEM_DATE_CAT_IDS.contains(&cat_id) {
+            let name = |id: usize| flat.iter()
+                .find(|e| e.id == id)
+                .map(|e| e.name.as_str())
+                .unwrap_or("");
+            let message = format!(
+                "You can't discard the {}, {}, or {} date categories.",
+                name(5), name(3), name(4),   // Done, Entry, When
+            );
+            self.cat_state.mode = CatMode::ProtectedWarning { message };
+            return;
+        }
+        let mut parent_map = HashMap::new();
+        build_cat_maps(&self.categories, None, &mut parent_map, &mut HashMap::new());
+        let has_assignments = self.items.iter().any(|item| {
+            item.values.keys().any(|&k| is_under_map(k, cat_id, &parent_map))
+        });
+        let cur_path = &flat[idx].path;
+        let has_children = flat.iter().any(|e| {
+            e.path.len() > cur_path.len() && e.path.starts_with(cur_path.as_slice())
+        });
+        self.cat_state.mode = CatMode::ConfirmDelete { yes: true, has_assignments, has_children };
+    }
+
+    pub fn cat_confirm_delete_toggle(&mut self) {
+        if let CatMode::ConfirmDelete { yes, .. } = &mut self.cat_state.mode {
+            *yes = !*yes;
+        }
+    }
+
+    pub fn cat_confirm_delete_confirm(&mut self) {
+        if let CatMode::ConfirmDelete { yes, .. } = self.cat_state.mode {
+            self.cat_state.mode = CatMode::Normal;
+            if yes {
+                let flat = flatten_cats(&self.categories);
+                if flat.is_empty() { return; }
+                let idx  = self.cat_state.cursor.min(flat.len() - 1);
+                let path = flat[idx].path.clone();
+                take_cat(&mut self.categories, &path);
+                let new_flat = flatten_cats(&self.categories);
+                self.cat_state.cursor =
+                    self.cat_state.cursor.min(new_flat.len().saturating_sub(1));
+            }
+        }
+    }
+
+    pub fn cat_confirm_delete_cancel(&mut self) {
+        if matches!(self.cat_state.mode, CatMode::ConfirmDelete { .. }) {
+            self.cat_state.mode = CatMode::Normal;
+        }
+    }
+
+    pub fn cat_close_protected_warning(&mut self) {
+        if matches!(self.cat_state.mode, CatMode::ProtectedWarning { .. }) {
+            self.cat_state.mode = CatMode::Normal;
+        }
     }
 
     // ── CatMgr tree restructuring ─────────────────────────────────────────────

@@ -6,6 +6,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 use crate::app::{App, CatMode, CatPropsField, FlatCat, MenuState, cat_note_for_id, cat_note_indicator, flatten_cats};
+use ratatui::layout::Alignment;
+use ratatui::widgets::BorderType;
 use crate::model::CategoryKind;
 use super::{cursor_split, fkeys, menu, title_bar_top};
 
@@ -110,7 +112,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             // ── Category row ─────────────────────────────────────────────
             let line = if cursor_here {
                 match &app.cat_state.mode {
-                    CatMode::Normal | CatMode::Move => Line::from(vec![
+                    CatMode::Normal | CatMode::Move | CatMode::ConfirmDelete { .. } | CatMode::ProtectedWarning { .. } => Line::from(vec![
                         Span::raw(ind),
                         Span::raw(kchar),
                         Span::raw(" "),
@@ -174,11 +176,89 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), body_inner);
 
+    // ── Protected-category warning modal ─────────────────────────────────────
+    render_cat_protected_warning_modal(frame, app, area);
+
+    // ── Delete confirmation modal ─────────────────────────────────────────────
+    render_cat_confirm_delete_modal(frame, app, area);
+
     // ── Category Properties modal ─────────────────────────────────────────────
     render_cat_props_modal(frame, app, area);
 
     // ── F-key bar ─────────────────────────────────────────────────────────────
     fkeys::render_fkey_bar(frame, chunks[2], app);
+}
+
+/// Render the protected-category warning modal. No-op unless `CatMode::ProtectedWarning`.
+fn render_cat_protected_warning_modal(frame: &mut Frame, app: &App, area: Rect) {
+    let CatMode::ProtectedWarning { ref message } = app.cat_state.mode else { return; };
+
+    let w = (message.chars().count() as u16 + 6).min(area.width);
+    let modal_rect = centered_rect(w, 5, area);
+    frame.render_widget(Clear, modal_rect);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .title_bottom(
+            Line::from(" Press any key to continue ")
+                .alignment(Alignment::Center),
+        )
+        .style(app.theme.dialog_border);
+    frame.render_widget(block.clone(), modal_rect);
+    let inner = block.inner(modal_rect);
+
+    let rows = vec![
+        Line::from(""),
+        Line::from(format!("  {}", message)),
+        Line::from(""),
+    ];
+    frame.render_widget(
+        Paragraph::new(rows).style(app.theme.dialog),
+        inner,
+    );
+}
+
+/// Render the delete confirmation modal. No-op unless `CatMode::ConfirmDelete`.
+fn render_cat_confirm_delete_modal(frame: &mut Frame, app: &App, area: Rect) {
+    let CatMode::ConfirmDelete { yes, has_assignments, has_children } = app.cat_state.mode else { return; };
+
+    let modal_rect = centered_rect(58, 5, area);
+    frame.render_widget(Clear, modal_rect);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .title_bottom(
+            Line::from(" Press ENTER to accept, ESC to cancel ")
+                .alignment(Alignment::Center),
+        )
+        .style(app.theme.dialog_border);
+    frame.render_widget(block.clone(), modal_rect);
+    let inner = block.inner(modal_rect);
+
+    let rev = app.theme.item_selected_field;
+    let question = if has_assignments {
+        "Category has assignments. Discard the category?"
+    } else if has_children {
+        "Category has children. Discard the category?"
+    } else {
+        "Discard this category?"
+    };
+    let val_str = if yes { "Yes" } else { "No" };
+
+    let rows = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw(format!("  {}  ", question)),
+            Span::styled(val_str.to_string(), rev),
+        ]),
+        Line::from(""),
+    ];
+    frame.render_widget(
+        Paragraph::new(rows).style(app.theme.dialog),
+        inner,
+    );
 }
 
 /// Render the Category Properties modal centered on `area`.

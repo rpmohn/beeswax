@@ -210,16 +210,20 @@ pub fn handle_event(app: &mut App, event: Event) {
             else if in_edit   { handle_view_input(app, code) }
         }
         AppScreen::CatMgr => {
-            let in_props  = matches!(app.cat_state.mode, CatMode::Props { .. });
-            let in_move   = matches!(app.cat_state.mode, CatMode::Move);
-            let in_normal = matches!(app.cat_state.mode, CatMode::Normal);
-            let in_edit   = matches!(app.cat_state.mode, CatMode::Edit   { .. });
-            let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
-            if      in_props  { handle_catmgr_props(app, code, modifiers) }
-            else if in_move   { handle_catmgr_move(app, code) }
-            else if in_normal { handle_catmgr_normal(app, code, modifiers) }
-            else if in_edit   { handle_catmgr_input(app, code) }
-            else if in_create { handle_catmgr_input(app, code) }
+            let in_warning = matches!(app.cat_state.mode, CatMode::ProtectedWarning { .. });
+            let in_confirm = matches!(app.cat_state.mode, CatMode::ConfirmDelete { .. });
+            let in_props   = matches!(app.cat_state.mode, CatMode::Props { .. });
+            let in_move    = matches!(app.cat_state.mode, CatMode::Move);
+            let in_normal  = matches!(app.cat_state.mode, CatMode::Normal);
+            let in_edit    = matches!(app.cat_state.mode, CatMode::Edit   { .. });
+            let in_create  = matches!(app.cat_state.mode, CatMode::Create { .. });
+            if      in_warning { app.cat_close_protected_warning() }
+            else if in_confirm { handle_catmgr_confirm_delete(app, code) }
+            else if in_props   { handle_catmgr_props(app, code, modifiers) }
+            else if in_move    { handle_catmgr_move(app, code) }
+            else if in_normal  { handle_catmgr_normal(app, code, modifiers) }
+            else if in_edit    { handle_catmgr_input(app, code) }
+            else if in_create  { handle_catmgr_input(app, code) }
         }
         AppScreen::ViewMgr => {} // handled above as priority block
     }
@@ -487,6 +491,20 @@ fn handle_vi_list(
 
 // ── CatMgr handlers ───────────────────────────────────────────────────────────
 
+fn handle_catmgr_confirm_delete(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter                          => app.cat_confirm_delete_confirm(),
+        KeyCode::Esc                            => app.cat_confirm_delete_cancel(),
+        KeyCode::Char(' ')                      => app.cat_confirm_delete_toggle(),
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            if let CatMode::ConfirmDelete { yes, .. } = &mut app.cat_state.mode { *yes = true; }
+            app.cat_confirm_delete_confirm();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => app.cat_confirm_delete_cancel(),
+        _ => {}
+    }
+}
+
 fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::ALT) {
         match code {
@@ -544,7 +562,7 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(6)   => app.cat_open_props(),
         KeyCode::Esc | KeyCode::F(9) => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
-        KeyCode::Delete => app.cat_delete(),
+        KeyCode::Delete => app.cat_open_confirm_delete(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
                           && !modifiers.contains(KeyModifiers::ALT) => {
             match app.nav_mode {
