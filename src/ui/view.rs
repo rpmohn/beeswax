@@ -248,6 +248,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                 &app.cursor,
                 CursorPos::Item { section: si, item: ii } if *si == s_idx && *ii == i_idx
             );
+            // In Create mode the new item is what the user is working on; the anchor
+            // item should lose its selection highlight immediately.
+            let show_selected = cursor_on_item && !matches!(app.mode, Mode::Create { .. });
 
             let is_done    = done_cat_id.map(|id| item.values.contains_key(&id)).unwrap_or(false);
             let item_pfx   = if is_done { ITEM_DONE_PREFIX } else if item.note.is_empty() { ITEM_PREFIX } else { ITEM_NOTE_PREFIX };
@@ -365,7 +368,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     (None, None, None, None, None)
                 };
 
-                let col_text_style = if cursor_on_item {
+                let col_text_style = if show_selected {
                     app.theme.item_selected_line
                 } else {
                     app.theme.view_col
@@ -379,7 +382,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let line_text = if is_text_row { wrapped_lines[row_i].clone() } else { String::new() };
                 let indent = if row_i == 0 { item_pfx.to_string() } else { " ".repeat(pfx_w) };
 
-                let mut item_spans: Vec<Span<'static>> = if cursor_on_item && is_text_row {
+                let mut item_spans: Vec<Span<'static>> = if show_selected && is_text_row {
                     match &app.mode {
                         Mode::Normal => {
                             // Prefix (indent + icon) always gets line style; only the text gets field style.
@@ -413,10 +416,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                                      Span::styled(line_text, body_style)]
                             }
                         }
-                        Mode::Edit { .. } =>
-                            vec![Span::styled(indent, app.theme.item_selected_line),
-                                 Span::styled(line_text, app.theme.item_selected_line)],
-                        Mode::Create { .. } | Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. } | Mode::ItemProps { .. } =>
+                        _ =>
                             vec![Span::styled(indent, app.theme.item_selected_line),
                                  Span::styled(line_text, app.theme.item_selected_line)],
                     }
@@ -438,7 +438,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 };
                 if text_chars < main_col_w {
                     let pad = " ".repeat(main_col_w - text_chars);
-                    if cursor_on_item {
+                    if show_selected {
                         item_spans.push(Span::styled(pad, app.theme.item_selected_line));
                     } else {
                         item_spans.push(Span::raw(pad));
@@ -452,14 +452,14 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let mut row = left_item_spans;
                 row.extend(item_spans);
                 if !right_cols.is_empty() {
-                    if cursor_on_item {
+                    if show_selected {
                         row.push(Span::styled(" ", app.theme.item_selected_line));
                     } else {
                         row.push(Span::raw(" "));
                     }
                 }
                 row.extend(right_item_spans);
-                if cursor_on_item {
+                if show_selected {
                     row.push(Span::styled(" ".repeat(total_body_w), app.theme.item_selected_line));
                 }
                 lines.push(Line::from(row));
