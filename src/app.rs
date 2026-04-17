@@ -1797,6 +1797,36 @@ impl App {
     }
 
     /// First section index >= `from` that is not hidden by `hide_empty_sections`.
+    /// After any mutation that may hide the cursor (delete, mark-done, filter change),
+    /// clamp the cursor to the nearest visible position.
+    fn clamp_cursor_to_visible(&mut self) {
+        // Step 1: if cursor is on an item, clamp to visible items in that section.
+        if let CursorPos::Item { section: s, item: i } = self.cursor {
+            let visible = visible_item_indices(&self.items, &self.view, s, &self.categories);
+            if i >= visible.len() {
+                // Item no longer visible — move to last visible item or section head.
+                self.cursor = if !visible.is_empty() {
+                    CursorPos::Item { section: s, item: visible.len() - 1 }
+                } else {
+                    CursorPos::SectionHead(s)
+                };
+            }
+        }
+        // Step 2: if cursor is (now) on a section head, ensure that section is rendered.
+        if let CursorPos::SectionHead(s) = self.cursor {
+            if self.view.hide_empty_sections
+                && visible_item_indices(&self.items, &self.view, s, &self.categories).is_empty()
+            {
+                // Section is hidden — find nearest visible section.
+                let ns = self.next_visible_section_fwd(s + 1)
+                    .or_else(|| self.next_visible_section_bwd(s.saturating_sub(1)));
+                if let Some(ns) = ns {
+                    self.cursor = CursorPos::SectionHead(ns);
+                }
+            }
+        }
+    }
+
     fn next_visible_section_fwd(&self, from: usize) -> Option<usize> {
         (from..self.view.sections.len()).find(|&s|
             !self.view.hide_empty_sections
@@ -3076,6 +3106,7 @@ impl App {
         } else {
             CursorPos::SectionHead(s)
         };
+        self.clamp_cursor_to_visible();
         if self.file_path.is_some() { self.dirty = true; }
     }
 
@@ -3315,6 +3346,7 @@ impl App {
         if self.items[gi].values.remove(&done_id).is_none() {
             self.items[gi].values.insert(done_id, now_datetime_string());
         }
+        self.clamp_cursor_to_visible();
         if self.file_path.is_some() { self.dirty = true; }
     }
 
@@ -3375,8 +3407,8 @@ impl App {
         if s >= self.view.sections.len() { return; }
         let Some(gi) = self.global_item_idx(s, i) else { return; };
 
-        // Count visible items in the section before removal.
-        let count = section_item_indices(&self.items, &self.view, s, &self.categories).len();
+        // Count visible items in the section before removal (same basis as the cursor index).
+        let count = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
 
         // Remove all category assignments that place this item in section s.
         let sec_cat_id = self.view.sections[s].cat_id;
@@ -3405,6 +3437,7 @@ impl App {
         } else {
             CursorPos::SectionHead(s)
         };
+        self.clamp_cursor_to_visible();
         if self.file_path.is_some() { self.dirty = true; }
     }
 
