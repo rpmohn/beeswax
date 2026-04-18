@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use crate::app::{App, AppScreen};
-use super::{catmgr, view, viewmgr};
+use super::{catmgr, customize, view, viewmgr};
 
 pub fn render(frame: &mut Frame, app: &App) {
     match app.screen {
@@ -16,4 +16,5 @@ pub fn render(frame: &mut Frame, app: &App) {
     view::render_sec_props_dialog(frame, app, area);
     catmgr::render_cat_props_modal(frame, app, area);
     viewmgr::render_view_props_overlay(frame, app, area);
+    customize::render_overlay(frame, app, area);
 }

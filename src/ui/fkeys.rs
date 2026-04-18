@@ -4,7 +4,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, FilterState, FKeyMod, MenuState, Mode, SecPropsField, SectionMode, SortState, ViewMgrMode};
+use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, CustomizeSubMode, FilterState, FKeyMod, MenuState, Mode, SecPropsField, SectionMode, SortState, ViewMgrMode};
 
 /// Action labels for F1–F10 (index 0 = F1, index 9 = F10).
 pub struct FKeyLabels {
@@ -120,6 +120,13 @@ static EDIT_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["Compose", "MakeCat", "", "Delete", "",     "",       "Split","", "", ""],
 };
 
+pub static CUSTOMIZE_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "Edit", "Choices", "", "", "", "", "", "", ""],
+    shift:  ["",     "",     "",        "", "", "", "", "", "", ""],
+    ctrl:   ["",     "",     "",        "", "", "", "", "", "", ""],
+    alt:    ["",     "",     "",        "", "", "", "", "", "", ""],
+};
+
 pub static VIEWMGR_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "Edit", "", "Delete", "", "Props", "", "To View", "Cat Mgr", "Menu"],
     shift:  ["",     "",     "", "",       "", "",      "", "",        "",         ""   ],
@@ -136,7 +143,16 @@ pub static VIEW_PROPS_FKEYS: FKeyLabels = FKeyLabels {
 
 /// Render the two-row, 10-section F-key bar into `area` (must be 2 rows tall).
 pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
-    let def = if !matches!(app.menu, MenuState::Closed) {
+    let def = if app.customize_state.is_some() {
+        let sub = app.customize_state.as_ref().map(|s| &s.sub_mode);
+        if matches!(sub, Some(CustomizeSubMode::EditHex { .. })) {
+            &EDIT_FKEYS
+        } else if matches!(sub, Some(CustomizeSubMode::NavPicker { .. } | CustomizeSubMode::SchemePicker { .. })) {
+            &MENU_FKEYS
+        } else {
+            &CUSTOMIZE_FKEYS
+        }
+    } else if !matches!(app.menu, MenuState::Closed) {
         &MENU_FKEYS
     } else if app.cat_search.is_some() {
         &SEARCH_FKEYS

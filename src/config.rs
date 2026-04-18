@@ -87,3 +87,97 @@ pub fn load() -> Config {
     let Ok(text) = std::fs::read_to_string(&path) else { return Config::default(); };
     toml::from_str(&text).unwrap_or_default()
 }
+
+/// Save config to the platform config path, creating directories as needed.
+/// If the file already exists, only the values managed by beeswax are touched;
+/// unknown keys, blank lines, comments (including trailing comments), and all
+/// other formatting are left exactly as they were.
+pub fn save(cfg: &Config) -> std::io::Result<()> {
+    let Some(path) = config_path() else { return Ok(()); };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Parse into a toml_edit document.  toml_edit preserves the raw source
+    // text for every node it doesn't touch, so comments, blank lines, and
+    // spacing survive the round-trip unchanged.
+    let mut doc: toml_edit::DocumentMut = if path.exists() {
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        text.parse().unwrap_or_default()
+    } else {
+        toml_edit::DocumentMut::new()
+    };
+
+    // Update a string value inside a toml_edit Table in-place.
+    //
+    // Captures the existing suffix decor (trailing whitespace + comment) before
+    // replacing, then restores it on the new item.  This means a line like
+    // `key = "old"  # comment` becomes `key = "new"  # comment`.
+    //
+    // When the key is absent or has an unexpected type it is simply inserted.
+    fn set_str(table: &mut toml_edit::Table, key: &str, val: &str) {
+        // Capture existing trailing comment (stored as value suffix decor).
+        let existing_suffix: Option<String> =
+            if let Some(toml_edit::Item::Value(toml_edit::Value::String(s))) = table.get(key) {
+                s.decor().suffix().and_then(|rs| rs.as_str()).map(|s| s.to_owned())
+            } else {
+                None
+            };
+
+        table[key] = toml_edit::value(val);
+
+        // Restore trailing comment on the newly-inserted item.
+        if let Some(suffix) = existing_suffix {
+            if let Some(toml_edit::Item::Value(toml_edit::Value::String(s))) =
+                table.get_mut(key)
+            {
+                s.decor_mut().set_suffix(suffix);
+            }
+        }
+    }
+
+    let root = doc.as_table_mut();
+    set_str(root, "nav_mode",    &cfg.nav_mode);
+    set_str(root, "colorscheme", &cfg.colorscheme);
+
+    // The 23 field names beeswax manages inside [custom_theme].
+    const KNOWN: &[&str] = &[
+        "bar_fg", "bar_bg", "bar_cursor_fg", "bar_cursor_bg",
+        "body_fg", "body_bg",
+        "selected_fg", "selected_bg", "selected_line_fg", "selected_line_bg",
+        "section_fg",
+        "dialog_fg", "dialog_bg", "dialog_border_fg", "dialog_border_bg",
+        "dialog_label_fg", "dialog_label_sel_fg",
+        "view_bg", "view_item", "view_col", "view_col_head",
+        "view_sec_head", "view_head_bg",
+    ];
+
+    // Collect the non-None custom_theme values.
+    let ct_toml = toml::Value::try_from(&cfg.custom_theme)
+        .unwrap_or(toml::Value::Table(toml::map::Map::new()));
+    let new_ct = if let toml::Value::Table(m) = ct_toml { m } else { Default::default() };
+
+    // Ensure [custom_theme] is a block table (create if absent or wrong type).
+    if root.get("custom_theme").and_then(|i| i.as_table()).is_none() {
+        root.insert("custom_theme", toml_edit::table());
+    }
+
+    if let Some(ct_item) = root.get_mut("custom_theme") {
+        if let Some(ct) = ct_item.as_table_mut() {
+            for &k in KNOWN {
+                match new_ct.get(k) {
+                    // Value is set: update in-place (preserves trailing comment) or insert.
+                    Some(toml::Value::String(s)) => set_str(ct, k, s),
+                    // Value was cleared (None): remove the key entirely.
+                    _ => { ct.remove(k); }
+                }
+            }
+            // Drop the section only when it is completely empty (no unknown keys left).
+            if ct.is_empty() {
+                root.remove("custom_theme");
+            }
+        }
+    }
+
+    std::fs::write(&path, doc.to_string())
+}

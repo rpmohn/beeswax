@@ -74,6 +74,45 @@ impl ColorScheme {
         }
     }
 
+    pub fn to_str(self) -> &'static str {
+        match self {
+            ColorScheme::Default      => "",
+            ColorScheme::AgendaColor  => "AgendaColor",
+            ColorScheme::AgendaMono   => "AgendaMono",
+            ColorScheme::SolarizedDark  => "SolarizedDark",
+            ColorScheme::SolarizedLight => "SolarizedLight",
+            ColorScheme::GruvboxDark  => "GruvboxDark",
+            ColorScheme::GruvboxLight => "GruvboxLight",
+            ColorScheme::Dracula      => "Dracula",
+            ColorScheme::Custom       => "Custom",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ColorScheme::Default      => "Default",
+            ColorScheme::AgendaColor  => "Agenda Color",
+            ColorScheme::AgendaMono   => "Agenda Mono",
+            ColorScheme::SolarizedDark  => "Solarized Dark",
+            ColorScheme::SolarizedLight => "Solarized Light",
+            ColorScheme::GruvboxDark  => "Gruvbox Dark",
+            ColorScheme::GruvboxLight => "Gruvbox Light",
+            ColorScheme::Dracula      => "Dracula",
+            ColorScheme::Custom       => "Custom",
+        }
+    }
+
+    pub const ALL: [ColorScheme; 9] = [
+        ColorScheme::Default,
+        ColorScheme::AgendaColor,
+        ColorScheme::AgendaMono,
+        ColorScheme::SolarizedDark,
+        ColorScheme::SolarizedLight,
+        ColorScheme::GruvboxDark,
+        ColorScheme::GruvboxLight,
+        ColorScheme::Dracula,
+        ColorScheme::Custom,
+    ];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -431,8 +470,48 @@ impl Theme {
 
 // ── Hex color parser ──────────────────────────────────────────────────────────
 
+/// Extract the effective Color for a given CustomTheme field index from a built Theme.
+/// Returns None when the style uses terminal-default (no RGB set) or the index is out of range.
+pub fn theme_color_for_field(theme: &Theme, field_idx: usize) -> Option<Color> {
+    let c: Option<Color> = match field_idx {
+        0  => theme.bar.fg,
+        1  => theme.bar.bg,
+        2  => theme.bar_cursor.fg,
+        3  => theme.bar_cursor.bg,
+        4  => theme.view_bg.fg,               // body_fg
+        5  => theme.view_bg.bg,               // body_bg
+        6  => theme.item_selected_field.fg,
+        7  => theme.item_selected_field.bg,
+        8  => theme.item_selected_line.fg,
+        9  => theme.item_selected_line.bg,
+        10 => theme.section.fg,
+        11 => theme.dialog.fg,
+        12 => theme.dialog.bg,
+        13 => theme.dialog_border.fg,
+        14 => theme.dialog_border.bg,
+        15 => theme.dialog_label.fg,
+        16 => theme.dialog_label_sel.fg,
+        17 => theme.view_bg.bg,               // view_bg background
+        18 => theme.view_item.fg,
+        19 => theme.view_col.fg,
+        20 => theme.view_col_head.fg,
+        21 => theme.view_sec_head.fg,
+        22 => theme.view_head_bg.bg,
+        _  => return None,
+    };
+    c
+}
+
+/// Convert a Color::Rgb to a "#rrggbb" hex string. Returns None for named/indexed colors.
+pub fn color_to_hex(c: Color) -> Option<String> {
+    match c {
+        Color::Rgb(r, g, b) => Some(format!("#{:02x}{:02x}{:02x}", r, g, b)),
+        _ => None,
+    }
+}
+
 /// Parse a "#rrggbb" hex string into a ratatui Color.  Returns None if malformed.
-fn parse_hex(s: &str) -> Option<Color> {
+pub(crate) fn parse_hex(s: &str) -> Option<Color> {
     let s = s.trim().strip_prefix('#')?;
     if s.len() != 6 { return None; }
     let r = u8::from_str_radix(&s[0..2], 16).ok()?;

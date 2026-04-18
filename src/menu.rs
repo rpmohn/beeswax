@@ -18,6 +18,7 @@ pub enum MenuAction {
     FileEnableEncryption,
     FileChangePassword,
     FileDisableEncryption,
+    Customize,
 }
 
 pub struct SubSubItem {
@@ -103,7 +104,7 @@ static PRINT_SUB: &[SubItem] = &[
 ];
 
 static UTILITIES_SUB: &[SubItem] = &[
-    SubItem { label: "Customize",   description: "Customize Agenda settings",               action: MenuAction::Noop, children: None },
+    SubItem { label: "Customize",   description: "Customize Agenda settings",               action: MenuAction::Customize, children: None },
     SubItem { label: "Execute",     description: "Execute a macro",                         action: MenuAction::Noop, children: None },
     SubItem { label: "Show",        description: "Show system or Agenda information",       action: MenuAction::Noop, children: None },
     SubItem { label: "Questions",   description: "Answer Agenda setup questions",           action: MenuAction::Noop, children: None },

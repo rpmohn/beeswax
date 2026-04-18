@@ -451,6 +451,54 @@ pub struct FlatCat {
     pub kind:  CategoryKind,
 }
 
+// ── Customize state ───────────────────────────────────────────────────────────
+
+pub const CUSTOMIZE_COLOR_COUNT: usize = 23;
+
+pub const CUSTOMIZE_COLOR_LABELS: [&str; CUSTOMIZE_COLOR_COUNT] = [
+    "bar_fg",           // 0
+    "bar_bg",           // 1
+    "bar_cursor_fg",    // 2
+    "bar_cursor_bg",    // 3
+    "body_fg",          // 4
+    "body_bg",          // 5
+    "selected_fg",      // 6
+    "selected_bg",      // 7
+    "selected_line_fg", // 8
+    "selected_line_bg", // 9
+    "section_fg",       // 10  — solo (no right partner)
+    "dialog_fg",        // 11
+    "dialog_bg",        // 12
+    "dialog_border_fg", // 13
+    "dialog_border_bg", // 14
+    "dialog_label_fg",  // 15
+    "dialog_label_sel", // 16
+    "view_bg",          // 17
+    "view_item",        // 18
+    "view_col",         // 19
+    "view_col_head",    // 20
+    "view_sec_head",    // 21
+    "view_head_bg",     // 22
+];
+
+pub enum CustomizeSubMode {
+    Normal,
+    NavPicker    { cursor: usize },
+    SchemePicker { cursor: usize },
+    EditHex { field_idx: usize, buf: String, char_cur: usize },
+}
+
+pub struct CustomizeState {
+    /// 0 = Nav Mode, 1 = Color Theme, 2..=24 = color fields (field_idx = cursor - 2).
+    pub cursor:     usize,
+    pub nav_idx:    usize,    // index into [Agenda, Vi]
+    pub scheme_idx: usize,    // index into ColorScheme::ALL
+    pub custom:     crate::config::CustomTheme,
+    pub sub_mode:   CustomizeSubMode,
+    orig_theme:     crate::theme::Theme,
+    orig_nav:       NavMode,
+}
+
 // ── Undo / Redo ───────────────────────────────────────────────────────────────
 
 struct Snapshot {
@@ -532,6 +580,8 @@ pub struct App {
     // Undo / Redo stacks (session-length, unbounded)
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
+    // Utilities Customize dialog (None = closed)
+    pub customize_state: Option<CustomizeState>,
 }
 
 // ── Byte-offset helper ────────────────────────────────────────────────────────
@@ -1756,6 +1806,7 @@ impl App {
             theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::Default),
             undo_stack:      Vec::new(),
             redo_stack:      Vec::new(),
+            customize_state: None,
         }
     }
 
@@ -1808,6 +1859,7 @@ impl App {
             theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::Default),
             undo_stack:      Vec::new(),
             redo_stack:      Vec::new(),
+            customize_state: None,
         }
     }
 
@@ -2294,6 +2346,7 @@ impl App {
             MenuAction::FileEnableEncryption
             | MenuAction::FileChangePassword
             | MenuAction::FileDisableEncryption => { self.handle_file_encryption(action); }
+            MenuAction::Customize => { self.open_customize(); return; }
             MenuAction::Noop => {}
         }
         // Don't close the menu if we opened a password dialog
@@ -7190,5 +7243,322 @@ impl App {
 
     pub fn vmgr_delete_cancel(&mut self) {
         self.vmgr_state.mode = ViewMgrMode::Normal;
+    }
+
+    // ── Utilities Customize ───────────────────────────────────────────────────
+
+    pub fn open_customize(&mut self) {
+        use crate::theme::ColorScheme;
+        self.menu = MenuState::Closed;
+        let cfg   = crate::config::load();
+        let scheme = ColorScheme::from_str(&cfg.colorscheme);
+        let scheme_idx = ColorScheme::ALL.iter().position(|&s| s == scheme).unwrap_or(0);
+        let nav_idx = match self.nav_mode { NavMode::Vi => 1, _ => 0 };
+        self.customize_state = Some(CustomizeState {
+            cursor:     0,
+            nav_idx,
+            scheme_idx,
+            custom:     cfg.custom_theme,
+            sub_mode:   CustomizeSubMode::Normal,
+            orig_theme: self.theme.clone(),
+            orig_nav:   self.nav_mode,
+        });
+    }
+
+    pub fn close_customize(&mut self) {
+        if let Some(ref st) = self.customize_state {
+            self.theme    = st.orig_theme.clone();
+            self.nav_mode = st.orig_nav;
+        }
+        self.customize_state = None;
+    }
+
+    pub fn customize_confirm(&mut self) {
+        use crate::theme::ColorScheme;
+        let Some(st) = self.customize_state.take() else { return };
+        let new_nav = if st.nav_idx == 1 { NavMode::Vi } else { NavMode::Agenda };
+        self.nav_mode = new_nav;
+        let scheme = ColorScheme::ALL[st.scheme_idx];
+        self.theme = if scheme == ColorScheme::Custom {
+            crate::theme::Theme::from_custom(&st.custom)
+        } else {
+            crate::theme::Theme::for_scheme(scheme)
+        };
+        let nav_str = if new_nav == NavMode::Vi { "vi" } else { "Agenda" };
+        let cfg = crate::config::Config {
+            nav_mode:    nav_str.to_string(),
+            colorscheme: scheme.to_str().to_string(),
+            custom_theme: st.custom,
+        };
+        let _ = crate::config::save(&cfg);
+    }
+
+    pub fn customize_cursor_up(&mut self) {
+        let Some(ref mut st) = self.customize_state else { return };
+        if st.cursor > 0 { st.cursor -= 1; }
+        self.customize_apply_live_theme();
+    }
+
+    pub fn customize_cursor_down(&mut self) {
+        use crate::theme::ColorScheme;
+        let is_custom = self.customize_state.as_ref()
+            .map(|s| ColorScheme::ALL[s.scheme_idx] == ColorScheme::Custom)
+            .unwrap_or(false);
+        let limit = if is_custom { 2 + CUSTOMIZE_COLOR_COUNT } else { 2 };
+        let Some(ref mut st) = self.customize_state else { return };
+        if st.cursor + 1 < limit { st.cursor += 1; }
+        self.customize_apply_live_theme();
+    }
+
+    pub fn customize_nav_prev(&mut self) {
+        let Some(ref mut st) = self.customize_state else { return };
+        st.nav_idx = if st.nav_idx == 0 { 1 } else { st.nav_idx - 1 };
+    }
+
+    pub fn customize_nav_next(&mut self) {
+        let Some(ref mut st) = self.customize_state else { return };
+        st.nav_idx = (st.nav_idx + 1) % 2;
+    }
+
+    pub fn customize_scheme_prev(&mut self) {
+        use crate::theme::ColorScheme;
+        if let Some(ref mut st) = self.customize_state {
+            st.scheme_idx = if st.scheme_idx == 0 { ColorScheme::ALL.len() - 1 } else { st.scheme_idx - 1 };
+            if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom && st.cursor >= 2 {
+                st.cursor = 1;
+            }
+        }
+        self.customize_apply_live_theme();
+    }
+
+    pub fn customize_scheme_next(&mut self) {
+        use crate::theme::ColorScheme;
+        if let Some(ref mut st) = self.customize_state {
+            st.scheme_idx = (st.scheme_idx + 1) % ColorScheme::ALL.len();
+            if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom && st.cursor >= 2 {
+                st.cursor = 1;
+            }
+        }
+        self.customize_apply_live_theme();
+    }
+
+    pub fn customize_open_nav_picker(&mut self) {
+        let Some(ref st) = self.customize_state else { return };
+        let cur = st.nav_idx;
+        if let Some(ref mut st) = self.customize_state {
+            st.sub_mode = CustomizeSubMode::NavPicker { cursor: cur };
+        }
+    }
+
+    pub fn customize_open_scheme_picker(&mut self) {
+        let Some(ref st) = self.customize_state else { return };
+        let cur = st.scheme_idx;
+        if let Some(ref mut st) = self.customize_state {
+            st.sub_mode = CustomizeSubMode::SchemePicker { cursor: cur };
+        }
+    }
+
+    pub fn customize_picker_up(&mut self) {
+        let Some(ref mut st) = self.customize_state else { return };
+        match st.sub_mode {
+            CustomizeSubMode::NavPicker { ref mut cursor } => {
+                if *cursor > 0 { *cursor -= 1; }
+            }
+            CustomizeSubMode::SchemePicker { ref mut cursor } => {
+                if *cursor > 0 { *cursor -= 1; }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn customize_picker_down(&mut self) {
+        use crate::theme::ColorScheme;
+        let Some(ref mut st) = self.customize_state else { return };
+        match st.sub_mode {
+            CustomizeSubMode::NavPicker { ref mut cursor } => {
+                if *cursor + 1 < 2 { *cursor += 1; }
+            }
+            CustomizeSubMode::SchemePicker { ref mut cursor } => {
+                if *cursor + 1 < ColorScheme::ALL.len() { *cursor += 1; }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn customize_picker_confirm(&mut self) {
+        use crate::theme::ColorScheme;
+        let Some(ref mut st) = self.customize_state else { return };
+        match st.sub_mode {
+            CustomizeSubMode::NavPicker { cursor } => {
+                st.nav_idx  = cursor;
+                st.sub_mode = CustomizeSubMode::Normal;
+            }
+            CustomizeSubMode::SchemePicker { cursor } => {
+                st.scheme_idx = cursor;
+                st.sub_mode   = CustomizeSubMode::Normal;
+                // If switching away from Custom while cursor is in color fields, pull back
+                if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom && st.cursor >= 2 {
+                    st.cursor = 1;
+                }
+            }
+            _ => {}
+        }
+        self.customize_apply_live_theme();
+    }
+
+    pub fn customize_picker_cancel(&mut self) {
+        if let Some(ref mut st) = self.customize_state {
+            st.sub_mode = CustomizeSubMode::Normal;
+        }
+    }
+
+    /// Begin editing the hex value for the color field under the cursor.
+    /// Only valid when scheme is Custom and cursor is on a color field (>=2).
+    pub fn customize_begin_edit_hex(&mut self) {
+        use crate::theme::ColorScheme;
+        let Some(ref st) = self.customize_state else { return };
+        if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom { return; }
+        if st.cursor < 2 { return; }
+        let field_idx = st.cursor - 2;
+        let existing  = get_custom_field(&st.custom, field_idx)
+            .and_then(|v| v.as_deref())
+            .unwrap_or("")
+            .to_string();
+        let len = existing.chars().count();
+        if let Some(ref mut st) = self.customize_state {
+            st.sub_mode = CustomizeSubMode::EditHex { field_idx, buf: existing, char_cur: len };
+        }
+    }
+
+    pub fn customize_hex_char(&mut self, ch: char) {
+        let Some(ref mut st) = self.customize_state else { return };
+        if let CustomizeSubMode::EditHex { ref mut buf, ref mut char_cur, .. } = st.sub_mode {
+            let byte_pos = char_to_byte(buf, *char_cur);
+            buf.insert(byte_pos, ch);
+            *char_cur += 1;
+        }
+    }
+
+    pub fn customize_hex_backspace(&mut self) {
+        let Some(ref mut st) = self.customize_state else { return };
+        if let CustomizeSubMode::EditHex { ref mut buf, ref mut char_cur, .. } = st.sub_mode {
+            if *char_cur > 0 {
+                *char_cur -= 1;
+                let byte_pos = char_to_byte(buf, *char_cur);
+                buf.remove(byte_pos);
+            }
+        }
+    }
+
+    pub fn customize_hex_left(&mut self) {
+        let Some(ref mut st) = self.customize_state else { return };
+        if let CustomizeSubMode::EditHex { ref mut char_cur, .. } = st.sub_mode {
+            if *char_cur > 0 { *char_cur -= 1; }
+        }
+    }
+
+    pub fn customize_hex_right(&mut self) {
+        let Some(ref mut st) = self.customize_state else { return };
+        if let CustomizeSubMode::EditHex { ref buf, ref mut char_cur, .. } = st.sub_mode {
+            let len = buf.chars().count();
+            if *char_cur < len { *char_cur += 1; }
+        }
+    }
+
+    pub fn customize_hex_confirm(&mut self) {
+        let Some(ref st) = self.customize_state else { return };
+        let (field_idx, new_val) = if let CustomizeSubMode::EditHex { field_idx, ref buf, .. } = st.sub_mode {
+            let trimmed = buf.trim().to_string();
+            let val = if trimmed.is_empty() { None } else { Some(trimmed) };
+            (field_idx, val)
+        } else {
+            return;
+        };
+        if let Some(ref mut st) = self.customize_state {
+            set_custom_field(&mut st.custom, field_idx, new_val);
+            st.sub_mode = CustomizeSubMode::Normal;
+        }
+        self.customize_apply_live_theme();
+    }
+
+    pub fn customize_hex_cancel(&mut self) {
+        if let Some(ref mut st) = self.customize_state {
+            st.sub_mode = CustomizeSubMode::Normal;
+        }
+    }
+
+    pub fn customize_apply_live_theme_pub(&mut self) {
+        self.customize_apply_live_theme();
+    }
+
+    fn customize_apply_live_theme(&mut self) {
+        use crate::theme::ColorScheme;
+        let Some(ref st) = self.customize_state else { return };
+        let scheme = ColorScheme::ALL[st.scheme_idx];
+        self.theme = if scheme == ColorScheme::Custom {
+            crate::theme::Theme::from_custom(&st.custom)
+        } else {
+            crate::theme::Theme::for_scheme(scheme)
+        };
+    }
+}
+
+// ── Customize helper functions ────────────────────────────────────────────────
+
+pub fn get_custom_field(ct: &crate::config::CustomTheme, idx: usize) -> Option<&Option<String>> {
+    match idx {
+        0  => Some(&ct.bar_fg),
+        1  => Some(&ct.bar_bg),
+        2  => Some(&ct.bar_cursor_fg),
+        3  => Some(&ct.bar_cursor_bg),
+        4  => Some(&ct.body_fg),
+        5  => Some(&ct.body_bg),
+        6  => Some(&ct.selected_fg),
+        7  => Some(&ct.selected_bg),
+        8  => Some(&ct.selected_line_fg),
+        9  => Some(&ct.selected_line_bg),
+        10 => Some(&ct.section_fg),
+        11 => Some(&ct.dialog_fg),
+        12 => Some(&ct.dialog_bg),
+        13 => Some(&ct.dialog_border_fg),
+        14 => Some(&ct.dialog_border_bg),
+        15 => Some(&ct.dialog_label_fg),
+        16 => Some(&ct.dialog_label_sel_fg),
+        17 => Some(&ct.view_bg),
+        18 => Some(&ct.view_item),
+        19 => Some(&ct.view_col),
+        20 => Some(&ct.view_col_head),
+        21 => Some(&ct.view_sec_head),
+        22 => Some(&ct.view_head_bg),
+        _  => None,
+    }
+}
+
+pub fn set_custom_field(ct: &mut crate::config::CustomTheme, idx: usize, value: Option<String>) {
+    match idx {
+        0  => ct.bar_fg            = value,
+        1  => ct.bar_bg            = value,
+        2  => ct.bar_cursor_fg     = value,
+        3  => ct.bar_cursor_bg     = value,
+        4  => ct.body_fg           = value,
+        5  => ct.body_bg           = value,
+        6  => ct.selected_fg       = value,
+        7  => ct.selected_bg       = value,
+        8  => ct.selected_line_fg  = value,
+        9  => ct.selected_line_bg  = value,
+        10 => ct.section_fg        = value,
+        11 => ct.dialog_fg         = value,
+        12 => ct.dialog_bg         = value,
+        13 => ct.dialog_border_fg  = value,
+        14 => ct.dialog_border_bg  = value,
+        15 => ct.dialog_label_fg   = value,
+        16 => ct.dialog_label_sel_fg = value,
+        17 => ct.view_bg           = value,
+        18 => ct.view_item         = value,
+        19 => ct.view_col          = value,
+        20 => ct.view_col_head     = value,
+        21 => ct.view_sec_head     = value,
+        22 => ct.view_head_bg      = value,
+        _  => {}
     }
 }

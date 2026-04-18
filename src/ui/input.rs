@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, FilterState, FKeyMod, MenuState, Mode, NavMode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, FilterState, FKeyMod, MenuState, Mode, NavMode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode, ViewPropsField};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -195,6 +195,12 @@ pub fn handle_event(app: &mut App, event: Event) {
             KeyCode::Char('r') if app.nav_mode == NavMode::Vi => { app.redo(); return; }
             _ => {}
         }
+    }
+
+    // Utilities Customize dialog takes priority
+    if app.customize_state.is_some() {
+        handle_customize(app, code, modifiers);
+        return;
     }
 
     // View Properties dialog can appear over any screen
@@ -1379,6 +1385,109 @@ fn handle_sec_sort_picker(app: &mut App, code: KeyCode) {
         KeyCode::End      => app.sec_sort_picker_end(),
         KeyCode::Enter    => app.sec_sort_picker_confirm(),
         KeyCode::Esc      => app.sec_sort_picker_cancel(),
+        _ => {}
+    }
+}
+
+// ── Utilities Customize handlers ──────────────────────────────────────────────
+
+fn handle_customize(app: &mut App, code: KeyCode, _modifiers: KeyModifiers) {
+    let sub = app.customize_state.as_ref().map(|s| {
+        match &s.sub_mode {
+            CustomizeSubMode::Normal    => 0u8,
+            CustomizeSubMode::NavPicker    { .. } => 1,
+            CustomizeSubMode::SchemePicker { .. } => 2,
+            CustomizeSubMode::EditHex      { .. } => 3,
+        }
+    });
+    match sub {
+        Some(1) => handle_customize_picker(app, code),
+        Some(2) => handle_customize_picker(app, code),
+        Some(3) => handle_customize_hex(app, code),
+        _       => handle_customize_normal(app, code),
+    }
+}
+
+fn handle_customize_normal(app: &mut App, code: KeyCode) {
+    let cursor = app.customize_state.as_ref().map(|s| s.cursor).unwrap_or(0);
+    match code {
+        KeyCode::Up   => app.customize_cursor_up(),
+        KeyCode::Down => app.customize_cursor_down(),
+        KeyCode::Left => match cursor {
+            0 => app.customize_nav_prev(),
+            1 => app.customize_scheme_prev(),
+            _ => app.customize_cursor_up(),
+        },
+        KeyCode::Right => match cursor {
+            0 => app.customize_nav_next(),
+            1 => app.customize_scheme_next(),
+            _ => app.customize_cursor_down(),
+        },
+        KeyCode::Char(' ') => match cursor {
+            0 => app.customize_nav_next(),
+            1 => app.customize_scheme_next(),
+            _ => {
+                // Clear custom hex value (set to None)
+                use crate::theme::ColorScheme;
+                use crate::app::CUSTOMIZE_COLOR_COUNT;
+                let is_custom = app.customize_state.as_ref()
+                    .map(|s| ColorScheme::ALL[s.scheme_idx] == ColorScheme::Custom)
+                    .unwrap_or(false);
+                if is_custom && cursor >= 2 && cursor < 2 + CUSTOMIZE_COLOR_COUNT {
+                    let fi = cursor - 2;
+                    if let Some(ref mut st) = app.customize_state {
+                        crate::app::set_custom_field(&mut st.custom, fi, None);
+                    }
+                    app.customize_apply_live_theme_pub();
+                }
+            }
+        },
+        KeyCode::F(3) => match cursor {
+            0 => app.customize_open_nav_picker(),
+            1 => app.customize_open_scheme_picker(),
+            _ => {}
+        },
+        KeyCode::Enter => app.customize_confirm(),
+        KeyCode::F(2)  => {
+            if cursor >= 2 {
+                app.customize_begin_edit_hex();
+            }
+        }
+        KeyCode::Char(ch) if cursor >= 2 => {
+            // Typing on a color field auto-starts hex editing
+            use crate::theme::ColorScheme;
+            use crate::app::CUSTOMIZE_COLOR_COUNT;
+            let is_custom = app.customize_state.as_ref()
+                .map(|s| ColorScheme::ALL[s.scheme_idx] == ColorScheme::Custom)
+                .unwrap_or(false);
+            if is_custom && cursor < 2 + CUSTOMIZE_COLOR_COUNT {
+                app.customize_begin_edit_hex();
+                app.customize_hex_char(ch);
+            }
+        }
+        KeyCode::Esc => app.close_customize(),
+        _ => {}
+    }
+}
+
+fn handle_customize_picker(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Up    => app.customize_picker_up(),
+        KeyCode::Down  => app.customize_picker_down(),
+        KeyCode::Enter => app.customize_picker_confirm(),
+        KeyCode::Esc   => app.customize_picker_cancel(),
+        _ => {}
+    }
+}
+
+fn handle_customize_hex(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Enter     => app.customize_hex_confirm(),
+        KeyCode::Esc       => app.customize_hex_cancel(),
+        KeyCode::Left      => app.customize_hex_left(),
+        KeyCode::Right     => app.customize_hex_right(),
+        KeyCode::Backspace => app.customize_hex_backspace(),
+        KeyCode::Char(ch)  => app.customize_hex_char(ch),
         _ => {}
     }
 }
