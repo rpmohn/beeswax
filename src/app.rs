@@ -453,32 +453,54 @@ pub struct FlatCat {
 
 // ── Customize state ───────────────────────────────────────────────────────────
 
-pub const CUSTOMIZE_COLOR_COUNT: usize = 23;
+pub const CUSTOMIZE_COLOR_COUNT: usize = 20;
+
+/// Maps (cursor - 2) → field index for color fields in the Customize dialog.
+/// Cursor 0 = Nav Mode, 1 = Color Theme, 2..21 = color fields in display order.
+pub const CURSOR_TO_FIELD: [usize; CUSTOMIZE_COLOR_COUNT] = [
+    14, // cursor 2  → view_bg
+     0, // cursor 3  → bar_fg
+    15, // cursor 4  → view_item
+     1, // cursor 5  → bar_bg
+    19, // cursor 6  → view_head_bg
+     2, // cursor 7  → bar_selected_fg
+    18, // cursor 8  → view_sec_head
+     3, // cursor 9  → bar_selected_bg
+    17, // cursor 10 → view_col_head
+    16, // cursor 11 → view_col_entry
+     8, // cursor 12 → dialog_fg
+     9, // cursor 13 → dialog_bg
+     4, // cursor 14 → selected_fg
+    10, // cursor 15 → dialog_border_fg
+     5, // cursor 16 → selected_bg
+    11, // cursor 17 → dialog_border_bg
+     6, // cursor 18 → selected_line_fg
+    12, // cursor 19 → dialog_label_fg
+     7, // cursor 20 → selected_line_bg
+    13, // cursor 21 → dialog_label_sel_fg
+];
 
 pub const CUSTOMIZE_COLOR_LABELS: [&str; CUSTOMIZE_COLOR_COUNT] = [
-    "bar_fg",           // 0
-    "bar_bg",           // 1
-    "bar_cursor_fg",    // 2
-    "bar_cursor_bg",    // 3
-    "body_fg",          // 4
-    "body_bg",          // 5
-    "selected_fg",      // 6
-    "selected_bg",      // 7
-    "selected_line_fg", // 8
-    "selected_line_bg", // 9
-    "section_fg",       // 10  — solo (no right partner)
-    "dialog_fg",        // 11
-    "dialog_bg",        // 12
-    "dialog_border_fg", // 13
-    "dialog_border_bg", // 14
-    "dialog_label_fg",  // 15
-    "dialog_label_sel", // 16
-    "view_bg",          // 17
-    "view_item",        // 18
-    "view_col",         // 19
-    "view_col_head",    // 20
-    "view_sec_head",    // 21
-    "view_head_bg",     // 22
+    "bar_fg",            // 0
+    "bar_bg",            // 1
+    "bar_selected_fg",   // 2
+    "bar_selected_bg",   // 3
+    "selected_fg",       // 4
+    "selected_bg",       // 5
+    "selected_line_fg",  // 6
+    "selected_line_bg",  // 7
+    "dialog_fg",         // 8
+    "dialog_bg",         // 9
+    "dialog_border_fg",  // 10
+    "dialog_border_bg",  // 11
+    "dialog_label_fg",   // 12
+    "dialog_label_sel",  // 13
+    "view_bg",           // 14
+    "view_item",         // 15
+    "view_col_entry",    // 16
+    "view_col_head",     // 17
+    "view_sec_head",     // 18
+    "view_head_bg",      // 19
 ];
 
 pub enum CustomizeSubMode {
@@ -7419,7 +7441,9 @@ impl App {
         let Some(ref st) = self.customize_state else { return };
         if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom { return; }
         if st.cursor < 2 { return; }
-        let field_idx = st.cursor - 2;
+        let vi = st.cursor - 2;
+        if vi >= CUSTOMIZE_COLOR_COUNT { return; }
+        let field_idx = CURSOR_TO_FIELD[vi];
         let existing  = get_custom_field(&st.custom, field_idx)
             .and_then(|v| v.as_deref())
             .unwrap_or("")
@@ -7509,56 +7533,50 @@ pub fn get_custom_field(ct: &crate::config::CustomTheme, idx: usize) -> Option<&
     match idx {
         0  => Some(&ct.bar_fg),
         1  => Some(&ct.bar_bg),
-        2  => Some(&ct.bar_cursor_fg),
-        3  => Some(&ct.bar_cursor_bg),
-        4  => Some(&ct.body_fg),
-        5  => Some(&ct.body_bg),
-        6  => Some(&ct.selected_fg),
-        7  => Some(&ct.selected_bg),
-        8  => Some(&ct.selected_line_fg),
-        9  => Some(&ct.selected_line_bg),
-        10 => Some(&ct.section_fg),
-        11 => Some(&ct.dialog_fg),
-        12 => Some(&ct.dialog_bg),
-        13 => Some(&ct.dialog_border_fg),
-        14 => Some(&ct.dialog_border_bg),
-        15 => Some(&ct.dialog_label_fg),
-        16 => Some(&ct.dialog_label_sel_fg),
-        17 => Some(&ct.view_bg),
-        18 => Some(&ct.view_item),
-        19 => Some(&ct.view_col),
-        20 => Some(&ct.view_col_head),
-        21 => Some(&ct.view_sec_head),
-        22 => Some(&ct.view_head_bg),
+        2  => Some(&ct.bar_selected_fg),
+        3  => Some(&ct.bar_selected_bg),
+        4  => Some(&ct.selected_fg),
+        5  => Some(&ct.selected_bg),
+        6  => Some(&ct.selected_line_fg),
+        7  => Some(&ct.selected_line_bg),
+        8  => Some(&ct.dialog_fg),
+        9  => Some(&ct.dialog_bg),
+        10 => Some(&ct.dialog_border_fg),
+        11 => Some(&ct.dialog_border_bg),
+        12 => Some(&ct.dialog_label_fg),
+        13 => Some(&ct.dialog_label_sel_fg),
+        14 => Some(&ct.view_bg),
+        15 => Some(&ct.view_item),
+        16 => Some(&ct.view_col_entry),
+        17 => Some(&ct.view_col_head),
+        18 => Some(&ct.view_sec_head),
+        19 => Some(&ct.view_head_bg),
         _  => None,
     }
 }
 
 pub fn set_custom_field(ct: &mut crate::config::CustomTheme, idx: usize, value: Option<String>) {
     match idx {
-        0  => ct.bar_fg            = value,
-        1  => ct.bar_bg            = value,
-        2  => ct.bar_cursor_fg     = value,
-        3  => ct.bar_cursor_bg     = value,
-        4  => ct.body_fg           = value,
-        5  => ct.body_bg           = value,
-        6  => ct.selected_fg       = value,
-        7  => ct.selected_bg       = value,
-        8  => ct.selected_line_fg  = value,
-        9  => ct.selected_line_bg  = value,
-        10 => ct.section_fg        = value,
-        11 => ct.dialog_fg         = value,
-        12 => ct.dialog_bg         = value,
-        13 => ct.dialog_border_fg  = value,
-        14 => ct.dialog_border_bg  = value,
-        15 => ct.dialog_label_fg   = value,
-        16 => ct.dialog_label_sel_fg = value,
-        17 => ct.view_bg           = value,
-        18 => ct.view_item         = value,
-        19 => ct.view_col          = value,
-        20 => ct.view_col_head     = value,
-        21 => ct.view_sec_head     = value,
-        22 => ct.view_head_bg      = value,
+        0  => ct.bar_fg              = value,
+        1  => ct.bar_bg              = value,
+        2  => ct.bar_selected_fg     = value,
+        3  => ct.bar_selected_bg     = value,
+        4  => ct.selected_fg         = value,
+        5  => ct.selected_bg         = value,
+        6  => ct.selected_line_fg    = value,
+        7  => ct.selected_line_bg    = value,
+        8  => ct.dialog_fg           = value,
+        9  => ct.dialog_bg           = value,
+        10 => ct.dialog_border_fg    = value,
+        11 => ct.dialog_border_bg    = value,
+        12 => ct.dialog_label_fg     = value,
+        13 => ct.dialog_label_sel_fg = value,
+        14 => ct.view_bg             = value,
+        15 => ct.view_item           = value,
+        16 => ct.view_col_entry      = value,
+        17 => ct.view_col_head       = value,
+        18 => ct.view_sec_head       = value,
+        19 => ct.view_head_bg        = value,
         _  => {}
     }
 }

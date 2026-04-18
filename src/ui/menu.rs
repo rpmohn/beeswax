@@ -61,7 +61,7 @@ fn top_spans(items: &'static [TopItem], cursor: usize, theme: &Theme) -> Vec<Spa
             spans.push(Span::raw("  "));
         }
         if i == cursor {
-            spans.push(Span::styled(item.label, theme.bar_cursor));
+            spans.push(Span::styled(item.label, theme.bar_selected));
         } else {
             spans.push(Span::raw(item.label));
         }
@@ -92,7 +92,7 @@ fn sub_item_spans(sub: &'static [SubItem], cursor: usize, theme: &Theme) -> Vec<
             spans.push(Span::raw("  "));
         }
         if i == cursor {
-            spans.push(Span::styled(item.label, theme.bar_cursor));
+            spans.push(Span::styled(item.label, theme.bar_selected));
         } else {
             spans.push(Span::raw(item.label));
         }
@@ -109,7 +109,7 @@ fn subsub_item_spans(children: &'static [SubSubItem], cursor: usize, theme: &The
             spans.push(Span::raw("  "));
         }
         if i == cursor {
-            spans.push(Span::styled(item.label, theme.bar_cursor));
+            spans.push(Span::styled(item.label, theme.bar_selected));
         } else {
             spans.push(Span::raw(item.label));
         }

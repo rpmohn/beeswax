@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use crate::app::{App, CustomizeSubMode, CUSTOMIZE_COLOR_COUNT, CUSTOMIZE_COLOR_LABELS, get_custom_field};
+use crate::app::{App, CustomizeSubMode, CUSTOMIZE_COLOR_COUNT, CUSTOMIZE_COLOR_LABELS, CURSOR_TO_FIELD, get_custom_field};
 use crate::theme::{color_to_hex, theme_color_for_field, ColorScheme, parse_hex};
 use super::cursor_split;
 
@@ -15,17 +15,60 @@ const LABEL_W: usize = 16;
 const HEX_W: usize = 7;
 /// Gap between the two color columns.
 const COL_GAP: usize = 3;
+/// Width of one color cell: indent(2) + label(16) + colon+space(2) + hex(7) = 27.
+const CELL_W: usize = 2 + LABEL_W + 2 + HEX_W;
 /// Inner dialog width (excluding border chars).
-const INNER_W: usize = 2 + LABEL_W + 2 + HEX_W + COL_GAP + LABEL_W + 2 + HEX_W + 2;
+const INNER_W: usize = CELL_W + COL_GAP + CELL_W + 2;
 /// Dialog total width (inner + 2 border chars).
 const DIALOG_W: usize = INNER_W + 2;
 
-/// Total color field rows: pairs + solo section_fg row.
-const COLOR_ROWS: usize = 12;
+/// Total display rows in the color section (includes blank-cell rows).
+const COLOR_ROWS: usize = 11;
 
 /// Dialog height: border(1) + blank(1) + nav(1) + scheme(1) + blank(1) +
-///                header(1) + color_rows(12) + hint(1) + blank(1) + border(1) = 21
-const DIALOG_H: usize = 21;
+///                header(1) + color_rows(11) + hint(1) + blank(1) + border(1) = 20
+const DIALOG_H: usize = 20;
+
+/// Row layout: (left_field_idx, right_field_idx), None = blank cell.
+/// Indices refer to CUSTOMIZE_COLOR_LABELS / get_custom_field positions.
+const LAYOUT: [(Option<usize>, Option<usize>); COLOR_ROWS] = [
+    (Some(14), Some( 0)),  // view_bg          | bar_fg
+    (Some(15), Some( 1)),  // view_item         | bar_bg
+    (Some(19), Some( 2)),  // view_head_bg      | bar_selected_fg
+    (Some(18), Some( 3)),  // view_sec_head     | bar_selected_bg
+    (Some(17), None    ),  // view_col_head     | —
+    (Some(16), Some( 8)),  // view_col_entry    | dialog_fg
+    (None,     Some( 9)),  // —                 | dialog_bg
+    (Some( 4), Some(10)),  // selected_fg       | dialog_border_fg
+    (Some( 5), Some(11)),  // selected_bg       | dialog_border_bg
+    (Some( 6), Some(12)),  // selected_line_fg  | dialog_label_fg
+    (Some( 7), Some(13)),  // selected_line_bg  | dialog_label_sel_fg
+];
+
+/// Maps field index → cursor position in the Customize dialog.
+/// Inverse of CURSOR_TO_FIELD.
+const FIELD_TO_CURSOR: [usize; CUSTOMIZE_COLOR_COUNT] = [
+     3, // 0:  bar_fg
+     5, // 1:  bar_bg
+     7, // 2:  bar_selected_fg
+     9, // 3:  bar_selected_bg
+    14, // 4:  selected_fg
+    16, // 5:  selected_bg
+    18, // 6:  selected_line_fg
+    20, // 7:  selected_line_bg
+    12, // 8:  dialog_fg
+    13, // 9:  dialog_bg
+    15, // 10: dialog_border_fg
+    17, // 11: dialog_border_bg
+    19, // 12: dialog_label_fg
+    21, // 13: dialog_label_sel_fg
+     2, // 14: view_bg
+     4, // 15: view_item
+    11, // 16: view_col_entry
+    10, // 17: view_col_head
+     8, // 18: view_sec_head
+     6, // 19: view_head_bg
+];
 
 pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let Some(ref st) = app.customize_state else { return };
@@ -93,99 +136,94 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
     };
     lines.push(Line::from(Span::styled(col_header, label_style)));
 
-    // Color field rows (12 rows, 2 columns, field_idx 0..22).
-    // Row 5 is special: field 10 (section_fg) has no right partner.
-    // Rows 6..11 continue with fields 11..22 in pairs.
-    for row in 0..COLOR_ROWS {
-        let (li, ri_opt) = if row <= 4 {
-            (row * 2, Some(row * 2 + 1))
-        } else if row == 5 {
-            (10, None) // section_fg is solo
+    // Build a single color cell's spans given a field index.
+    // cursor_pos is the dialog cursor value that selects this cell.
+    let build_cell = |field_idx: usize, cursor_pos: usize| -> Vec<Span<'static>> {
+        let on_field = is_custom && st.cursor == cursor_pos && !in_picker;
+        let label    = CUSTOMIZE_COLOR_LABELS[field_idx];
+        let padded   = format!("{:<width$}", label, width = LABEL_W);
+
+        // Effective RGB color for rendering the hex swatch.
+        let effective_color: Option<Color> = if is_custom {
+            get_custom_field(&st.custom, field_idx)
+                .and_then(|opt| opt.as_deref())
+                .and_then(|s| parse_hex(s))
         } else {
-            let base = 11 + (row - 6) * 2;
-            (base, if base + 1 < CUSTOMIZE_COLOR_COUNT { Some(base + 1) } else { None })
+            theme_color_for_field(&app.theme, field_idx)
         };
 
-        let left_cursor = 2 + li;
-
-        let build_cell = |field_idx: usize, cursor_pos: usize| -> Vec<Span<'static>> {
-            // cursor_pos is only meaningful when is_custom (only Custom allows cursor in color rows)
-            let on_field = is_custom && st.cursor == cursor_pos && !in_picker;
-            let label    = CUSTOMIZE_COLOR_LABELS[field_idx];
-            let padded   = format!("{:<width$}", label, width = LABEL_W);
-
-            // Effective RGB color for rendering the hex value in its own color.
-            // For Custom: parse the stored hex string.
-            // For built-in: extract from the live theme.
-            let effective_color: Option<Color> = if is_custom {
-                get_custom_field(&st.custom, field_idx)
-                    .and_then(|opt| opt.as_deref())
-                    .and_then(|s| parse_hex(s))
+        // Hex string to display.
+        let hex_str: String = if is_custom {
+            if let Some(Some(h)) = get_custom_field(&st.custom, field_idx) {
+                format!("{:>width$}", h, width = HEX_W)
             } else {
-                theme_color_for_field(&app.theme, field_idx)
-            };
+                "-------".to_string()
+            }
+        } else {
+            effective_color
+                .and_then(color_to_hex)
+                .map(|s| format!("{:>width$}", s, width = HEX_W))
+                .unwrap_or_else(|| "-------".to_string())
+        };
 
-            // Hex string to display:
-            // Custom: stored value or "-------" if None.
-            // Built-in: hex of the RGB if available, "-----" if named/default color.
-            let hex_str: String = if is_custom {
-                if let Some(Some(h)) = get_custom_field(&st.custom, field_idx) {
-                    format!("{:>width$}", h, width = HEX_W)
-                } else {
-                    "-------".to_string()
-                }
-            } else {
-                effective_color
-                    .and_then(color_to_hex)
-                    .map(|s| format!("{:>width$}", s, width = HEX_W))
-                    .unwrap_or_else(|| "-------".to_string())
-            };
+        let label_s = if on_field { label_sel } else { label_style };
+        let colon_s = if on_field { label_sel } else { label_style };
 
-            let label_s = if on_field { label_sel } else { label_style };
-            let colon_s = if on_field { label_sel } else { label_style };
-
-            // Inline hex edit: show text cursor on the active field.
-            if in_hex_edit {
-                if let CustomizeSubMode::EditHex { field_idx: fi, ref buf, char_cur } = st.sub_mode {
-                    if fi == field_idx && on_field {
-                        let (left, hi, right) = cursor_split(buf, char_cur);
-                        return vec![
-                            Span::styled(format!("  {}", padded), label_s),
-                            Span::styled(": ", colon_s),
-                            Span::styled(left, content_style),
-                            Span::styled(hi, sel_style),
-                            Span::styled(right, content_style),
-                        ];
-                    }
+        // Inline hex edit: show text cursor on the active field.
+        if in_hex_edit {
+            if let CustomizeSubMode::EditHex { field_idx: fi, ref buf, char_cur } = st.sub_mode {
+                if fi == field_idx && on_field {
+                    let (left, hi, right) = cursor_split(buf, char_cur);
+                    return vec![
+                        Span::styled(format!("  {}", padded), label_s),
+                        Span::styled(": ", colon_s),
+                        Span::styled(left, content_style),
+                        Span::styled(hi, sel_style),
+                        Span::styled(right, content_style),
+                    ];
                 }
             }
+        }
 
-            // Normal display: render hex value in its own color (if RGB), dimmed otherwise.
-            let hex_s = if on_field {
-                if let Some(c) = effective_color {
-                    Style::default().fg(c).add_modifier(Modifier::REVERSED)
-                } else {
-                    sel_style
-                }
-            } else if let Some(c) = effective_color {
-                Style::default().fg(c)
+        // Normal display: render hex value in its own color (if RGB), dimmed otherwise.
+        let hex_s = if on_field {
+            if let Some(c) = effective_color {
+                Style::default().fg(c).add_modifier(Modifier::REVERSED)
             } else {
-                dim_style
-            };
-
-            vec![
-                Span::styled(format!("  {}", padded), label_s),
-                Span::styled(": ", colon_s),
-                Span::styled(hex_str, hex_s),
-            ]
+                sel_style
+            }
+        } else if let Some(c) = effective_color {
+            Style::default().fg(c)
+        } else {
+            dim_style
         };
 
-        let mut row_spans = build_cell(li, left_cursor);
-        if let Some(ri) = ri_opt {
-            let right_cursor = 2 + ri;
-            row_spans.push(Span::raw("   "));
-            row_spans.extend(build_cell(ri, right_cursor));
+        vec![
+            Span::styled(format!("  {}", padded), label_s),
+            Span::styled(": ", colon_s),
+            Span::styled(hex_str, hex_s),
+        ]
+    };
+
+    // Color field rows — driven by LAYOUT.
+    for &(li_opt, ri_opt) in &LAYOUT {
+        let mut row_spans: Vec<Span<'static>> = Vec::new();
+
+        match li_opt {
+            Some(li) => row_spans.extend(build_cell(li, FIELD_TO_CURSOR[li])),
+            None => {
+                // Blank left cell — pad to cell width + gap so the right column aligns.
+                row_spans.push(Span::raw(" ".repeat(CELL_W + COL_GAP)));
+            }
         }
+
+        if let Some(ri) = ri_opt {
+            if li_opt.is_some() {
+                row_spans.push(Span::raw("   ")); // COL_GAP
+            }
+            row_spans.extend(build_cell(ri, FIELD_TO_CURSOR[ri]));
+        }
+
         lines.push(Line::from(row_spans));
     }
 
@@ -250,3 +288,15 @@ fn centered_rect(w: u16, h: u16, area: Rect) -> Rect {
     let y = area.y + area.height.saturating_sub(h) / 2;
     Rect { x, y, width: w.min(area.width), height: h.min(area.height) }
 }
+
+// Verify CURSOR_TO_FIELD and FIELD_TO_CURSOR are consistent at compile time.
+const _: () = {
+    let mut i = 0;
+    while i < CUSTOMIZE_COLOR_COUNT {
+        let cursor = FIELD_TO_CURSOR[i];
+        assert!(cursor >= 2);
+        let field = CURSOR_TO_FIELD[cursor - 2];
+        assert!(field == i, "FIELD_TO_CURSOR / CURSOR_TO_FIELD mismatch");
+        i += 1;
+    }
+};

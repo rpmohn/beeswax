@@ -229,11 +229,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let empty: Vec<String> = app.view.columns.iter().map(|_| String::new()).collect();
                 let left_empty  = &empty[..lc];
                 let right_empty = &empty[lc..];
-                let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field);
+                let mut spans = col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col_entry, app.theme.item_selected_field);
                 spans.extend(input_row_spans(buffer, *cursor, app.theme.view_item, app.theme.item_selected_field));
                 if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
                 if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
-                spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field));
+                spans.extend(col_cells(right_cols, right_empty, None, None, None, "\u{00B7}", app.theme.view_col_entry, app.theme.item_selected_field));
                 lines.push(Line::from(spans));
             }
             cursor_last_line = lines.len() - 1;
@@ -371,7 +371,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 let col_text_style = if show_selected {
                     app.theme.item_selected_line
                 } else {
-                    app.theme.view_col
+                    app.theme.view_col_entry
                 };
                 let left_item_spans = col_cells(left_cols, &left_vals_row,
                                                 left_active, left_edit,
@@ -493,10 +493,10 @@ pub fn render(frame: &mut Frame, app: &App) {
                             (line.clone(), String::new(), String::new())
                         };
                         let mut spans = if row_i == 0 {
-                            col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field)
+                            col_cells(left_cols, left_empty, None, None, None, "\u{00B7}", app.theme.view_col_entry, app.theme.item_selected_field)
                         } else {
                             let blanks: Vec<String> = left_empty.iter().map(|_| String::new()).collect();
-                            col_cells(left_cols, &blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field)
+                            col_cells(left_cols, &blanks, None, None, None, "\u{00B7}", app.theme.view_col_entry, app.theme.item_selected_field)
                         };
                         spans.push(Span::styled(indent, app.theme.view_item));
                         spans.push(Span::styled(left,   app.theme.view_item));
@@ -512,7 +512,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                         if used < main_col_w { spans.push(Span::raw(" ".repeat(main_col_w - used))); }
                         if !right_cols.is_empty() { spans.push(Span::raw(" ")); }
                         let right_blanks: Vec<String> = right_empty.iter().map(|_| String::new()).collect();
-                        spans.extend(col_cells(right_cols, &right_blanks, None, None, None, "\u{00B7}", app.theme.view_col, app.theme.item_selected_field));
+                        spans.extend(col_cells(right_cols, &right_blanks, None, None, None, "\u{00B7}", app.theme.view_col_entry, app.theme.item_selected_field));
                         lines.push(Line::from(spans));
                     }
                 }

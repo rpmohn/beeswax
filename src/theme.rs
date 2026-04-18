@@ -123,13 +123,11 @@ pub struct Theme {
     /// Title bar, f-key bar, and menu bar background.
     pub bar:              Style,
     /// Selected item within a bar (appears un-highlighted against the bar).
-    pub bar_cursor:       Style,
+    pub bar_selected:       Style,
     /// Highlighted (selected) field / edit cursor within the selected row.
     pub item_selected_field: Style,
     /// Background highlight for the entire selected item row (toned-down).
     pub item_selected_line:  Style,
-    /// Unselected section head.
-    pub section:          Style,
     /// Edit/create text cursor character.
     pub cursor:           Style,
     /// Modal dialog content area.
@@ -149,7 +147,7 @@ pub struct Theme {
     /// Foreground for unselected item text.
     pub view_item:     Style,
     /// Foreground for column value entries.
-    pub view_col:      Style,
+    pub view_col_entry:      Style,
     /// Foreground for column header labels.
     pub view_col_head: Style,
     /// Foreground for section header names (rendering code adds BOLD).
@@ -183,30 +181,27 @@ impl Theme {
             if let Some(s) = opt { parse_hex(s).or(fallback) } else { fallback }
         };
 
-        let body_fg   = color(&c.body_fg,   None);
-        let body_bg   = color(&c.body_bg,   None);
         let bar_fg    = color(&c.bar_fg,    None);
         let bar_bg    = color(&c.bar_bg,    None);
-        let barcur_fg = color(&c.bar_cursor_fg, body_fg);
-        let barcur_bg = color(&c.bar_cursor_bg, body_bg);
+        let barsel_fg = color(&c.bar_selected_fg, None);
+        let barsel_bg = color(&c.bar_selected_bg, None);
         let sel_fg    = color(&c.selected_fg, None);
         let sel_bg    = color(&c.selected_bg, None);
         let sline_fg  = color(&c.selected_line_fg, sel_fg);
         let sline_bg  = color(&c.selected_line_bg, None);
-        let sec_fg    = color(&c.section_fg,  None);
 
-        let dlg_fg      = color(&c.dialog_fg,           body_fg);
-        let dlg_bg      = color(&c.dialog_bg,           body_bg);
-        let dlgbrd_fg   = color(&c.dialog_border_fg,    None);
-        let dlgbrd_bg   = color(&c.dialog_border_bg,    None);
-        let dlglbl_fg   = color(&c.dialog_label_fg,     dlg_fg);
+        let dlg_fg       = color(&c.dialog_fg,        None);
+        let dlg_bg       = color(&c.dialog_bg,        None);
+        let dlgbrd_fg    = color(&c.dialog_border_fg, None);
+        let dlgbrd_bg    = color(&c.dialog_border_bg, None);
+        let dlglbl_fg    = color(&c.dialog_label_fg,     dlg_fg);
         let dlglblsel_fg = color(&c.dialog_label_sel_fg, sel_fg);
-        let vbg_bg    = color(&c.view_bg,            body_bg);
-        let vitem_fg  = color(&c.view_item,          body_fg);
-        let vcol_fg   = color(&c.view_col,           body_fg);
-        let vcolh_fg  = color(&c.view_col_head,      sec_fg.or(body_fg));
-        let vsech_fg  = color(&c.view_sec_head,      sec_fg);
-        let vhbg_bg   = color(&c.view_head_bg,       vbg_bg);
+        let vbg_bg       = color(&c.view_bg,       None);
+        let vitem_fg     = color(&c.view_item,     None);
+        let vcol_entry_fg = color(&c.view_col_entry, None);
+        let vcolh_fg     = color(&c.view_col_head, None);
+        let vsech_fg     = color(&c.view_sec_head, None);
+        let vhbg_bg      = color(&c.view_head_bg,  vbg_bg);
 
         let apply = |s: Style, fg: Option<Color>, bg: Option<Color>| -> Style {
             let s = if let Some(f) = fg { s.fg(f) } else { s };
@@ -219,9 +214,9 @@ impl Theme {
             apply(Style::default(), bar_fg, bar_bg)
         } else { def.bar };
 
-        let bar_cursor = if barcur_fg.is_some() || barcur_bg.is_some() {
-            apply(Style::default(), barcur_fg, barcur_bg)
-        } else { def.bar_cursor };
+        let bar_selected = if barsel_fg.is_some() || barsel_bg.is_some() {
+            apply(Style::default(), barsel_fg, barsel_bg)
+        } else { def.bar_selected };
 
         let item_selected_field = if sel_fg.is_some() || sel_bg.is_some() {
             apply(Style::default(), sel_fg, sel_bg)
@@ -231,31 +226,26 @@ impl Theme {
             apply(Style::default(), sline_fg, sline_bg)
         } else { def.item_selected_line };
 
-        let section = if sec_fg.is_some() || body_bg.is_some() {
-            apply(Style::default(), sec_fg.or(body_fg), body_bg)
-                .add_modifier(Modifier::BOLD)
-        } else { def.section };
-
         let cursor = if sel_fg.is_some() || sel_bg.is_some() {
             apply(Style::default(), sel_fg, sel_bg)
         } else { def.cursor };
 
-        let dialog = apply(Style::default(), dlg_fg, dlg_bg);
+        let dialog           = apply(Style::default(), dlg_fg, dlg_bg);
         let dialog_border    = apply(Style::default(), dlgbrd_fg.or(dlg_fg), dlgbrd_bg.or(dlg_bg));
         let dialog_label     = apply(Style::default(), dlglbl_fg, None);
         let dialog_label_sel = apply(Style::default(), dlglblsel_fg, None);
-        let dim = apply(Style::default(), body_fg, body_bg).add_modifier(Modifier::DIM);
+        let dim              = Style::default().add_modifier(Modifier::DIM);
 
-        let view_bg       = apply(Style::default(), body_fg, vbg_bg);
-        let view_item     = apply(Style::default(), vitem_fg, None);
-        let view_col      = apply(Style::default(), vcol_fg,  None);
-        let view_col_head = apply(Style::default(), vcolh_fg, None);
-        let view_sec_head = apply(Style::default(), vsech_fg, None);
-        let view_head_bg  = apply(Style::default(), None, vhbg_bg);
+        let view_bg       = apply(Style::default(), None, vbg_bg);
+        let view_item     = apply(Style::default(), vitem_fg,     None);
+        let view_col_entry = apply(Style::default(), vcol_entry_fg, None);
+        let view_col_head = apply(Style::default(), vcolh_fg,    None);
+        let view_sec_head = apply(Style::default(), vsech_fg,    None);
+        let view_head_bg  = apply(Style::default(), None,         vhbg_bg);
 
-        Theme { bar, bar_cursor, item_selected_field, item_selected_line,
-                section, cursor, dialog, dialog_border, dialog_label, dialog_label_sel, dim,
-                view_bg, view_item, view_col, view_col_head, view_sec_head, view_head_bg }
+        Theme { bar, bar_selected, item_selected_field, item_selected_line,
+                cursor, dialog, dialog_border, dialog_label, dialog_label_sel, dim,
+                view_bg, view_item, view_col_entry, view_col_head, view_sec_head, view_head_bg }
     }
 
     fn default_theme() -> Self {
@@ -263,10 +253,9 @@ impl Theme {
         let bold = Style::default().add_modifier(Modifier::BOLD);
         Theme {
             bar:                  rev,
-            bar_cursor:           Style::default().remove_modifier(Modifier::REVERSED),
+            bar_selected:           Style::default().remove_modifier(Modifier::REVERSED),
             item_selected_field:  rev,
             item_selected_line:   rev,
-            section:              bold,
             cursor:           rev,
             dialog:           Style::default(),
             dialog_border:    Style::default(),
@@ -275,7 +264,7 @@ impl Theme {
             dim:              Style::default().add_modifier(Modifier::DIM),
             view_bg:          Style::default(),
             view_item:        Style::default(),
-            view_col:         Style::default(),
+            view_col_entry:         Style::default(),
             view_col_head:    Style::default(),
             view_sec_head:    Style::default(),
             view_head_bg:     Style::default(),
@@ -291,10 +280,9 @@ impl Theme {
         let bar_bg  = Color::Blue;
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
-            bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
+            bar_selected:           Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_COLOR_LINE_BG),
-            section:          Style::default().fg(Color::Blue).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(Color::Red).bg(body_bg),
@@ -303,7 +291,7 @@ impl Theme {
             dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(body_fg).bg(body_bg),
             view_item:        Style::default().fg(body_fg),
-            view_col:         Style::default().fg(body_fg),
+            view_col_entry:         Style::default().fg(body_fg),
             view_col_head:    Style::default().fg(Color::Blue),
             view_sec_head:    Style::default().fg(Color::Blue),
             view_head_bg:     Style::default().bg(body_bg),
@@ -317,10 +305,9 @@ impl Theme {
         let sel_bg  = Color::White;
         Theme {
             bar:                  Style::default().fg(sel_fg).bg(sel_bg),
-            bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
+            bar_selected:           Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_MONO_LINE_BG),
-            section:          Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(body_fg).bg(body_bg),
@@ -329,7 +316,7 @@ impl Theme {
             dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(body_fg).bg(body_bg),
             view_item:        Style::default().fg(body_fg),
-            view_col:         Style::default().fg(body_fg),
+            view_col_entry:         Style::default().fg(body_fg),
             view_col_head:    Style::default().fg(body_fg),
             view_sec_head:    Style::default().fg(body_fg),
             view_head_bg:     Style::default().bg(body_bg),
@@ -348,10 +335,9 @@ impl Theme {
         let sel_bg   = S_BLUE;    // #268bd2
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
-            bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
+            bar_selected:           Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE01),
-            section:              Style::default().fg(S_CYAN).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(S_CYAN).bg(body_bg),
@@ -360,7 +346,7 @@ impl Theme {
             dim:              Style::default().fg(S_BASE01).bg(body_bg).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(body_fg).bg(body_bg),
             view_item:        Style::default().fg(body_fg),
-            view_col:         Style::default().fg(body_fg),
+            view_col_entry:         Style::default().fg(body_fg),
             view_col_head:    Style::default().fg(S_CYAN),
             view_sec_head:    Style::default().fg(S_CYAN),
             view_head_bg:     Style::default().bg(body_bg),
@@ -379,10 +365,9 @@ impl Theme {
         let sel_bg   = S_BLUE;    // #268bd2
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
-            bar_cursor:           Style::default().fg(body_fg).bg(body_bg),
+            bar_selected:           Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE2),
-            section:              Style::default().fg(S_BLUE).bg(body_bg).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
             dialog:           Style::default().fg(body_fg).bg(body_bg),
             dialog_border:    Style::default().fg(S_BLUE).bg(body_bg),
@@ -391,7 +376,7 @@ impl Theme {
             dim:              Style::default().fg(S_BASE1).bg(body_bg).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(body_fg).bg(body_bg),
             view_item:        Style::default().fg(body_fg),
-            view_col:         Style::default().fg(body_fg),
+            view_col_entry:         Style::default().fg(body_fg),
             view_col_head:    Style::default().fg(S_BLUE),
             view_sec_head:    Style::default().fg(S_BLUE),
             view_head_bg:     Style::default().bg(body_bg),
@@ -402,10 +387,9 @@ impl Theme {
         // warm cream text on charcoal; bright yellow selection; muted blue section heads
         Theme {
             bar:                  Style::default().fg(G_FG4).bg(G_BG1),
-            bar_cursor:           Style::default().fg(G_FG).bg(G_BG),
+            bar_selected:           Style::default().fg(G_FG).bg(G_BG),
             item_selected_field:  Style::default().fg(G_BG).bg(G_YELLOW),
             item_selected_line:   Style::default().fg(G_BG).bg(G_BG2),
-            section:          Style::default().fg(G_BLUE_D).bg(G_BG).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(G_BG).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG).bg(G_BG),
             dialog_border:    Style::default().fg(G_YELLOW).bg(G_BG),
@@ -414,7 +398,7 @@ impl Theme {
             dim:              Style::default().fg(G_GRAY).bg(G_BG).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(G_FG).bg(G_BG),
             view_item:        Style::default().fg(G_FG),
-            view_col:         Style::default().fg(G_FG),
+            view_col_entry:         Style::default().fg(G_FG),
             view_col_head:    Style::default().fg(G_BLUE_D),
             view_sec_head:    Style::default().fg(G_BLUE_D),
             view_head_bg:     Style::default().bg(G_BG),
@@ -425,10 +409,9 @@ impl Theme {
         // dark warm text on cream; bright yellow selection; dark blue section heads
         Theme {
             bar:                  Style::default().fg(G_BG4_L).bg(G_BG2_L),
-            bar_cursor:           Style::default().fg(G_FG_L).bg(G_BG_L),
+            bar_selected:           Style::default().fg(G_FG_L).bg(G_BG_L),
             item_selected_field:  Style::default().fg(G_BG_L).bg(G_YELLOW),
             item_selected_line:   Style::default().fg(G_BG_L).bg(G_BG2_L),
-            section:          Style::default().fg(G_BLUE_L).bg(G_BG_L).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(G_BG_L).bg(G_YELLOW),
             dialog:           Style::default().fg(G_FG_L).bg(G_BG_L),
             dialog_border:    Style::default().fg(G_BLUE_L).bg(G_BG_L),
@@ -437,7 +420,7 @@ impl Theme {
             dim:              Style::default().fg(G_FG4_L).bg(G_BG_L).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(G_FG_L).bg(G_BG_L),
             view_item:        Style::default().fg(G_FG_L),
-            view_col:         Style::default().fg(G_FG_L),
+            view_col_entry:         Style::default().fg(G_FG_L),
             view_col_head:    Style::default().fg(G_BLUE_L),
             view_sec_head:    Style::default().fg(G_BLUE_L),
             view_head_bg:     Style::default().bg(G_BG_L),
@@ -448,10 +431,9 @@ impl Theme {
         // light fg on dark purple-grey bg; purple selection; cyan section heads
         Theme {
             bar:                  Style::default().fg(D_FG).bg(D_CUR),
-            bar_cursor:           Style::default().fg(D_FG).bg(D_BG),
+            bar_selected:           Style::default().fg(D_FG).bg(D_BG),
             item_selected_field:  Style::default().fg(D_BG).bg(D_PURPLE),
             item_selected_line:   Style::default().fg(D_BG).bg(D_CUR),
-            section:          Style::default().fg(D_CYAN).bg(D_BG).add_modifier(Modifier::BOLD),
             cursor:           Style::default().fg(D_BG).bg(D_PURPLE),
             dialog:           Style::default().fg(D_FG).bg(D_BG),
             dialog_border:    Style::default().fg(D_PURPLE).bg(D_BG),
@@ -460,7 +442,7 @@ impl Theme {
             dim:              Style::default().fg(D_COMMENT).bg(D_BG).add_modifier(Modifier::DIM),
             view_bg:          Style::default().fg(D_FG).bg(D_BG),
             view_item:        Style::default().fg(D_FG),
-            view_col:         Style::default().fg(D_FG),
+            view_col_entry:         Style::default().fg(D_FG),
             view_col_head:    Style::default().fg(D_CYAN),
             view_sec_head:    Style::default().fg(D_CYAN),
             view_head_bg:     Style::default().bg(D_BG),
@@ -476,27 +458,24 @@ pub fn theme_color_for_field(theme: &Theme, field_idx: usize) -> Option<Color> {
     let c: Option<Color> = match field_idx {
         0  => theme.bar.fg,
         1  => theme.bar.bg,
-        2  => theme.bar_cursor.fg,
-        3  => theme.bar_cursor.bg,
-        4  => theme.view_bg.fg,               // body_fg
-        5  => theme.view_bg.bg,               // body_bg
-        6  => theme.item_selected_field.fg,
-        7  => theme.item_selected_field.bg,
-        8  => theme.item_selected_line.fg,
-        9  => theme.item_selected_line.bg,
-        10 => theme.section.fg,
-        11 => theme.dialog.fg,
-        12 => theme.dialog.bg,
-        13 => theme.dialog_border.fg,
-        14 => theme.dialog_border.bg,
-        15 => theme.dialog_label.fg,
-        16 => theme.dialog_label_sel.fg,
-        17 => theme.view_bg.bg,               // view_bg background
-        18 => theme.view_item.fg,
-        19 => theme.view_col.fg,
-        20 => theme.view_col_head.fg,
-        21 => theme.view_sec_head.fg,
-        22 => theme.view_head_bg.bg,
+        2  => theme.bar_selected.fg,
+        3  => theme.bar_selected.bg,
+        4  => theme.item_selected_field.fg,
+        5  => theme.item_selected_field.bg,
+        6  => theme.item_selected_line.fg,
+        7  => theme.item_selected_line.bg,
+        8  => theme.dialog.fg,
+        9  => theme.dialog.bg,
+        10 => theme.dialog_border.fg,
+        11 => theme.dialog_border.bg,
+        12 => theme.dialog_label.fg,
+        13 => theme.dialog_label_sel.fg,
+        14 => theme.view_bg.bg,
+        15 => theme.view_item.fg,
+        16 => theme.view_col_entry.fg,
+        17 => theme.view_col_head.fg,
+        18 => theme.view_sec_head.fg,
+        19 => theme.view_head_bg.bg,
         _  => return None,
     };
     c

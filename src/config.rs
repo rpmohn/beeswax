@@ -21,34 +21,24 @@ pub struct Config {
 
 /// Per-element color overrides for the "Custom" color scheme.
 /// All fields are optional hex color strings ("#rrggbb").
-/// Modifiers (bold on section heads, dim on hint text) are applied automatically.
 #[derive(Serialize, Deserialize, Default)]
 pub struct CustomTheme {
     // ── Bars (title / fkey / menu) ───────────────────────────────────────────
     #[serde(default)] pub bar_fg:              Option<String>,
     #[serde(default)] pub bar_bg:              Option<String>,
-    /// Bar cursor: the currently-selected top-level menu item.
-    #[serde(default)] pub bar_cursor_fg:       Option<String>,
-    #[serde(default)] pub bar_cursor_bg:       Option<String>,
-
-    // ── Body ─────────────────────────────────────────────────────────────────
-    #[serde(default)] pub body_fg:             Option<String>,
-    #[serde(default)] pub body_bg:             Option<String>,
+    /// Currently-selected top-level menu item.
+    #[serde(default)] pub bar_selected_fg:     Option<String>,
+    #[serde(default)] pub bar_selected_bg:     Option<String>,
 
     // ── Selected field / line ────────────────────────────────────────────────
-    #[serde(default)] pub selected_fg:          Option<String>,
-    #[serde(default)] pub selected_bg:          Option<String>,
-    #[serde(default)] pub selected_line_fg:     Option<String>,
-    #[serde(default)] pub selected_line_bg:     Option<String>,
+    #[serde(default)] pub selected_fg:         Option<String>,
+    #[serde(default)] pub selected_bg:         Option<String>,
+    #[serde(default)] pub selected_line_fg:    Option<String>,
+    #[serde(default)] pub selected_line_bg:    Option<String>,
 
-    // ── Section heads ────────────────────────────────────────────────────────
-    /// Unselected section head foreground (background = body_bg).
-    #[serde(default)] pub section_fg:          Option<String>,
-    // ── Modal dialogs ────────────────────────────────────────────────────────
-    /// Dialog content area — defaults to body_fg / body_bg.
+    // ── Modal dialogs ─────────────────────────────────────────────────────────
     #[serde(default)] pub dialog_fg:           Option<String>,
     #[serde(default)] pub dialog_bg:           Option<String>,
-    /// Dialog border foreground and background.
     #[serde(default)] pub dialog_border_fg:    Option<String>,
     #[serde(default)] pub dialog_border_bg:    Option<String>,
     /// Field label foreground in dialogs (unselected).
@@ -56,13 +46,13 @@ pub struct CustomTheme {
     /// Field label foreground in dialogs when that field is selected.
     #[serde(default)] pub dialog_label_sel_fg: Option<String>,
 
-    // ── View body ────────────────────────────────────────────────────────────────
+    // ── View body ─────────────────────────────────────────────────────────────
     /// View body background color.
     #[serde(default)] pub view_bg:             Option<String>,
     /// Foreground color for item text.
     #[serde(default)] pub view_item:           Option<String>,
     /// Foreground color for column value entries.
-    #[serde(default)] pub view_col:            Option<String>,
+    #[serde(default)] pub view_col_entry:      Option<String>,
     /// Foreground color for column header labels.
     #[serde(default)] pub view_col_head:       Option<String>,
     /// Foreground color for section header names.
@@ -140,15 +130,13 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     set_str(root, "nav_mode",    &cfg.nav_mode);
     set_str(root, "colorscheme", &cfg.colorscheme);
 
-    // The 23 field names beeswax manages inside [custom_theme].
+    // The 20 field names beeswax manages inside [custom_theme].
     const KNOWN: &[&str] = &[
-        "bar_fg", "bar_bg", "bar_cursor_fg", "bar_cursor_bg",
-        "body_fg", "body_bg",
+        "bar_fg", "bar_bg", "bar_selected_fg", "bar_selected_bg",
         "selected_fg", "selected_bg", "selected_line_fg", "selected_line_bg",
-        "section_fg",
         "dialog_fg", "dialog_bg", "dialog_border_fg", "dialog_border_bg",
         "dialog_label_fg", "dialog_label_sel_fg",
-        "view_bg", "view_item", "view_col", "view_col_head",
+        "view_bg", "view_item", "view_col_entry", "view_col_head",
         "view_sec_head", "view_head_bg",
     ];
 

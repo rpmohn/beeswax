@@ -31,21 +31,14 @@ nav_mode = "Agenda"
 # # Title bar, fkey bar, and menu bar
 # bar_fg              = "#839496"
 # bar_bg              = "#073642"
-# bar_cursor_fg       = "#002b36"
-# bar_cursor_bg       = "#268bd2"
-#
-# # Main body text
-# body_fg             = "#839496"
-# body_bg             = "#002b36"
+# bar_selected_fg     = "#002b36"
+# bar_selected_bg     = "#268bd2"
 #
 # # Selected field / cursor and selected line row
 # selected_fg         = "#002b36"
 # selected_bg         = "#839496"
 # selected_line_fg    = "#002b36"
 # selected_line_bg    = "#5e6e73"
-#
-# # Section headings
-# section_fg          = "#268bd2"
 #
 # # Modal dialog content
 # dialog_fg           = "#839496"
@@ -58,7 +51,7 @@ nav_mode = "Agenda"
 # # View body
 # view_bg             = "#002b36"   # view body background
 # view_item           = "#839496"   # item text foreground
-# view_col            = "#839496"   # column value foreground
+# view_col_entry      = "#839496"   # column value foreground
 # view_col_head       = "#2aa198"   # column header foreground
 # view_sec_head       = "#2aa198"   # section header foreground
 # view_head_bg        = "#002b36"   # background for section/column header lines

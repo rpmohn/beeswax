@@ -1434,7 +1434,7 @@ fn handle_customize_normal(app: &mut App, code: KeyCode) {
                     .map(|s| ColorScheme::ALL[s.scheme_idx] == ColorScheme::Custom)
                     .unwrap_or(false);
                 if is_custom && cursor >= 2 && cursor < 2 + CUSTOMIZE_COLOR_COUNT {
-                    let fi = cursor - 2;
+                    let fi = crate::app::CURSOR_TO_FIELD[cursor - 2];
                     if let Some(ref mut st) = app.customize_state {
                         crate::app::set_custom_field(&mut st.custom, fi, None);
                     }
