@@ -31,21 +31,19 @@ nav_mode = "Agenda"
 # # Title bar, fkey bar, and menu bar
 # bar_fg              = "#839496"
 # bar_bg              = "#073642"
-# bar_selected_fg     = "#002b36"
-# bar_selected_bg     = "#268bd2"
 #
 # # Selected field / cursor and selected line row
-# selected_fg         = "#002b36"
-# selected_bg         = "#839496"
-# selected_line_fg    = "#002b36"
-# selected_line_bg    = "#5e6e73"
+# selected_item_fg    = "#002b36"
+# selected_item_bg    = "#839496"
+# view_selected_fg    = "#002b36"
+# view_selected_bg    = "#5e6e73"
 #
 # # Modal dialog content
-# dialog_fg           = "#839496"
+# dialog_item         = "#839496"
 # dialog_bg           = "#073642"
 # dialog_border_fg    = "#268bd2"
 # dialog_border_bg    = "#073642"
-# dialog_label_fg     = "#586e75"   # unselected field label foreground
+# dialog_label        = "#586e75"   # unselected field label foreground
 # dialog_label_sel_fg = "#2aa198"   # selected field label foreground
 #
 # # View body

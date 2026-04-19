@@ -1410,9 +1410,36 @@ fn handle_customize(app: &mut App, code: KeyCode, _modifiers: KeyModifiers) {
 
 fn handle_customize_normal(app: &mut App, code: KeyCode) {
     let cursor = app.customize_state.as_ref().map(|s| s.cursor).unwrap_or(0);
+    let vi = app.nav_mode == NavMode::Vi;
+
+    // Vi navigation keys take priority over hex-edit character input.
+    if vi {
+        match code {
+            KeyCode::Char('j') => { app.customize_col_down(); return; }
+            KeyCode::Char('k') => { app.customize_col_up();   return; }
+            KeyCode::Char('h') => {
+                match cursor {
+                    0 => app.customize_nav_prev(),
+                    1 => app.customize_scheme_prev(),
+                    _ => app.customize_cursor_up(),
+                }
+                return;
+            }
+            KeyCode::Char('l') => {
+                match cursor {
+                    0 => app.customize_nav_next(),
+                    1 => app.customize_scheme_next(),
+                    _ => app.customize_cursor_down(),
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
     match code {
-        KeyCode::Up   => app.customize_cursor_up(),
-        KeyCode::Down => app.customize_cursor_down(),
+        KeyCode::Up   => app.customize_col_up(),
+        KeyCode::Down => app.customize_col_down(),
         KeyCode::Left => match cursor {
             0 => app.customize_nav_prev(),
             1 => app.customize_scheme_prev(),
@@ -1427,13 +1454,11 @@ fn handle_customize_normal(app: &mut App, code: KeyCode) {
             0 => app.customize_nav_next(),
             1 => app.customize_scheme_next(),
             _ => {
-                // Clear custom hex value (set to None)
-                use crate::theme::ColorScheme;
+                // Clear the color field to terminal default (None) for Custom scheme.
+                // Auto-switches to Custom first if needed.
                 use crate::app::CUSTOMIZE_COLOR_COUNT;
-                let is_custom = app.customize_state.as_ref()
-                    .map(|s| ColorScheme::ALL[s.scheme_idx] == ColorScheme::Custom)
-                    .unwrap_or(false);
-                if is_custom && cursor >= 2 && cursor < 2 + CUSTOMIZE_COLOR_COUNT {
+                if cursor >= 2 && cursor < 2 + CUSTOMIZE_COLOR_COUNT {
+                    app.customize_ensure_custom();
                     let fi = crate::app::CURSOR_TO_FIELD[cursor - 2];
                     if let Some(ref mut st) = app.customize_state {
                         crate::app::set_custom_field(&mut st.custom, fi, None);
@@ -1454,13 +1479,9 @@ fn handle_customize_normal(app: &mut App, code: KeyCode) {
             }
         }
         KeyCode::Char(ch) if cursor >= 2 => {
-            // Typing on a color field auto-starts hex editing
-            use crate::theme::ColorScheme;
+            // Typing on a color field auto-starts hex editing (auto-switches to Custom)
             use crate::app::CUSTOMIZE_COLOR_COUNT;
-            let is_custom = app.customize_state.as_ref()
-                .map(|s| ColorScheme::ALL[s.scheme_idx] == ColorScheme::Custom)
-                .unwrap_or(false);
-            if is_custom && cursor < 2 + CUSTOMIZE_COLOR_COUNT {
+            if cursor < 2 + CUSTOMIZE_COLOR_COUNT {
                 app.customize_begin_edit_hex();
                 app.customize_hex_char(ch);
             }

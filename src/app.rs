@@ -453,54 +453,61 @@ pub struct FlatCat {
 
 // ── Customize state ───────────────────────────────────────────────────────────
 
-pub const CUSTOMIZE_COLOR_COUNT: usize = 20;
+pub const CUSTOMIZE_COLOR_COUNT: usize = 18;
+
+/// Up/Down arrow navigation order for the Customize dialog.
+/// Sequence: Nav Mode → Color Theme → left column (top→bottom) →
+///           right column (top→bottom) → wraps back to Nav Mode.
+pub const CUSTOMIZE_NAV_SEQ: [usize; 2 + CUSTOMIZE_COLOR_COUNT] = [
+    0, 1,
+    // Left column (top → bottom), skipping blank rows
+    2, 4, 6, 7, 9, 11, 13, 15, 18, 19,
+    // Right column (top → bottom), skipping blank rows
+    3, 5, 8, 10, 12, 14, 16, 17,
+];
 
 /// Maps (cursor - 2) → field index for color fields in the Customize dialog.
-/// Cursor 0 = Nav Mode, 1 = Color Theme, 2..21 = color fields in display order.
+/// Cursor 0 = Nav Mode, 1 = Color Theme, 2..19 = color fields in display order.
 pub const CURSOR_TO_FIELD: [usize; CUSTOMIZE_COLOR_COUNT] = [
-    14, // cursor 2  → view_bg
-     0, // cursor 3  → bar_fg
-    15, // cursor 4  → view_item
-     1, // cursor 5  → bar_bg
-    19, // cursor 6  → view_head_bg
-     2, // cursor 7  → bar_selected_fg
-    18, // cursor 8  → view_sec_head
-     3, // cursor 9  → bar_selected_bg
-    17, // cursor 10 → view_col_head
-    16, // cursor 11 → view_col_entry
-     8, // cursor 12 → dialog_fg
-     9, // cursor 13 → dialog_bg
-     4, // cursor 14 → selected_fg
-    10, // cursor 15 → dialog_border_fg
-     5, // cursor 16 → selected_bg
+    12, // cursor 2  → view_bg
+     2, // cursor 3  → selected_item_fg
+    13, // cursor 4  → view_item
+     3, // cursor 5  → selected_item_bg
+    17, // cursor 6  → view_head_bg
+    16, // cursor 7  → view_sec_head
+     6, // cursor 8  → dialog_bg
+    15, // cursor 9  → view_col_head
+     7, // cursor 10 → dialog_item
+    14, // cursor 11 → view_col_entry
+     8, // cursor 12 → dialog_label
+     4, // cursor 13 → view_selected_fg
+     9, // cursor 14 → dialog_label_sel_fg
+     5, // cursor 15 → view_selected_bg
+    10, // cursor 16 → dialog_border_fg
     11, // cursor 17 → dialog_border_bg
-     6, // cursor 18 → selected_line_fg
-    12, // cursor 19 → dialog_label_fg
-     7, // cursor 20 → selected_line_bg
-    13, // cursor 21 → dialog_label_sel_fg
+     0, // cursor 18 → bar_fg
+     1, // cursor 19 → bar_bg
 ];
 
 pub const CUSTOMIZE_COLOR_LABELS: [&str; CUSTOMIZE_COLOR_COUNT] = [
     "bar_fg",            // 0
     "bar_bg",            // 1
-    "bar_selected_fg",   // 2
-    "bar_selected_bg",   // 3
-    "selected_fg",       // 4
-    "selected_bg",       // 5
-    "selected_line_fg",  // 6
-    "selected_line_bg",  // 7
-    "dialog_fg",         // 8
-    "dialog_bg",         // 9
+    "selected_item_fg",  // 2
+    "selected_item_bg",  // 3
+    "view_selected_fg",  // 4
+    "view_selected_bg",  // 5
+    "dialog_bg",         // 6
+    "dialog_item",       // 7
+    "dialog_label",      // 8
+    "dialog_label_sel",  // 9
     "dialog_border_fg",  // 10
     "dialog_border_bg",  // 11
-    "dialog_label_fg",   // 12
-    "dialog_label_sel",  // 13
-    "view_bg",           // 14
-    "view_item",         // 15
-    "view_col_entry",    // 16
-    "view_col_head",     // 17
-    "view_sec_head",     // 18
-    "view_head_bg",      // 19
+    "view_bg",           // 12
+    "view_item",         // 13
+    "view_col_entry",    // 14
+    "view_col_head",     // 15
+    "view_sec_head",     // 16
+    "view_head_bg",      // 17
 ];
 
 pub enum CustomizeSubMode {
@@ -7322,13 +7329,31 @@ impl App {
     }
 
     pub fn customize_cursor_down(&mut self) {
-        use crate::theme::ColorScheme;
-        let is_custom = self.customize_state.as_ref()
-            .map(|s| ColorScheme::ALL[s.scheme_idx] == ColorScheme::Custom)
-            .unwrap_or(false);
-        let limit = if is_custom { 2 + CUSTOMIZE_COLOR_COUNT } else { 2 };
         let Some(ref mut st) = self.customize_state else { return };
-        if st.cursor + 1 < limit { st.cursor += 1; }
+        if st.cursor + 1 < 2 + CUSTOMIZE_COLOR_COUNT { st.cursor += 1; }
+        self.customize_apply_live_theme();
+    }
+
+    /// Move up one step in column order: left col → Color Theme → Nav Mode →
+    /// right col bottom → right col → left col bottom (wraps).
+    pub fn customize_col_up(&mut self) {
+        if let Some(ref mut st) = self.customize_state {
+            if let Some(i) = CUSTOMIZE_NAV_SEQ.iter().position(|&c| c == st.cursor) {
+                let len = CUSTOMIZE_NAV_SEQ.len();
+                st.cursor = CUSTOMIZE_NAV_SEQ[(i + len - 1) % len];
+            }
+        }
+        self.customize_apply_live_theme();
+    }
+
+    /// Move down one step in column order: Nav Mode → Color Theme → left col →
+    /// right col → Nav Mode (wraps).
+    pub fn customize_col_down(&mut self) {
+        if let Some(ref mut st) = self.customize_state {
+            if let Some(i) = CUSTOMIZE_NAV_SEQ.iter().position(|&c| c == st.cursor) {
+                st.cursor = CUSTOMIZE_NAV_SEQ[(i + 1) % CUSTOMIZE_NAV_SEQ.len()];
+            }
+        }
         self.customize_apply_live_theme();
     }
 
@@ -7346,9 +7371,6 @@ impl App {
         use crate::theme::ColorScheme;
         if let Some(ref mut st) = self.customize_state {
             st.scheme_idx = if st.scheme_idx == 0 { ColorScheme::ALL.len() - 1 } else { st.scheme_idx - 1 };
-            if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom && st.cursor >= 2 {
-                st.cursor = 1;
-            }
         }
         self.customize_apply_live_theme();
     }
@@ -7357,9 +7379,6 @@ impl App {
         use crate::theme::ColorScheme;
         if let Some(ref mut st) = self.customize_state {
             st.scheme_idx = (st.scheme_idx + 1) % ColorScheme::ALL.len();
-            if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom && st.cursor >= 2 {
-                st.cursor = 1;
-            }
         }
         self.customize_apply_live_theme();
     }
@@ -7434,20 +7453,46 @@ impl App {
         }
     }
 
+    /// If the current scheme is not Custom, populate `st.custom` with the
+    /// current theme's colors and switch scheme_idx to Custom.  This lets the
+    /// user start from any built-in theme and tweak individual colors.
+    pub fn customize_ensure_custom(&mut self) {
+        use crate::theme::{ColorScheme, color_to_hex, theme_color_for_field};
+        let is_custom = self.customize_state.as_ref()
+            .map(|s| ColorScheme::ALL[s.scheme_idx] == ColorScheme::Custom)
+            .unwrap_or(true);
+        if is_custom { return; }
+        let theme = self.theme.clone();
+        let custom_idx = ColorScheme::ALL.iter()
+            .position(|s| *s == ColorScheme::Custom)
+            .unwrap_or(0);
+        let Some(ref mut st) = self.customize_state else { return };
+        for field_idx in 0..CUSTOMIZE_COLOR_COUNT {
+            let hex = theme_color_for_field(&theme, field_idx).and_then(color_to_hex);
+            set_custom_field(&mut st.custom, field_idx, hex);
+        }
+        st.scheme_idx = custom_idx;
+        self.customize_apply_live_theme();
+    }
+
     /// Begin editing the hex value for the color field under the cursor.
-    /// Only valid when scheme is Custom and cursor is on a color field (>=2).
+    /// Auto-switches to Custom scheme (seeding from current theme) if needed.
     pub fn customize_begin_edit_hex(&mut self) {
-        use crate::theme::ColorScheme;
-        let Some(ref st) = self.customize_state else { return };
-        if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom { return; }
-        if st.cursor < 2 { return; }
-        let vi = st.cursor - 2;
-        if vi >= CUSTOMIZE_COLOR_COUNT { return; }
-        let field_idx = CURSOR_TO_FIELD[vi];
-        let existing  = get_custom_field(&st.custom, field_idx)
-            .and_then(|v| v.as_deref())
-            .unwrap_or("")
-            .to_string();
+        let (field_idx, _) = {
+            let Some(ref st) = self.customize_state else { return };
+            if st.cursor < 2 { return; }
+            let vi = st.cursor - 2;
+            if vi >= CUSTOMIZE_COLOR_COUNT { return; }
+            (CURSOR_TO_FIELD[vi], ())
+        };
+        self.customize_ensure_custom();
+        let existing = {
+            let Some(ref st) = self.customize_state else { return };
+            get_custom_field(&st.custom, field_idx)
+                .and_then(|v| v.as_deref())
+                .unwrap_or("")
+                .to_string()
+        };
         let len = existing.chars().count();
         if let Some(ref mut st) = self.customize_state {
             st.sub_mode = CustomizeSubMode::EditHex { field_idx, buf: existing, char_cur: len };
@@ -7533,24 +7578,22 @@ pub fn get_custom_field(ct: &crate::config::CustomTheme, idx: usize) -> Option<&
     match idx {
         0  => Some(&ct.bar_fg),
         1  => Some(&ct.bar_bg),
-        2  => Some(&ct.bar_selected_fg),
-        3  => Some(&ct.bar_selected_bg),
-        4  => Some(&ct.selected_fg),
-        5  => Some(&ct.selected_bg),
-        6  => Some(&ct.selected_line_fg),
-        7  => Some(&ct.selected_line_bg),
-        8  => Some(&ct.dialog_fg),
-        9  => Some(&ct.dialog_bg),
+        2  => Some(&ct.selected_item_fg),
+        3  => Some(&ct.selected_item_bg),
+        4  => Some(&ct.view_selected_fg),
+        5  => Some(&ct.view_selected_bg),
+        6  => Some(&ct.dialog_bg),
+        7  => Some(&ct.dialog_item),
+        8  => Some(&ct.dialog_label),
+        9  => Some(&ct.dialog_label_sel_fg),
         10 => Some(&ct.dialog_border_fg),
         11 => Some(&ct.dialog_border_bg),
-        12 => Some(&ct.dialog_label_fg),
-        13 => Some(&ct.dialog_label_sel_fg),
-        14 => Some(&ct.view_bg),
-        15 => Some(&ct.view_item),
-        16 => Some(&ct.view_col_entry),
-        17 => Some(&ct.view_col_head),
-        18 => Some(&ct.view_sec_head),
-        19 => Some(&ct.view_head_bg),
+        12 => Some(&ct.view_bg),
+        13 => Some(&ct.view_item),
+        14 => Some(&ct.view_col_entry),
+        15 => Some(&ct.view_col_head),
+        16 => Some(&ct.view_sec_head),
+        17 => Some(&ct.view_head_bg),
         _  => None,
     }
 }
@@ -7559,24 +7602,22 @@ pub fn set_custom_field(ct: &mut crate::config::CustomTheme, idx: usize, value: 
     match idx {
         0  => ct.bar_fg              = value,
         1  => ct.bar_bg              = value,
-        2  => ct.bar_selected_fg     = value,
-        3  => ct.bar_selected_bg     = value,
-        4  => ct.selected_fg         = value,
-        5  => ct.selected_bg         = value,
-        6  => ct.selected_line_fg    = value,
-        7  => ct.selected_line_bg    = value,
-        8  => ct.dialog_fg           = value,
-        9  => ct.dialog_bg           = value,
+        2  => ct.selected_item_fg    = value,
+        3  => ct.selected_item_bg    = value,
+        4  => ct.view_selected_fg    = value,
+        5  => ct.view_selected_bg    = value,
+        6  => ct.dialog_bg           = value,
+        7  => ct.dialog_item         = value,
+        8  => ct.dialog_label        = value,
+        9  => ct.dialog_label_sel_fg = value,
         10 => ct.dialog_border_fg    = value,
         11 => ct.dialog_border_bg    = value,
-        12 => ct.dialog_label_fg     = value,
-        13 => ct.dialog_label_sel_fg = value,
-        14 => ct.view_bg             = value,
-        15 => ct.view_item           = value,
-        16 => ct.view_col_entry      = value,
-        17 => ct.view_col_head       = value,
-        18 => ct.view_sec_head       = value,
-        19 => ct.view_head_bg        = value,
+        12 => ct.view_bg             = value,
+        13 => ct.view_item           = value,
+        14 => ct.view_col_entry      = value,
+        15 => ct.view_col_head       = value,
+        16 => ct.view_sec_head       = value,
+        17 => ct.view_head_bg        = value,
         _  => {}
     }
 }

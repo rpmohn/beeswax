@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
@@ -26,48 +26,46 @@ const DIALOG_W: usize = INNER_W + 2;
 const COLOR_ROWS: usize = 11;
 
 /// Dialog height: border(1) + blank(1) + nav(1) + scheme(1) + blank(1) +
-///                header(1) + color_rows(11) + hint(1) + blank(1) + border(1) = 20
-const DIALOG_H: usize = 20;
+///                header(1) + color_rows(11) + blank(1) + hint(1) + blank(1) + border(1) = 21
+const DIALOG_H: usize = 21;
 
 /// Row layout: (left_field_idx, right_field_idx), None = blank cell.
 /// Indices refer to CUSTOMIZE_COLOR_LABELS / get_custom_field positions.
 const LAYOUT: [(Option<usize>, Option<usize>); COLOR_ROWS] = [
-    (Some(14), Some( 0)),  // view_bg          | bar_fg
-    (Some(15), Some( 1)),  // view_item         | bar_bg
-    (Some(19), Some( 2)),  // view_head_bg      | bar_selected_fg
-    (Some(18), Some( 3)),  // view_sec_head     | bar_selected_bg
-    (Some(17), None    ),  // view_col_head     | —
-    (Some(16), Some( 8)),  // view_col_entry    | dialog_fg
-    (None,     Some( 9)),  // —                 | dialog_bg
-    (Some( 4), Some(10)),  // selected_fg       | dialog_border_fg
-    (Some( 5), Some(11)),  // selected_bg       | dialog_border_bg
-    (Some( 6), Some(12)),  // selected_line_fg  | dialog_label_fg
-    (Some( 7), Some(13)),  // selected_line_bg  | dialog_label_sel_fg
+    (Some(12), Some( 2)),  // view_bg          | selected_item_fg
+    (Some(13), Some( 3)),  // view_item         | selected_item_bg
+    (Some(17), None    ),  // view_head_bg      | —
+    (Some(16), Some( 6)),  // view_sec_head     | dialog_bg
+    (Some(15), Some( 7)),  // view_col_head     | dialog_item
+    (Some(14), Some( 8)),  // view_col_entry    | dialog_label
+    (Some( 4), Some( 9)),  // view_selected_fg  | dialog_label_sel_fg
+    (Some( 5), Some(10)),  // view_selected_bg  | dialog_border_fg
+    (None,     Some(11)),  // —                 | dialog_border_bg
+    (Some( 0), None    ),  // bar_fg            | —
+    (Some( 1), None    ),  // bar_bg            | —
 ];
 
 /// Maps field index → cursor position in the Customize dialog.
 /// Inverse of CURSOR_TO_FIELD.
 const FIELD_TO_CURSOR: [usize; CUSTOMIZE_COLOR_COUNT] = [
-     3, // 0:  bar_fg
-     5, // 1:  bar_bg
-     7, // 2:  bar_selected_fg
-     9, // 3:  bar_selected_bg
-    14, // 4:  selected_fg
-    16, // 5:  selected_bg
-    18, // 6:  selected_line_fg
-    20, // 7:  selected_line_bg
-    12, // 8:  dialog_fg
-    13, // 9:  dialog_bg
-    15, // 10: dialog_border_fg
+    18, // 0:  bar_fg
+    19, // 1:  bar_bg
+     3, // 2:  selected_item_fg
+     5, // 3:  selected_item_bg
+    13, // 4:  view_selected_fg
+    15, // 5:  view_selected_bg
+     8, // 6:  dialog_bg
+    10, // 7:  dialog_item
+    12, // 8:  dialog_label
+    14, // 9:  dialog_label_sel_fg
+    16, // 10: dialog_border_fg
     17, // 11: dialog_border_bg
-    19, // 12: dialog_label_fg
-    21, // 13: dialog_label_sel_fg
-     2, // 14: view_bg
-     4, // 15: view_item
-    11, // 16: view_col_entry
-    10, // 17: view_col_head
-     8, // 18: view_sec_head
-     6, // 19: view_head_bg
+     2, // 12: view_bg
+     4, // 13: view_item
+    11, // 14: view_col_entry
+     9, // 15: view_col_head
+     7, // 16: view_sec_head
+     6, // 17: view_head_bg
 ];
 
 pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
@@ -91,8 +89,8 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(border_style)
         .style(content_style)
-        .title(" Utilities Customize ")
-        .title_bottom(" Press ENTER when done, ESC to cancel ");
+        .title(Line::from(" Utilities Customize ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
     let inner = block.inner(dlg);
     frame.render_widget(block, dlg);
 
@@ -110,7 +108,7 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let label_s = if on_field { label_sel } else { label_style };
         let val_s   = if on_field { sel_style  } else { content_style };
         lines.push(Line::from(vec![
-            Span::styled("  Nav Mode:       ".to_string(), label_s),
+            Span::styled("  Navigation Mode:".to_string(), label_s),
             Span::styled(format!("{:<20}", val), val_s),
         ]));
     }
@@ -129,17 +127,15 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
     // Blank + header
     lines.push(Line::from(""));
-    let col_header = if is_custom {
-        "  Color Settings (F2=edit hex, Space=clear):              "
-    } else {
-        "  Color Settings (select Custom to edit):                 "
-    };
-    lines.push(Line::from(Span::styled(col_header, label_style)));
+    lines.push(Line::from(Span::styled(
+        "  Color Settings (F2=edit hex, Space=clear):              ",
+        label_style,
+    )));
 
     // Build a single color cell's spans given a field index.
     // cursor_pos is the dialog cursor value that selects this cell.
     let build_cell = |field_idx: usize, cursor_pos: usize| -> Vec<Span<'static>> {
-        let on_field = is_custom && st.cursor == cursor_pos && !in_picker;
+        let on_field = st.cursor == cursor_pos && !in_picker;
         let label    = CUSTOMIZE_COLOR_LABELS[field_idx];
         let padded   = format!("{:<width$}", label, width = LABEL_W);
 
@@ -185,17 +181,59 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
 
+        // Paired swatch: some fields are rendered with a partner's color to
+        // preview how two colors look together.
+        //   view_bg(12) + view_item(13): view_item fg on view_bg bg
+        //   view_head_bg(17) + view_sec_head(16): view_sec_head fg on view_head_bg bg
+        let paired_style: Option<Style> = {
+            let pair = match field_idx {
+                 0 |  1 => Some(( 0,  1)), // bar_fg fg on bar_bg bg
+                 2 |  3 => Some(( 2,  3)), // selected_item_fg fg on selected_item_bg bg
+                 4 |  5 => Some(( 4,  5)), // view_selected_fg fg on view_selected_bg bg
+                 6 |  7 => Some(( 7,  6)), // dialog_item fg on dialog_bg bg
+                 8      => Some(( 8,  6)), // dialog_label fg on dialog_bg bg
+                 9      => Some(( 9,  6)), // dialog_label_sel_fg fg on dialog_bg bg
+                10 | 11 => Some((10, 11)), // dialog_border_fg fg on dialog_border_bg bg
+                12 | 13 => Some((13, 12)), // view_item fg on view_bg bg
+                14      => Some((14, 12)), // view_col_entry fg on view_bg bg
+                15      => Some((15, 17)), // view_col_head fg on view_head_bg bg
+                16 | 17 => Some((16, 17)), // view_sec_head fg on view_head_bg bg
+                _       => None,
+            };
+            pair.map(|(fg_fi, bg_fi)| {
+                let (fg, bg) = if is_custom {
+                    let fg = get_custom_field(&st.custom, fg_fi)
+                        .and_then(|o| o.as_deref()).and_then(|s| parse_hex(s));
+                    let bg = get_custom_field(&st.custom, bg_fi)
+                        .and_then(|o| o.as_deref()).and_then(|s| parse_hex(s));
+                    (fg, bg)
+                } else {
+                    (theme_color_for_field(&app.theme, fg_fi),
+                     theme_color_for_field(&app.theme, bg_fi))
+                };
+                let mut s = Style::default();
+                if let Some(fg) = fg { s = s.fg(fg); }
+                if let Some(bg) = bg { s = s.bg(bg); }
+                s
+            })
+        };
+
         // Normal display: render hex value in its own color (if RGB), dimmed otherwise.
         let hex_s = if on_field {
-            if let Some(c) = effective_color {
-                Style::default().fg(c).add_modifier(Modifier::REVERSED)
-            } else {
-                sel_style
+            match paired_style {
+                Some(ps) => ps.add_modifier(Modifier::REVERSED),
+                None if effective_color.is_some() =>
+                    Style::default().fg(effective_color.unwrap()).add_modifier(Modifier::REVERSED),
+                _ => sel_style,
             }
-        } else if let Some(c) = effective_color {
-            Style::default().fg(c)
         } else {
-            dim_style
+            match paired_style {
+                Some(ps) => ps,
+                None => match effective_color {
+                    Some(c) => Style::default().fg(c),
+                    None    => dim_style,
+                },
+            }
         };
 
         vec![
@@ -228,12 +266,13 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Hint
+    lines.push(Line::from(""));
     let hint = if is_custom {
-        "  (F2 or type to edit hex, Space=clear, -------=terminal default)"
+        "------- = terminal default"
     } else {
-        "  (select Custom theme to edit individual colors)"
+        "select Custom theme to edit individual colors"
     };
-    lines.push(Line::from(Span::styled(hint, dim_style)));
+    lines.push(Line::from(Span::styled(hint, label_style)).alignment(Alignment::Center));
     lines.push(Line::from(""));
 
     frame.render_widget(Paragraph::new(lines).style(content_style), inner);

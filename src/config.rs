@@ -26,23 +26,20 @@ pub struct CustomTheme {
     // ── Bars (title / fkey / menu) ───────────────────────────────────────────
     #[serde(default)] pub bar_fg:              Option<String>,
     #[serde(default)] pub bar_bg:              Option<String>,
-    /// Currently-selected top-level menu item.
-    #[serde(default)] pub bar_selected_fg:     Option<String>,
-    #[serde(default)] pub bar_selected_bg:     Option<String>,
 
     // ── Selected field / line ────────────────────────────────────────────────
-    #[serde(default)] pub selected_fg:         Option<String>,
-    #[serde(default)] pub selected_bg:         Option<String>,
-    #[serde(default)] pub selected_line_fg:    Option<String>,
-    #[serde(default)] pub selected_line_bg:    Option<String>,
+    #[serde(default)] pub selected_item_fg:         Option<String>,
+    #[serde(default)] pub selected_item_bg:         Option<String>,
+    #[serde(default)] pub view_selected_fg:    Option<String>,
+    #[serde(default)] pub view_selected_bg:    Option<String>,
 
     // ── Modal dialogs ─────────────────────────────────────────────────────────
-    #[serde(default)] pub dialog_fg:           Option<String>,
-    #[serde(default)] pub dialog_bg:           Option<String>,
+    #[serde(default)] pub dialog_bg:             Option<String>,
+    #[serde(default)] pub dialog_item:           Option<String>,
     #[serde(default)] pub dialog_border_fg:    Option<String>,
     #[serde(default)] pub dialog_border_bg:    Option<String>,
     /// Field label foreground in dialogs (unselected).
-    #[serde(default)] pub dialog_label_fg:     Option<String>,
+    #[serde(default)] pub dialog_label:     Option<String>,
     /// Field label foreground in dialogs when that field is selected.
     #[serde(default)] pub dialog_label_sel_fg: Option<String>,
 
@@ -130,12 +127,12 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     set_str(root, "nav_mode",    &cfg.nav_mode);
     set_str(root, "colorscheme", &cfg.colorscheme);
 
-    // The 20 field names beeswax manages inside [custom_theme].
+    // The 18 field names beeswax manages inside [custom_theme].
     const KNOWN: &[&str] = &[
-        "bar_fg", "bar_bg", "bar_selected_fg", "bar_selected_bg",
-        "selected_fg", "selected_bg", "selected_line_fg", "selected_line_bg",
-        "dialog_fg", "dialog_bg", "dialog_border_fg", "dialog_border_bg",
-        "dialog_label_fg", "dialog_label_sel_fg",
+        "bar_fg", "bar_bg",
+        "selected_item_fg", "selected_item_bg", "view_selected_fg", "view_selected_bg",
+        "dialog_bg", "dialog_item", "dialog_label", "dialog_label_sel_fg",
+        "dialog_border_fg", "dialog_border_bg",
         "view_bg", "view_item", "view_col_entry", "view_col_head",
         "view_sec_head", "view_head_bg",
     ];

@@ -183,18 +183,16 @@ impl Theme {
 
         let bar_fg    = color(&c.bar_fg,    None);
         let bar_bg    = color(&c.bar_bg,    None);
-        let barsel_fg = color(&c.bar_selected_fg, None);
-        let barsel_bg = color(&c.bar_selected_bg, None);
-        let sel_fg    = color(&c.selected_fg, None);
-        let sel_bg    = color(&c.selected_bg, None);
-        let sline_fg  = color(&c.selected_line_fg, sel_fg);
-        let sline_bg  = color(&c.selected_line_bg, None);
+        let sel_fg    = color(&c.selected_item_fg, None);
+        let sel_bg    = color(&c.selected_item_bg, None);
+        let vsel_fg  = color(&c.view_selected_fg, sel_fg);
+        let vsel_bg  = color(&c.view_selected_bg, None);
 
-        let dlg_fg       = color(&c.dialog_fg,        None);
+        let dlg_item       = color(&c.dialog_item,        None);
         let dlg_bg       = color(&c.dialog_bg,        None);
         let dlgbrd_fg    = color(&c.dialog_border_fg, None);
         let dlgbrd_bg    = color(&c.dialog_border_bg, None);
-        let dlglbl_fg    = color(&c.dialog_label_fg,     dlg_fg);
+        let dlglbl_fg    = color(&c.dialog_label,     dlg_item);
         let dlglblsel_fg = color(&c.dialog_label_sel_fg, sel_fg);
         let vbg_bg       = color(&c.view_bg,       None);
         let vitem_fg     = color(&c.view_item,     None);
@@ -214,24 +212,24 @@ impl Theme {
             apply(Style::default(), bar_fg, bar_bg)
         } else { def.bar };
 
-        let bar_selected = if barsel_fg.is_some() || barsel_bg.is_some() {
-            apply(Style::default(), barsel_fg, barsel_bg)
+        let bar_selected = if sel_fg.is_some() || sel_bg.is_some() {
+            apply(Style::default(), sel_fg, sel_bg)
         } else { def.bar_selected };
 
         let item_selected_field = if sel_fg.is_some() || sel_bg.is_some() {
             apply(Style::default(), sel_fg, sel_bg)
         } else { def.item_selected_field };
 
-        let item_selected_line = if sline_fg.is_some() || sline_bg.is_some() {
-            apply(Style::default(), sline_fg, sline_bg)
+        let item_selected_line = if vsel_fg.is_some() || vsel_bg.is_some() {
+            apply(Style::default(), vsel_fg, vsel_bg)
         } else { def.item_selected_line };
 
         let cursor = if sel_fg.is_some() || sel_bg.is_some() {
             apply(Style::default(), sel_fg, sel_bg)
         } else { def.cursor };
 
-        let dialog           = apply(Style::default(), dlg_fg, dlg_bg);
-        let dialog_border    = apply(Style::default(), dlgbrd_fg.or(dlg_fg), dlgbrd_bg.or(dlg_bg));
+        let dialog           = apply(Style::default(), dlg_item, dlg_bg);
+        let dialog_border    = apply(Style::default(), dlgbrd_fg.or(dlg_item), dlgbrd_bg.or(dlg_bg));
         let dialog_label     = apply(Style::default(), dlglbl_fg, None);
         let dialog_label_sel = apply(Style::default(), dlglblsel_fg, None);
         let dim              = Style::default().add_modifier(Modifier::DIM);
@@ -458,24 +456,22 @@ pub fn theme_color_for_field(theme: &Theme, field_idx: usize) -> Option<Color> {
     let c: Option<Color> = match field_idx {
         0  => theme.bar.fg,
         1  => theme.bar.bg,
-        2  => theme.bar_selected.fg,
-        3  => theme.bar_selected.bg,
-        4  => theme.item_selected_field.fg,
-        5  => theme.item_selected_field.bg,
-        6  => theme.item_selected_line.fg,
-        7  => theme.item_selected_line.bg,
-        8  => theme.dialog.fg,
-        9  => theme.dialog.bg,
-        10 => theme.dialog_border.fg,
-        11 => theme.dialog_border.bg,
-        12 => theme.dialog_label.fg,
-        13 => theme.dialog_label_sel.fg,
-        14 => theme.view_bg.bg,
-        15 => theme.view_item.fg,
-        16 => theme.view_col_entry.fg,
-        17 => theme.view_col_head.fg,
-        18 => theme.view_sec_head.fg,
-        19 => theme.view_head_bg.bg,
+        2  => theme.item_selected_field.fg,   // selected_item_fg
+        3  => theme.item_selected_field.bg,   // selected_item_bg
+        4  => theme.item_selected_line.fg,    // view_selected_fg
+        5  => theme.item_selected_line.bg,    // view_selected_bg
+        6  => theme.dialog.bg,                // dialog_bg
+        7  => theme.dialog.fg,                // dialog_item
+        8  => theme.dialog_label.fg,          // dialog_label
+        9  => theme.dialog_label_sel.fg,      // dialog_label_sel_fg
+        10 => theme.dialog_border.fg,         // dialog_border_fg
+        11 => theme.dialog_border.bg,         // dialog_border_bg
+        12 => theme.view_bg.bg,               // view_bg
+        13 => theme.view_item.fg,             // view_item
+        14 => theme.view_col_entry.fg,        // view_col_entry
+        15 => theme.view_col_head.fg,         // view_col_head
+        16 => theme.view_sec_head.fg,         // view_sec_head
+        17 => theme.view_head_bg.bg,          // view_head_bg
         _  => return None,
     };
     c
