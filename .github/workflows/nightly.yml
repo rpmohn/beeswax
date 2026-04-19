@@ -1,0 +1,164 @@
+name: Nightly Release
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC every day
+  workflow_dispatch:        # allow manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Step 1: check whether anything changed since the last nightly ─────────────
+  check-changes:
+    name: Check for new commits
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # need full history to resolve tags
+          fetch-tags: true
+
+      - name: Compare HEAD to last nightly tag
+        id: check
+        run: |
+          if git rev-parse --verify nightly >/dev/null 2>&1; then
+            TAGGED=$(git rev-parse 'nightly^{commit}')
+            HEAD=$(git rev-parse HEAD)
+            if [ "$TAGGED" = "$HEAD" ]; then
+              echo "No new commits since last nightly — skipping build."
+              echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "New commits found."
+              echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "No nightly tag yet — first build."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Step 2: build for each target ────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.asset_name }}
+    needs: check-changes
+    if: needs.check-changes.outputs.has_changes == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            binary: beeswax
+            asset_name: beeswax-linux-x86_64
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary: beeswax
+            asset_name: beeswax-macos-x86_64
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary: beeswax
+            asset_name: beeswax-macos-aarch64
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: beeswax.exe
+            asset_name: beeswax-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl-tools (Linux static build)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.binary }}
+          if-no-files-found: error
+
+  # ── Step 3: publish the nightly release ──────────────────────────────────────
+  release:
+    name: Publish nightly release
+    needs: [check-changes, build]
+    if: needs.check-changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Each artifact lands in its own subdirectory; flatten and rename.
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          mv artifacts/beeswax-linux-x86_64/beeswax             release-assets/beeswax-linux-x86_64
+          mv artifacts/beeswax-macos-x86_64/beeswax             release-assets/beeswax-macos-x86_64
+          mv artifacts/beeswax-macos-aarch64/beeswax            release-assets/beeswax-macos-aarch64
+          mv "artifacts/beeswax-windows-x86_64.exe/beeswax.exe" "release-assets/beeswax-windows-x86_64.exe"
+          chmod +x release-assets/beeswax-linux-x86_64 \
+                   release-assets/beeswax-macos-x86_64 \
+                   release-assets/beeswax-macos-aarch64
+
+      - name: Delete previous nightly release and tag
+        run: |
+          gh release delete nightly --yes 2>/dev/null || true
+          git push origin :refs/tags/nightly 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Create new nightly release
+        run: |
+          DATE=$(date -u '+%Y-%m-%d')
+          SHA=$(git rev-parse --short HEAD)
+          gh release create nightly \
+            --title "Nightly ${DATE}" \
+            --notes "$(cat <<EOF
+          Automated nightly build from commit \`${SHA}\` on ${DATE}.
+
+          | File | Platform |
+          |------|----------|
+          | \`beeswax-linux-x86_64\` | Linux x86\_64 (static musl) |
+          | \`beeswax-macos-x86_64\` | macOS Intel |
+          | \`beeswax-macos-aarch64\` | macOS Apple Silicon |
+          | \`beeswax-windows-x86_64.exe\` | Windows x86\_64 |
+          EOF
+          )" \
+            --prerelease \
+            --target main \
+            release-assets/beeswax-linux-x86_64 \
+            release-assets/beeswax-macos-x86_64 \
+            release-assets/beeswax-macos-aarch64 \
+            "release-assets/beeswax-windows-x86_64.exe"
+        env:
+          GH_TOKEN: ${{ github.token }}
