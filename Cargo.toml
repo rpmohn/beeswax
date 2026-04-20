@@ -9,7 +9,6 @@ toml       = { version = "0.8", default-features = false, features = ["parse", "
 toml_edit  = { version = "0.22", default-features = false, features = ["parse", "display"] }
 ratatui    = "0.29"
 crossterm  = { version = "0.28", features = ["event-stream"] }
-chrono     = { version = "0.4", features = ["clock"], default-features = false }
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 aes-gcm    = "0.10"

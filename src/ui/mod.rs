@@ -7,14 +7,17 @@ pub mod render;
 pub mod view;
 pub mod viewmgr;
 
-/// Build the first line of the two-line title bar: " BEESWAX 0.1" left,
-/// current local date/time right-aligned with one trailing space.
-pub fn title_bar_top(width: u16) -> String {
-    let dt = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let prefix = " BEESWAX 0.1";
+/// Build the first line of the two-line title bar:
+/// "File: <path>" left, "beeswax <version> " right-aligned.
+pub fn title_bar_top(width: u16, file_path: Option<&std::path::Path>) -> String {
+    let left = match file_path {
+        Some(p) => format!(" File: {}", p.display()),
+        None    => " File: (none)".to_string(),
+    };
+    let right = format!("beeswax v{} ", env!("CARGO_PKG_VERSION"));
     let w = width as usize;
-    let pad = w.saturating_sub(prefix.len() + dt.len() + 1);
-    format!("{}{}{} ", prefix, " ".repeat(pad), dt)
+    let pad = w.saturating_sub(left.chars().count() + right.chars().count());
+    format!("{}{}{}", left, " ".repeat(pad), right)
 }
 
 /// Split `buffer` at char index `cursor` into (left, highlighted, right).
