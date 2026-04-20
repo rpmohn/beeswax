@@ -33,10 +33,26 @@ fn main() -> io::Result<()> {
     let mut file_arg: Option<PathBuf> = None;
 
     for arg in &args {
-        if arg == "--encrypt" {
-            encrypt_flag = true;
-        } else if !arg.starts_with('-') {
-            file_arg = Some(PathBuf::from(arg));
+        match arg.as_str() {
+            "-v" | "--version" => {
+                println!("beeswax {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            "-h" | "-?" | "--help" => {
+                print_usage();
+                std::process::exit(0);
+            }
+            "--encrypt" => {
+                encrypt_flag = true;
+            }
+            _ if !arg.starts_with('-') => {
+                file_arg = Some(PathBuf::from(arg));
+            }
+            _ => {
+                eprintln!("beeswax: unknown option '{}'\n", arg);
+                print_usage_to_stderr();
+                std::process::exit(1);
+            }
         }
     }
 
@@ -179,6 +195,27 @@ fn main() -> io::Result<()> {
 
     Ok(())
 }
+
+// ── Usage / help ─────────────────────────────────────────────────────────────
+
+fn usage_text() -> String {
+    format!(
+        "beeswax {} — terminal-based personal information manager\n\n\
+         USAGE:\n\
+         \x20 beeswax                        ephemeral session (no file)\n\
+         \x20 beeswax [FILE]                 open or create a plain .bwx file\n\
+         \x20 beeswax --encrypt [FILE]       open or create an encrypted .bwx file\n\
+         \n\
+         OPTIONS:\n\
+         \x20 -h, -?, --help                 show this help and exit\n\
+         \x20 -v, --version                  show version and exit\n\
+         \x20     --encrypt                  use AES-256-GCM encryption",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+fn print_usage()           { println!("{}", usage_text()); }
+fn print_usage_to_stderr() { eprintln!("{}", usage_text()); }
 
 // ── Pre-TUI password prompts ──────────────────────────────────────────────────
 
