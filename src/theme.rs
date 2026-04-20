@@ -23,14 +23,17 @@ const G_FG4:     Color = Color::Rgb(0xa8, 0x99, 0x84);  // muted fg (dark)
 const G_GRAY:    Color = Color::Rgb(0x92, 0x83, 0x74);
 // light backgrounds
 const G_BG_L:    Color = Color::Rgb(0xfb, 0xf1, 0xc7);
+const G_BG1_L:   Color = Color::Rgb(0xeb, 0xdb, 0xb2);
 const G_BG2_L:   Color = Color::Rgb(0xd5, 0xc4, 0xa1);
-const G_BG4_L:   Color = Color::Rgb(0xa8, 0x99, 0x84);  // muted fg (light bar)
 const G_FG_L:    Color = Color::Rgb(0x3c, 0x38, 0x36);
 const G_FG4_L:   Color = Color::Rgb(0x7c, 0x6f, 0x64);  // dim text (light)
 // shared accents
-const G_YELLOW:  Color = Color::Rgb(0xfa, 0xbd, 0x2f);  // bright yellow — selection
-const G_BLUE_D:  Color = Color::Rgb(0x83, 0xa5, 0x98);  // bright blue (dark theme)
-const G_BLUE_L:  Color = Color::Rgb(0x07, 0x66, 0x78);  // dark blue (light theme)
+const G_YELLOW:  Color = Color::Rgb(0xfa, 0xbd, 0x2f);  // bright yellow (dark)
+const G_GREEN:   Color = Color::Rgb(0xb8, 0xbb, 0x26);  // bright green (dark)
+const G_BLUE_D:  Color = Color::Rgb(0x83, 0xa5, 0x98);  // bright blue (dark)
+const G_YELLOW_L: Color = Color::Rgb(0xb5, 0x76, 0x14); // dark yellow (light)
+const G_GREEN_L:  Color = Color::Rgb(0x79, 0x74, 0x0e); // dark green (light)
+const G_BLUE_L:  Color = Color::Rgb(0x07, 0x66, 0x78);  // dark blue (light)
 
 // ── Dracula palette ───────────────────────────────────────────────────────────
 const D_BG:      Color = Color::Rgb(0x28, 0x2a, 0x36);
@@ -384,44 +387,44 @@ impl Theme {
     fn gruvbox_dark() -> Self {
         // warm cream text on charcoal; bright yellow selection; muted blue section heads
         Theme {
-            bar:                  Style::default().fg(G_FG4).bg(G_BG1),
-            bar_selected:         Style::default().fg(G_BG).bg(G_YELLOW),
-            item_selected_field:  Style::default().fg(G_BG).bg(G_YELLOW),
-            item_selected_line:   Style::default().fg(G_BG).bg(G_BG2),
-            cursor:           Style::default().fg(G_BG).bg(G_YELLOW),
-            dialog:           Style::default().fg(G_FG).bg(G_BG),
-            dialog_border:    Style::default().fg(G_YELLOW).bg(G_BG),
-            dialog_label:     Style::default().fg(G_FG4),
-            dialog_label_sel: Style::default().fg(G_YELLOW),
-            dim:              Style::default().fg(G_GRAY).bg(G_BG).add_modifier(Modifier::DIM),
-            view_bg:          Style::default().fg(G_FG).bg(G_BG),
-            view_item:        Style::default().fg(G_FG),
-            view_col_entry:         Style::default().fg(G_FG),
-            view_col_head:    Style::default().fg(G_BLUE_D),
-            view_sec_head:    Style::default().fg(G_BLUE_D),
-            view_head_bg:     Style::default().bg(G_BG),
+            bar:                  Style::default().fg(G_BG).bg(G_FG4),
+            bar_selected:         Style::default().fg(G_BG).bg(G_BLUE_D),
+            item_selected_field:  Style::default().fg(G_BG).bg(G_BLUE_D),
+            item_selected_line:   Style::default().fg(G_FG4).bg(G_BG2),
+            cursor:               Style::default().fg(G_BG).bg(G_BLUE_D),
+            dialog:               Style::default().fg(G_FG).bg(G_BG),
+            dialog_border:        Style::default().fg(G_FG).bg(G_BG),
+            dialog_label:         Style::default().fg(G_FG4),
+            dialog_label_sel:     Style::default().fg(G_YELLOW),
+            dim:                  Style::default().fg(G_GRAY).bg(G_BG).add_modifier(Modifier::DIM),
+            view_bg:              Style::default().fg(G_FG).bg(G_BG),
+            view_item:            Style::default().fg(G_FG),
+            view_col_entry:       Style::default().fg(G_FG),
+            view_col_head:        Style::default().fg(G_YELLOW),
+            view_sec_head:        Style::default().fg(G_GREEN),
+            view_head_bg:         Style::default().bg(G_BG1),
         }
     }
 
     fn gruvbox_light() -> Self {
-        // dark warm text on cream; bright yellow selection; dark blue section heads
+        // dark warm text on cream; muted yellow/green accents; blue selection
         Theme {
-            bar:                  Style::default().fg(G_BG4_L).bg(G_BG2_L),
-            bar_selected:         Style::default().fg(G_BG_L).bg(G_YELLOW),
-            item_selected_field:  Style::default().fg(G_BG_L).bg(G_YELLOW),
-            item_selected_line:   Style::default().fg(G_BG_L).bg(G_BG2_L),
-            cursor:           Style::default().fg(G_BG_L).bg(G_YELLOW),
-            dialog:           Style::default().fg(G_FG_L).bg(G_BG_L),
-            dialog_border:    Style::default().fg(G_BLUE_L).bg(G_BG_L),
-            dialog_label:     Style::default().fg(G_FG4_L),
-            dialog_label_sel: Style::default().fg(G_BLUE_L),
-            dim:              Style::default().fg(G_FG4_L).bg(G_BG_L).add_modifier(Modifier::DIM),
-            view_bg:          Style::default().fg(G_FG_L).bg(G_BG_L),
-            view_item:        Style::default().fg(G_FG_L),
-            view_col_entry:         Style::default().fg(G_FG_L),
-            view_col_head:    Style::default().fg(G_BLUE_L),
-            view_sec_head:    Style::default().fg(G_BLUE_L),
-            view_head_bg:     Style::default().bg(G_BG_L),
+            bar:                  Style::default().fg(G_BG_L).bg(G_YELLOW_L),
+            bar_selected:         Style::default().fg(G_BG_L).bg(G_BLUE_L),
+            item_selected_field:  Style::default().fg(G_BG_L).bg(G_BLUE_L),
+            item_selected_line:   Style::default().fg(G_FG4_L).bg(G_BG2_L),
+            cursor:               Style::default().fg(G_BG_L).bg(G_BLUE_L),
+            dialog:               Style::default().fg(G_FG_L).bg(G_BG_L),
+            dialog_border:        Style::default().fg(G_FG_L).bg(G_BG_L),
+            dialog_label:         Style::default().fg(G_YELLOW_L),
+            dialog_label_sel:     Style::default().fg(G_YELLOW_L),
+            dim:                  Style::default().fg(G_FG4_L).bg(G_BG_L).add_modifier(Modifier::DIM),
+            view_bg:              Style::default().fg(G_FG_L).bg(G_BG_L),
+            view_item:            Style::default().fg(G_FG_L),
+            view_col_entry:       Style::default().fg(G_FG_L),
+            view_col_head:        Style::default().fg(G_YELLOW_L),
+            view_sec_head:        Style::default().fg(G_GREEN_L),
+            view_head_bg:         Style::default().bg(G_BG1_L),
         }
     }
 
