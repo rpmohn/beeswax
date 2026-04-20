@@ -205,7 +205,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // View Properties dialog can appear over any screen
     if matches!(app.vmgr_state.mode, ViewMgrMode::Props { .. }) {
-        handle_vmgr_props(app, code);
+        handle_vmgr_props(app, code, modifiers);
         return;
     }
 
@@ -1084,7 +1084,7 @@ fn handle_vmgr(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match &app.vmgr_state.mode {
         ViewMgrMode::Rename { .. }        => handle_vmgr_rename(app, code),
         ViewMgrMode::ConfirmDelete { .. } => handle_vmgr_delete(app, code),
-        ViewMgrMode::Props { .. }         => handle_vmgr_props(app, code),
+        ViewMgrMode::Props { .. }         => handle_vmgr_props(app, code, modifiers),
         ViewMgrMode::Normal               => handle_vmgr_normal(app, code, modifiers),
     }
 }
@@ -1148,7 +1148,19 @@ fn handle_vmgr_delete(app: &mut App, code: KeyCode) {
     }
 }
 
-fn handle_vmgr_props(app: &mut App, code: KeyCode) {
+fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Ctrl+Up/Down: reorder sections when Sections field is active.
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Up                          => { app.vmgr_props_sec_move_up();   return; }
+            KeyCode::Down                        => { app.vmgr_props_sec_move_down(); return; }
+            // CSI-u: Ctrl+Up/Down encoded as Ctrl+U/D
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_props_sec_move_up();   return; }
+            KeyCode::Char('d') | KeyCode::Char('D') => { app.vmgr_props_sec_move_down(); return; }
+            _ => {}
+        }
+    }
+
     // Section add picker (F3 on Sections field).
     let has_sec_add_picker = matches!(
         app.vmgr_state.mode,

@@ -6855,6 +6855,44 @@ impl App {
         }
     }
 
+    pub fn vmgr_props_sec_move_up(&mut self) {
+        let v_idx = self.vmgr_state.cursor;
+        let voi   = self.view_order_idx;
+        let sec_cursor = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { sec_cursor, active_field: ViewPropsField::Sections, .. } => *sec_cursor,
+            _ => return,
+        };
+        if sec_cursor == 0 { return; }
+        let sections = if v_idx == voi { &mut self.view.sections }
+                       else if let Some(v) = self.inactive_views.get_mut(Self::vmgr_inact_idx(v_idx, voi)) { &mut v.sections }
+                       else { return };
+        sections.swap(sec_cursor, sec_cursor - 1);
+        if let ViewMgrMode::Props { sec_cursor: sc, sec_scroll, .. } = &mut self.vmgr_state.mode {
+            *sc -= 1;
+            if *sc < *sec_scroll { *sec_scroll = *sc; }
+        }
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+
+    pub fn vmgr_props_sec_move_down(&mut self) {
+        let v_idx = self.vmgr_state.cursor;
+        let voi   = self.view_order_idx;
+        let sec_cursor = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { sec_cursor, active_field: ViewPropsField::Sections, .. } => *sec_cursor,
+            _ => return,
+        };
+        let sections = if v_idx == voi { &mut self.view.sections }
+                       else if let Some(v) = self.inactive_views.get_mut(Self::vmgr_inact_idx(v_idx, voi)) { &mut v.sections }
+                       else { return };
+        if sec_cursor + 1 >= sections.len() { return; }
+        sections.swap(sec_cursor, sec_cursor + 1);
+        if let ViewMgrMode::Props { sec_cursor: sc, sec_scroll, .. } = &mut self.vmgr_state.mode {
+            *sc += 1;
+            if *sc >= *sec_scroll + 6 { *sec_scroll = sc.saturating_sub(5); }
+        }
+        if self.file_path.is_some() { self.dirty = true; }
+    }
+
     // ── Section Add picker (F3 on Sections field) ────────────────────────────
 
     pub fn vmgr_sec_pick_open(&mut self) {
