@@ -278,7 +278,7 @@ impl Theme {
         let bar_bg  = Color::Blue;
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
-            bar_selected:           Style::default().fg(body_fg).bg(body_bg),
+            bar_selected:         Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_COLOR_LINE_BG),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
@@ -303,7 +303,7 @@ impl Theme {
         let sel_bg  = Color::White;
         Theme {
             bar:                  Style::default().fg(sel_fg).bg(sel_bg),
-            bar_selected:           Style::default().fg(body_fg).bg(body_bg),
+            bar_selected:         Style::default().fg(body_fg).bg(body_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_MONO_LINE_BG),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
@@ -333,7 +333,7 @@ impl Theme {
         let sel_bg   = S_BLUE;    // #268bd2
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
-            bar_selected:           Style::default().fg(body_fg).bg(body_bg),
+            bar_selected:         Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE01),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
@@ -363,7 +363,7 @@ impl Theme {
         let sel_bg   = S_BLUE;    // #268bd2
         Theme {
             bar:                  Style::default().fg(bar_fg).bg(bar_bg),
-            bar_selected:           Style::default().fg(body_fg).bg(body_bg),
+            bar_selected:         Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
             item_selected_line:   Style::default().fg(sel_fg).bg(S_BASE2),
             cursor:           Style::default().fg(sel_fg).bg(sel_bg),
@@ -385,7 +385,7 @@ impl Theme {
         // warm cream text on charcoal; bright yellow selection; muted blue section heads
         Theme {
             bar:                  Style::default().fg(G_FG4).bg(G_BG1),
-            bar_selected:           Style::default().fg(G_FG).bg(G_BG),
+            bar_selected:         Style::default().fg(G_BG).bg(G_YELLOW),
             item_selected_field:  Style::default().fg(G_BG).bg(G_YELLOW),
             item_selected_line:   Style::default().fg(G_BG).bg(G_BG2),
             cursor:           Style::default().fg(G_BG).bg(G_YELLOW),
@@ -407,7 +407,7 @@ impl Theme {
         // dark warm text on cream; bright yellow selection; dark blue section heads
         Theme {
             bar:                  Style::default().fg(G_BG4_L).bg(G_BG2_L),
-            bar_selected:           Style::default().fg(G_FG_L).bg(G_BG_L),
+            bar_selected:         Style::default().fg(G_BG_L).bg(G_YELLOW),
             item_selected_field:  Style::default().fg(G_BG_L).bg(G_YELLOW),
             item_selected_line:   Style::default().fg(G_BG_L).bg(G_BG2_L),
             cursor:           Style::default().fg(G_BG_L).bg(G_YELLOW),
@@ -429,7 +429,7 @@ impl Theme {
         // light fg on dark purple-grey bg; purple selection; cyan section heads
         Theme {
             bar:                  Style::default().fg(D_FG).bg(D_CUR),
-            bar_selected:           Style::default().fg(D_FG).bg(D_BG),
+            bar_selected:         Style::default().fg(D_BG).bg(D_PURPLE),
             item_selected_field:  Style::default().fg(D_BG).bg(D_PURPLE),
             item_selected_line:   Style::default().fg(D_BG).bg(D_CUR),
             cursor:           Style::default().fg(D_BG).bg(D_PURPLE),
