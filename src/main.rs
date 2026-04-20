@@ -57,7 +57,14 @@ fn main() -> io::Result<()> {
     }
 
     // ── Pre-TUI startup: load or create ──────────────────────────────────────
-    let mut app = if let Some(ref path) = file_arg {
+    let path = file_arg.unwrap_or_else(|| {
+        eprintln!("beeswax: a filename is required\n");
+        print_usage_to_stderr();
+        std::process::exit(1);
+    });
+
+    let mut app = {
+        let path = &path;
         if path.exists() {
             // File exists: probe it
             match persist::probe(path)? {
@@ -89,9 +96,6 @@ fn main() -> io::Result<()> {
             a.file_path = Some(path.clone());
             a
         }
-    } else {
-        // No file arg → ephemeral (in-memory only)
-        App::new()
     };
 
     // ── Apply config (color scheme, nav mode, etc.) ──────────────────────────
@@ -202,9 +206,8 @@ fn usage_text() -> String {
     format!(
         "beeswax {} — terminal-based personal information manager\n\n\
          USAGE:\n\
-         \x20 beeswax                        ephemeral session (no file)\n\
-         \x20 beeswax [FILE]                 open or create a plain .bwx file\n\
-         \x20 beeswax --encrypt [FILE]       open or create an encrypted .bwx file\n\
+         \x20 beeswax FILE                   open or create a plain .bwx file\n\
+         \x20 beeswax --encrypt FILE         open or create an encrypted .bwx file\n\
          \n\
          OPTIONS:\n\
          \x20 -h, -?, --help                 show this help and exit\n\
