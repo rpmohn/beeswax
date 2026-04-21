@@ -141,19 +141,18 @@ An annotated example with all options is in [`config.example.toml`](config.examp
 
 | Name | Description |
 |------|-------------|
-| `Default` | Terminal default colors with reverse-video highlights |
+| `AgendaMono` | Terminal default colors with reverse-video highlights |
 | `AgendaColor` | Cyan body, blue bars, red selection — classic Lotus Agenda look |
-| `AgendaMono` | Black-and-white high contrast |
+| `GruvboxDark` | Gruvbox dark — warm cream on charcoal, teal selection |
+| `GruvboxLight` | Gruvbox light — dark warm text on cream, teal selection |
 | `SolarizedDark` | Solarized dark palette |
 | `SolarizedLight` | Solarized light palette |
-| `GruvboxDark` | Gruvbox dark — warm cream on charcoal, yellow selection |
-| `GruvboxLight` | Gruvbox light — dark warm text on cream, yellow selection |
 | `Dracula` | Dracula — purple-grey background, purple selection, cyan sections |
 | `Custom` | User-defined hex colors (see below) |
 
 ### Custom color scheme
 
-Set `colorscheme = "Custom"` then define any subset of the following in a `[custom_theme]` section. Omitted fields fall back to the Default (terminal reverse-video) theme. All values are `"#rrggbb"` hex strings.
+Set `colorscheme = "Custom"` then define any subset of the following in a `[custom_theme]` section. Omitted fields fall back to the Agenda Mono (terminal reverse-video) theme. All values are `"#rrggbb"` hex strings.
 
 The easiest way to build a custom theme is to open F10 → Utilities → Customize, navigate to any built-in scheme, then move into the Color Settings area and edit individual fields — beeswax automatically copies the base theme into Custom on the first edit.
 

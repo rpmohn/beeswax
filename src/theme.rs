@@ -45,15 +45,13 @@ const D_CYAN:    Color = Color::Rgb(0x8b, 0xe9, 0xfd);
 
 // ── Built-in line-selection backgrounds ──────────────────────────────────────
 const AGENDA_COLOR_LINE_BG: Color = Color::Rgb(0x99, 0x00, 0x00);  // dark red (toned-down Red)
-const AGENDA_MONO_LINE_BG:  Color = Color::Rgb(0x80, 0x80, 0x80);  // mid-gray (toned-down White)
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ColorScheme {
-    Default,
-    AgendaColor,
     AgendaMono,
+    AgendaColor,
     SolarizedDark,
     SolarizedLight,
     GruvboxDark,
@@ -66,53 +64,49 @@ impl ColorScheme {
     pub fn from_str(s: &str) -> Self {
         match s {
             "AgendaColor"    => ColorScheme::AgendaColor,
-            "AgendaMono"     => ColorScheme::AgendaMono,
             "SolarizedDark"  => ColorScheme::SolarizedDark,
             "SolarizedLight" => ColorScheme::SolarizedLight,
             "GruvboxDark"    => ColorScheme::GruvboxDark,
             "GruvboxLight"   => ColorScheme::GruvboxLight,
             "Dracula"        => ColorScheme::Dracula,
             "Custom"         => ColorScheme::Custom,
-            _                => ColorScheme::Default,
+            _                => ColorScheme::GruvboxDark,
         }
     }
 
     pub fn to_str(self) -> &'static str {
         match self {
-            ColorScheme::Default      => "",
-            ColorScheme::AgendaColor  => "AgendaColor",
-            ColorScheme::AgendaMono   => "AgendaMono",
+            ColorScheme::AgendaMono     => "AgendaMono",
+            ColorScheme::AgendaColor    => "AgendaColor",
             ColorScheme::SolarizedDark  => "SolarizedDark",
             ColorScheme::SolarizedLight => "SolarizedLight",
-            ColorScheme::GruvboxDark  => "GruvboxDark",
-            ColorScheme::GruvboxLight => "GruvboxLight",
-            ColorScheme::Dracula      => "Dracula",
-            ColorScheme::Custom       => "Custom",
+            ColorScheme::GruvboxDark    => "GruvboxDark",
+            ColorScheme::GruvboxLight   => "GruvboxLight",
+            ColorScheme::Dracula        => "Dracula",
+            ColorScheme::Custom         => "Custom",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            ColorScheme::Default      => "Default",
-            ColorScheme::AgendaColor  => "Agenda Color",
-            ColorScheme::AgendaMono   => "Agenda Mono",
+            ColorScheme::AgendaMono     => "Agenda Mono",
+            ColorScheme::AgendaColor    => "Agenda Color",
             ColorScheme::SolarizedDark  => "Solarized Dark",
             ColorScheme::SolarizedLight => "Solarized Light",
-            ColorScheme::GruvboxDark  => "Gruvbox Dark",
-            ColorScheme::GruvboxLight => "Gruvbox Light",
-            ColorScheme::Dracula      => "Dracula",
-            ColorScheme::Custom       => "Custom",
+            ColorScheme::GruvboxDark    => "Gruvbox Dark",
+            ColorScheme::GruvboxLight   => "Gruvbox Light",
+            ColorScheme::Dracula        => "Dracula",
+            ColorScheme::Custom         => "Custom",
         }
     }
 
-    pub const ALL: [ColorScheme; 9] = [
-        ColorScheme::Default,
-        ColorScheme::AgendaColor,
+    pub const ALL: [ColorScheme; 8] = [
         ColorScheme::AgendaMono,
-        ColorScheme::SolarizedDark,
-        ColorScheme::SolarizedLight,
+        ColorScheme::AgendaColor,
         ColorScheme::GruvboxDark,
         ColorScheme::GruvboxLight,
+        ColorScheme::SolarizedDark,
+        ColorScheme::SolarizedLight,
         ColorScheme::Dracula,
         ColorScheme::Custom,
     ];
@@ -162,22 +156,21 @@ pub struct Theme {
 impl Theme {
     pub fn for_scheme(scheme: ColorScheme) -> Self {
         match scheme {
-            ColorScheme::Default      => Self::default_theme(),
-            ColorScheme::AgendaColor  => Self::agenda_color(),
-            ColorScheme::AgendaMono   => Self::agenda_mono(),
+            ColorScheme::AgendaMono     => Self::agenda_mono(),
+            ColorScheme::AgendaColor    => Self::agenda_color(),
             ColorScheme::SolarizedDark  => Self::solarized_dark(),
             ColorScheme::SolarizedLight => Self::solarized_light(),
-            ColorScheme::GruvboxDark  => Self::gruvbox_dark(),
-            ColorScheme::GruvboxLight => Self::gruvbox_light(),
-            ColorScheme::Dracula      => Self::dracula(),
-            ColorScheme::Custom       => Self::default_theme(), // replaced by from_custom()
+            ColorScheme::GruvboxDark    => Self::gruvbox_dark(),
+            ColorScheme::GruvboxLight   => Self::gruvbox_light(),
+            ColorScheme::Dracula        => Self::dracula(),
+            ColorScheme::Custom         => Self::agenda_mono(), // replaced by from_custom()
         }
     }
 
     /// Build a theme from the [custom_theme] config table.
-    /// Any field not supplied falls back to the Default (REVERSED) theme.
+    /// Any field not supplied falls back to the Agenda Mono (REVERSED) theme.
     pub fn from_custom(c: &CustomTheme) -> Self {
-        let def = Self::default_theme();
+        let def = Self::agenda_mono();
 
         // Helper: parse an optional hex color, fall back to `fallback`.
         let color = |opt: &Option<String>, fallback: Option<Color>| -> Option<Color> {
@@ -249,14 +242,14 @@ impl Theme {
                 view_bg, view_item, view_col_entry, view_col_head, view_sec_head, view_head_bg }
     }
 
-    fn default_theme() -> Self {
+    fn agenda_mono() -> Self {
         let rev  = Style::default().add_modifier(Modifier::REVERSED);
         let bold = Style::default().add_modifier(Modifier::BOLD);
         Theme {
             bar:                  rev,
             bar_selected:           Style::default().remove_modifier(Modifier::REVERSED),
             item_selected_field:  rev,
-            item_selected_line:   rev,
+            item_selected_line:   bold,
             cursor:           rev,
             dialog:           Style::default(),
             dialog_border:    Style::default(),
@@ -295,31 +288,6 @@ impl Theme {
             view_col_entry:         Style::default().fg(body_fg),
             view_col_head:    Style::default().fg(Color::Blue),
             view_sec_head:    Style::default().fg(Color::Blue),
-            view_head_bg:     Style::default().bg(body_bg),
-        }
-    }
-
-    fn agenda_mono() -> Self {
-        let body_fg = Color::White;
-        let body_bg = Color::Black;
-        let sel_fg  = Color::Black;
-        let sel_bg  = Color::White;
-        Theme {
-            bar:                  Style::default().fg(sel_fg).bg(sel_bg),
-            bar_selected:         Style::default().fg(body_fg).bg(body_bg),
-            item_selected_field:  Style::default().fg(sel_fg).bg(sel_bg),
-            item_selected_line:   Style::default().fg(sel_fg).bg(AGENDA_MONO_LINE_BG),
-            cursor:           Style::default().fg(sel_fg).bg(sel_bg),
-            dialog:           Style::default().fg(body_fg).bg(body_bg),
-            dialog_border:    Style::default().fg(body_fg).bg(body_bg),
-            dialog_label:     Style::default().fg(body_fg).add_modifier(Modifier::DIM),
-            dialog_label_sel: Style::default().fg(body_fg).add_modifier(Modifier::BOLD),
-            dim:              Style::default().fg(body_fg).bg(body_bg).add_modifier(Modifier::DIM),
-            view_bg:          Style::default().fg(body_fg).bg(body_bg),
-            view_item:        Style::default().fg(body_fg),
-            view_col_entry:         Style::default().fg(body_fg),
-            view_col_head:    Style::default().fg(body_fg),
-            view_sec_head:    Style::default().fg(body_fg),
             view_head_bg:     Style::default().bg(body_bg),
         }
     }

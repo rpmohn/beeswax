@@ -5,16 +5,15 @@
 
 # ── Color scheme ──────────────────────────────────────────────────────────────
 # Available values:
-#   ""              Terminal default (reversed highlight, no colors)
+#   "AgendaMono"    Terminal default colors with reverse-video highlights
 #   "AgendaColor"   Lotus Agenda-inspired (blue/cyan on dark)
-#   "AgendaMono"    Lotus Agenda-inspired (white/grey on dark)
-#   "SolarizedDark"
-#   "SolarizedLight"
 #   "GruvboxDark"
 #   "GruvboxLight"
+#   "SolarizedDark"
+#   "SolarizedLight"
 #   "Dracula"
 #   "Custom"        Use the [custom_theme] section below
-colorscheme = "AgendaColor"
+colorscheme = "GruvboxDark"
 
 # ── Navigation mode ───────────────────────────────────────────────────────────
 # Available values:
