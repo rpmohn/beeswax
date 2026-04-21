@@ -325,10 +325,14 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('f') | KeyCode::Char('F') => {
-                app.cursor_pgdn(app.body_height.get().max(1));
+                if app.nav_mode == NavMode::Vi {
+                    app.cursor_pgdn(app.body_height.get().max(1));
+                } else {
+                    app.search_open();
+                }
                 return;
             }
-            KeyCode::Char('b') | KeyCode::Char('B') => {
+            KeyCode::Char('b') | KeyCode::Char('B') if app.nav_mode == NavMode::Vi => {
                 app.cursor_pgup(app.body_height.get().max(1));
                 return;
             }
@@ -357,7 +361,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Left  | KeyCode::BackTab => app.cursor_col_left(),
         KeyCode::Right | KeyCode::Tab    => app.cursor_col_right(),
         KeyCode::Enter  => app.cursor_down(),
-        KeyCode::Char('/') => app.search_open(),
+        KeyCode::Char('/') if app.nav_mode == NavMode::Vi => app.search_open(),
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2)   => app.begin_edit(),
         KeyCode::F(4)   => app.item_mark_done(),

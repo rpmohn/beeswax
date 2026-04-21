@@ -61,12 +61,10 @@ When opening an encrypted file beeswax prompts for the password before entering 
 |-----|--------|
 | ↑ / ↓ | Move up / down |
 | ← / → or Tab / Shift+Tab | Move left / right across columns |
-| Ctrl+F | Page down |
-| Ctrl+B | Page up |
+| Ctrl+F | Open search bar |
 | Home | Move to current section head (or previous section head if already there) |
 | End | Move to last item in current section (or next section if already there) |
 | Enter | Move down |
-| / | Open search bar |
 | F2 | Edit item text or cell value |
 | F3 | Assign categories (main column) / pick value (data column) |
 | F4 | Mark item done |
@@ -109,6 +107,9 @@ Set `nav_mode = "vi"` in `config.toml` (or via F10 → Utilities → Customize) 
 | gg | First section head of the first section |
 | G | Last item of the last section |
 | zz | Re-centre scroll so cursor is in the middle of the screen |
+| Ctrl+F | Page down |
+| Ctrl+B | Page up |
+| / | Open search bar |
 | i | Edit current item / cell |
 | o | New item below cursor |
 | O | New item above cursor |
