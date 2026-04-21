@@ -55,7 +55,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // Password-entry dialog takes priority
     if matches!(app.save_state, SaveState::PasswordEntry { .. }) {
-        handle_password_entry(app, code);
+        handle_password_entry(app, code, modifiers);
         return;
     }
 
@@ -73,7 +73,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // Section Properties dialog (and sort sub-dialogs) take priority
     if matches!(app.sec_mode, SectionMode::Props { .. }) {
-        handle_sec_props(app, code);
+        handle_sec_props(app, code, modifiers);
         return;
     }
 
@@ -103,7 +103,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // SetTime modal takes priority
     if matches!(app.col_mode, ColMode::SetTime { .. }) {
-        handle_col_set_time(app, code);
+        handle_col_set_time(app, code, modifiers);
         return;
     }
 
@@ -115,12 +115,24 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // Item search bar takes priority when active
     if app.item_search.is_some() {
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            match code {
+                KeyCode::Char('u') | KeyCode::Char('U') => { app.search_ctrl_u(); return; }
+                KeyCode::Char('k') | KeyCode::Char('K') => { app.search_ctrl_k(); return; }
+                KeyCode::Char('y') | KeyCode::Char('Y') => { app.search_ctrl_y(); return; }
+                KeyCode::Char('a') | KeyCode::Char('A') => { app.search_ctrl_a(); return; }
+                KeyCode::Char('e') | KeyCode::Char('E') => { app.search_ctrl_e(); return; }
+                _ => {}
+            }
+        }
         match code {
             KeyCode::Enter     => app.search_confirm(),
             KeyCode::Esc       => app.search_cancel(),
             KeyCode::Backspace => app.search_backspace(),
             KeyCode::Left      => app.search_cursor_left(),
             KeyCode::Right     => app.search_cursor_right(),
+            KeyCode::Home      => app.search_ctrl_a(),
+            KeyCode::End       => app.search_ctrl_e(),
             KeyCode::Char(ch)  => app.search_char(ch),
             _ => {}
         }
@@ -129,7 +141,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // Item Properties modal takes priority
     if matches!(app.mode, Mode::ItemProps { .. }) {
-        handle_item_props(app, code);
+        handle_item_props(app, code, modifiers);
         return;
     }
 
@@ -159,7 +171,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // Column Properties modal takes priority
     if matches!(app.col_mode, ColMode::Props { .. }) {
-        handle_col_props(app, code);
+        handle_col_props(app, code, modifiers);
         return;
     }
 
@@ -171,7 +183,7 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // Column form modal takes priority over view input
     if matches!(app.col_mode, ColMode::Form { .. }) {
-        handle_col_form(app, code);
+        handle_col_form(app, code, modifiers);
         return;
     }
 
@@ -183,16 +195,17 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // View Add dialog takes priority
     if matches!(app.view_mode, ViewMode::Add { .. } | ViewMode::AddPick { .. }) {
-        handle_view_add(app, code);
+        handle_view_add(app, code, modifiers);
         return;
     }
 
     // Undo / Redo — Ctrl+Z / Ctrl+Y (universal); Ctrl+R in vi mode
+    // Ctrl+Y is only redo when NOT in an editing field (otherwise it yanks).
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
-            KeyCode::Char('z') => { app.undo(); return; }
-            KeyCode::Char('y') => { app.redo(); return; }
-            KeyCode::Char('r') if app.nav_mode == NavMode::Vi => { app.redo(); return; }
+            KeyCode::Char('z') if !app.is_editing() => { app.undo(); return; }
+            KeyCode::Char('y') if !app.is_editing() => { app.redo(); return; }
+            KeyCode::Char('r') if !app.is_editing() && app.nav_mode == NavMode::Vi => { app.redo(); return; }
             _ => {}
         }
     }
@@ -222,8 +235,8 @@ pub fn handle_event(app: &mut App, event: Event) {
             let in_create  = matches!(app.mode, Mode::Create { .. });
             let in_edit    = matches!(app.mode, Mode::Edit   { .. });
             if      in_normal { handle_view_normal(app, code, modifiers) }
-            else if in_create { handle_view_input(app, code) }
-            else if in_edit   { handle_view_input(app, code) }
+            else if in_create { handle_view_input(app, code, modifiers) }
+            else if in_edit   { handle_view_input(app, code, modifiers) }
         }
         AppScreen::CatMgr => {
             let in_warning = matches!(app.cat_state.mode, CatMode::ProtectedWarning { .. });
@@ -238,8 +251,8 @@ pub fn handle_event(app: &mut App, event: Event) {
             else if in_props   { handle_catmgr_props(app, code, modifiers) }
             else if in_move    { handle_catmgr_move(app, code) }
             else if in_normal  { handle_catmgr_normal(app, code, modifiers) }
-            else if in_edit    { handle_catmgr_input(app, code) }
-            else if in_create  { handle_catmgr_input(app, code) }
+            else if in_edit    { handle_catmgr_input(app, code, modifiers) }
+            else if in_create  { handle_catmgr_input(app, code, modifiers) }
         }
         AppScreen::ViewMgr => {} // handled above as priority block
     }
@@ -281,12 +294,22 @@ fn handle_ask_save(app: &mut App, code: KeyCode) {
 
 // ── Password-entry dialog handler ─────────────────────────────────────────────
 
-fn handle_password_entry(app: &mut App, code: KeyCode) {
+fn handle_password_entry(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     // For Disable purpose, skip confirm — treat Enter as confirm directly.
     let is_disable = matches!(
         app.save_state,
         SaveState::PasswordEntry { purpose: PasswordPurpose::Disable, .. }
     );
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.password_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.password_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.password_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.password_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.password_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Esc   => app.password_entry_cancel(),
         KeyCode::Enter => { app.password_entry_confirm(); }
@@ -294,7 +317,8 @@ fn handle_password_entry(app: &mut App, code: KeyCode) {
             if !is_disable { app.password_entry_tab(); }
         }
         KeyCode::Backspace => app.password_entry_backspace(),
-        KeyCode::Char(c)   => app.password_entry_char(c),
+        KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL)
+                         && !modifiers.contains(KeyModifiers::ALT) => app.password_entry_char(c),
         _ => {}
     }
 }
@@ -456,7 +480,17 @@ fn handle_view_normal_vi(app: &mut App, ch: char) {
     }
 }
 
-fn handle_view_input(app: &mut App, code: KeyCode) {
+fn handle_view_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.edit_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.edit_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.edit_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.edit_cursor_home(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.edit_cursor_end(); return; }
+            _ => {}
+        }
+    }
     // For item text col=0 (Edit or Create), Up/Down navigate wrapped lines.
     let is_item_text = matches!(&app.mode,
         Mode::Edit   { col, .. } if *col == 0) ||
@@ -472,7 +506,8 @@ fn handle_view_input(app: &mut App, code: KeyCode) {
         KeyCode::End       => app.edit_cursor_end(),
         KeyCode::Up   if is_item_text => app.edit_cursor_line_up(),
         KeyCode::Down if is_item_text => app.edit_cursor_line_down(),
-        KeyCode::Char(ch)  => app.input_char(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.input_char(ch),
         _ => {}
     }
 }
@@ -603,6 +638,16 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn handle_catmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.cat_props_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.cat_props_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.cat_props_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.cat_props_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.cat_props_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Enter     => app.cat_props_confirm(),
         KeyCode::Esc       => app.cat_props_cancel(),
@@ -614,9 +659,12 @@ fn handle_catmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::BackTab   | KeyCode::Up     => app.cat_props_field_prev(),
         KeyCode::Left      => app.cat_props_cursor_left(),
         KeyCode::Right     => app.cat_props_cursor_right(),
+        KeyCode::Home      => app.cat_props_ctrl_a(),
+        KeyCode::End       => app.cat_props_ctrl_e(),
         // Both Backspace and Delete perform backward deletion (cursor starts at end of text)
         KeyCode::Backspace | KeyCode::Delete => app.cat_props_backspace(),
-        KeyCode::Char(ch)  => app.cat_props_input_char(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.cat_props_input_char(ch),
         _ => {}
     }
 }
@@ -632,7 +680,17 @@ fn handle_menu(app: &mut App, code: KeyCode) {
     }
 }
 
-fn handle_catmgr_input(app: &mut App, code: KeyCode) {
+fn handle_catmgr_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.cat_edit_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.cat_edit_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.cat_edit_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.cat_edit_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.cat_edit_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Enter     => app.cat_confirm(),
         KeyCode::Esc       => app.cat_cancel(),
@@ -640,7 +698,10 @@ fn handle_catmgr_input(app: &mut App, code: KeyCode) {
         KeyCode::Delete    => app.cat_input_delete(),
         KeyCode::Left      => app.cat_edit_cursor_left(),
         KeyCode::Right     => app.cat_edit_cursor_right(),
-        KeyCode::Char(ch)  => app.cat_input_char(ch),
+        KeyCode::Home      => app.cat_edit_ctrl_a(),
+        KeyCode::End       => app.cat_edit_ctrl_e(),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.cat_input_char(ch),
         _ => {}
     }
 }
@@ -664,7 +725,17 @@ fn handle_catmgr_move(app: &mut App, code: KeyCode) {
 
 // ── Column form handler ───────────────────────────────────────────────────────
 
-fn handle_col_form(app: &mut App, code: KeyCode) {
+fn handle_col_form(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.col_form_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.col_form_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.col_form_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.col_form_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.col_form_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Enter     => app.col_form_confirm(),
         KeyCode::Esc       => app.col_form_cancel(),
@@ -672,8 +743,11 @@ fn handle_col_form(app: &mut App, code: KeyCode) {
         KeyCode::Down      => app.col_form_field_next(),
         KeyCode::Left      => app.col_form_cursor_left(),
         KeyCode::Right     => app.col_form_cursor_right(),
+        KeyCode::Home      => app.col_form_ctrl_a(),
+        KeyCode::End       => app.col_form_ctrl_e(),
         KeyCode::Backspace => app.col_form_backspace(),
-        KeyCode::Char(ch)  => app.col_form_input_char(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.col_form_input_char(ch),
         KeyCode::F(3)      => {
             if matches!(&app.col_mode,
                 ColMode::Form { active_field: ColFormField::Head, .. } |
@@ -706,7 +780,17 @@ fn handle_col_choices(app: &mut App, code: KeyCode) {
 
 // ── Column Properties handler ─────────────────────────────────────────────────
 
-fn handle_col_props(app: &mut App, code: KeyCode) {
+fn handle_col_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.col_props_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.col_props_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.col_props_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.col_props_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.col_props_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Enter     => app.col_props_confirm(),
         KeyCode::Esc       => app.col_props_cancel(),
@@ -714,8 +798,11 @@ fn handle_col_props(app: &mut App, code: KeyCode) {
         KeyCode::Down      => app.col_props_field_next(),
         KeyCode::Left      => app.col_props_left(),
         KeyCode::Right     => app.col_props_right(),
+        KeyCode::Home      => app.col_props_ctrl_a(),
+        KeyCode::End       => app.col_props_ctrl_e(),
         KeyCode::Backspace => app.col_props_backspace(),
-        KeyCode::Char(ch)  => app.col_props_input_char(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.col_props_input_char(ch),
         _ => {}
     }
 }
@@ -752,7 +839,7 @@ fn handle_col_quick_add(app: &mut App, code: KeyCode) {
     }
     // While a create/edit buffer is active, route typing to the catmgr input handler.
     if !matches!(app.cat_state.mode, CatMode::Normal) {
-        handle_catmgr_input(app, code);
+        handle_catmgr_input(app, code, KeyModifiers::NONE);
         return;
     }
     // Search mode: search keys here; any other key clears search and falls through.
@@ -835,32 +922,46 @@ fn handle_col_calendar(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 
 // ── SetTime handler ───────────────────────────────────────────────────────────
 
-fn handle_col_set_time(app: &mut App, code: KeyCode) {
+fn handle_col_set_time(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
         KeyCode::Enter     => app.col_set_time_confirm(),
         KeyCode::Esc       => app.col_set_time_cancel(),
         KeyCode::Left      => app.col_set_time_left(),
         KeyCode::Right     => app.col_set_time_right(),
         KeyCode::Backspace => app.col_set_time_backspace(),
-        KeyCode::Char(ch)  => app.col_set_time_input_char(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.col_set_time_input_char(ch),
         _ => {}
     }
 }
 
 // ── Item Properties modal handler ────────────────────────────────────────────
 
-fn handle_item_props(app: &mut App, code: KeyCode) {
+fn handle_item_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     // When in-place text editing is active, route to text-edit sub-handler.
     let editing = matches!(&app.mode, Mode::ItemProps { edit_buf: Some(_), .. });
     if editing {
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            match code {
+                KeyCode::Char('u') | KeyCode::Char('U') => { app.item_props_text_ctrl_u(); return; }
+                KeyCode::Char('k') | KeyCode::Char('K') => { app.item_props_text_ctrl_k(); return; }
+                KeyCode::Char('y') | KeyCode::Char('Y') => { app.item_props_text_ctrl_y(); return; }
+                KeyCode::Char('a') | KeyCode::Char('A') => { app.item_props_text_ctrl_a(); return; }
+                KeyCode::Char('e') | KeyCode::Char('E') => { app.item_props_text_ctrl_e(); return; }
+                _ => {}
+            }
+        }
         match code {
             KeyCode::Enter                  => app.item_props_text_confirm(),
             KeyCode::Esc                    => app.item_props_cancel(),
             KeyCode::Left                   => app.item_props_text_cursor_left(),
             KeyCode::Right                  => app.item_props_text_cursor_right(),
+            KeyCode::Home                   => app.item_props_text_ctrl_a(),
+            KeyCode::End                    => app.item_props_text_ctrl_e(),
             KeyCode::Backspace              => app.item_props_text_backspace(),
             KeyCode::Delete                 => app.item_props_text_delete(),
-            KeyCode::Char(ch)               => app.item_props_text_input_char(ch),
+            KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                              && !modifiers.contains(KeyModifiers::ALT) => app.item_props_text_input_char(ch),
             _ => {}
         }
         return;
@@ -921,7 +1022,7 @@ fn handle_item_confirm_discard(app: &mut App, code: KeyCode) {
 fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     // If a cat inline edit/create is in progress, route text input there.
     if matches!(app.cat_state.mode, CatMode::Edit { .. } | CatMode::Create { .. }) {
-        handle_catmgr_input(app, code);
+        handle_catmgr_input(app, code, modifiers);
         return;
     }
     // If cat props dialog is open, route to its handler.
@@ -1047,7 +1148,7 @@ fn handle_assign_profile(app: &mut App, code: KeyCode) {
 
 // ── View Add dialog ───────────────────────────────────────────────────────────
 
-fn handle_view_add(app: &mut App, code: KeyCode) {
+fn handle_view_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     // Picker sub-mode
     if matches!(app.view_mode, ViewMode::AddPick { .. }) {
         if handle_vi_list(app, code,
@@ -1068,6 +1169,16 @@ fn handle_view_add(app: &mut App, code: KeyCode) {
         return;
     }
     // Main dialog
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.view_add_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.view_add_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.view_add_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.view_add_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.view_add_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Enter                        => app.view_add_confirm(),
         KeyCode::Esc                          => app.view_add_cancel(),
@@ -1075,9 +1186,12 @@ fn handle_view_add(app: &mut App, code: KeyCode) {
         KeyCode::BackTab | KeyCode::Up        => app.view_add_tab(),
         KeyCode::Left                         => app.view_add_cursor_left(),
         KeyCode::Right                        => app.view_add_cursor_right(),
+        KeyCode::Home                         => app.view_add_ctrl_a(),
+        KeyCode::End                          => app.view_add_ctrl_e(),
         KeyCode::Backspace                    => app.view_add_backspace(),
         KeyCode::F(3)                         => app.view_add_open_pick(),
-        KeyCode::Char(ch)                     => app.view_add_char(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.view_add_char(ch),
         _ => {}
     }
 }
@@ -1086,7 +1200,7 @@ fn handle_view_add(app: &mut App, code: KeyCode) {
 
 fn handle_vmgr(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match &app.vmgr_state.mode {
-        ViewMgrMode::Rename { .. }        => handle_vmgr_rename(app, code),
+        ViewMgrMode::Rename { .. }        => handle_vmgr_rename(app, code, modifiers),
         ViewMgrMode::ConfirmDelete { .. } => handle_vmgr_delete(app, code),
         ViewMgrMode::Props { .. }         => handle_vmgr_props(app, code, modifiers),
         ViewMgrMode::Normal               => handle_vmgr_normal(app, code, modifiers),
@@ -1132,14 +1246,27 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     }
 }
 
-fn handle_vmgr_rename(app: &mut App, code: KeyCode) {
+fn handle_vmgr_rename(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_rename_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.vmgr_rename_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.vmgr_rename_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.vmgr_rename_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.vmgr_rename_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Enter     => app.vmgr_rename_confirm(),
         KeyCode::Esc       => app.vmgr_rename_cancel(),
         KeyCode::Left      => app.vmgr_rename_left(),
         KeyCode::Right     => app.vmgr_rename_right(),
+        KeyCode::Home      => app.vmgr_rename_ctrl_a(),
+        KeyCode::End       => app.vmgr_rename_ctrl_e(),
         KeyCode::Backspace => app.vmgr_rename_backspace(),
-        KeyCode::Char(ch)  => app.vmgr_rename_char(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.vmgr_rename_char(ch),
         _ => {}
     }
 }
@@ -1153,15 +1280,28 @@ fn handle_vmgr_delete(app: &mut App, code: KeyCode) {
 }
 
 fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    // Ctrl+Up/Down: reorder sections when Sections field is active.
+    let name_editing = matches!(&app.vmgr_state.mode, ViewMgrMode::Props { name_editing: true, .. });
+    // Ctrl bindings: editing keys when name is active, section-reorder otherwise.
     if modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Up                          => { app.vmgr_props_sec_move_up();   return; }
-            KeyCode::Down                        => { app.vmgr_props_sec_move_down(); return; }
-            // CSI-u: Ctrl+Up/Down encoded as Ctrl+U/D
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_props_sec_move_up();   return; }
-            KeyCode::Char('d') | KeyCode::Char('D') => { app.vmgr_props_sec_move_down(); return; }
-            _ => {}
+        if name_editing {
+            match code {
+                KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_props_name_ctrl_u(); return; }
+                KeyCode::Char('k') | KeyCode::Char('K') => { app.vmgr_props_name_ctrl_k(); return; }
+                KeyCode::Char('y') | KeyCode::Char('Y') => { app.vmgr_props_name_ctrl_y(); return; }
+                KeyCode::Char('a') | KeyCode::Char('A') => { app.vmgr_props_name_ctrl_a(); return; }
+                KeyCode::Char('e') | KeyCode::Char('E') => { app.vmgr_props_name_ctrl_e(); return; }
+                _ => {}
+            }
+        } else {
+            // Ctrl+Up/Down: reorder sections when Sections field is active.
+            match code {
+                KeyCode::Up                                  => { app.vmgr_props_sec_move_up();   return; }
+                KeyCode::Down                                => { app.vmgr_props_sec_move_down(); return; }
+                // CSI-u: Ctrl+Up/Down encoded as Ctrl+U/D
+                KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_props_sec_move_up();   return; }
+                KeyCode::Char('d') | KeyCode::Char('D') => { app.vmgr_props_sec_move_down(); return; }
+                _ => {}
+            }
         }
     }
 
@@ -1248,10 +1388,13 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char(' ') if is_bool                                => app.vmgr_props_toggle(),
         KeyCode::Left      if is_name                                => app.vmgr_props_name_left(),
         KeyCode::Right     if is_name                                => app.vmgr_props_name_right(),
+        KeyCode::Home      if is_name                                => app.vmgr_props_name_ctrl_a(),
+        KeyCode::End       if is_name                                => app.vmgr_props_name_ctrl_e(),
         KeyCode::Left                                                => app.vmgr_props_field_left(),
         KeyCode::Right                                               => app.vmgr_props_field_right(),
         KeyCode::Backspace if is_name                                => app.vmgr_props_name_backspace(),
-        KeyCode::Char(ch)  if is_name                                => app.vmgr_props_name_char(ch),
+        KeyCode::Char(ch)  if is_name && !modifiers.contains(KeyModifiers::CONTROL)
+                           && !modifiers.contains(KeyModifiers::ALT) => app.vmgr_props_name_char(ch),
         _ => {}
     }
 }
@@ -1305,7 +1448,7 @@ fn handle_vmgr_sort_picker(app: &mut App, code: KeyCode) {
 
 // ── Section Properties handlers ───────────────────────────────────────────────
 
-fn handle_sec_props(app: &mut App, code: KeyCode) {
+fn handle_sec_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     // Filter picker is outermost (it has no sub-layer).
     let has_filter = matches!(
         app.sec_mode,
@@ -1324,10 +1467,10 @@ fn handle_sec_props(app: &mut App, code: KeyCode) {
     );
     if has_picker { handle_sec_sort_picker(app, code); return; }
     if has_sort   { handle_sec_sort_dialog(app, code); return; }
-    handle_sec_props_normal(app, code);
+    handle_sec_props_normal(app, code, modifiers);
 }
 
-fn handle_sec_props_normal(app: &mut App, code: KeyCode) {
+fn handle_sec_props_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     let is_head = matches!(
         app.sec_mode,
         SectionMode::Props { active_field: SecPropsField::Head, .. }
@@ -1340,6 +1483,16 @@ fn handle_sec_props_normal(app: &mut App, code: KeyCode) {
         app.sec_mode,
         SectionMode::Props { active_field: SecPropsField::Filter, .. }
     );
+    if is_head && modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.sec_props_head_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.sec_props_head_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.sec_props_head_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.sec_props_head_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.sec_props_head_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Enter => app.sec_props_confirm(),
         KeyCode::Esc   => app.sec_props_cancel(),
@@ -1351,8 +1504,11 @@ fn handle_sec_props_normal(app: &mut App, code: KeyCode) {
         KeyCode::F(3) if is_filter    => app.sec_open_filter_picker(),
         KeyCode::Left  if is_head     => app.sec_props_head_left(),
         KeyCode::Right if is_head     => app.sec_props_head_right(),
+        KeyCode::Home  if is_head     => app.sec_props_head_ctrl_a(),
+        KeyCode::End   if is_head     => app.sec_props_head_ctrl_e(),
         KeyCode::Backspace if is_head => app.sec_props_head_backspace(),
-        KeyCode::Char(ch) if is_head  => app.sec_props_head_char(ch),
+        KeyCode::Char(ch) if is_head && !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.sec_props_head_char(ch),
         _ => {}
     }
 }
@@ -1407,7 +1563,7 @@ fn handle_sec_sort_picker(app: &mut App, code: KeyCode) {
 
 // ── Utilities Customize handlers ──────────────────────────────────────────────
 
-fn handle_customize(app: &mut App, code: KeyCode, _modifiers: KeyModifiers) {
+fn handle_customize(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     let sub = app.customize_state.as_ref().map(|s| {
         match &s.sub_mode {
             CustomizeSubMode::Normal    => 0u8,
@@ -1419,7 +1575,7 @@ fn handle_customize(app: &mut App, code: KeyCode, _modifiers: KeyModifiers) {
     match sub {
         Some(1) => handle_customize_picker(app, code),
         Some(2) => handle_customize_picker(app, code),
-        Some(3) => handle_customize_hex(app, code),
+        Some(3) => handle_customize_hex(app, code, modifiers),
         _       => handle_customize_normal(app, code),
     }
 }
@@ -1517,14 +1673,27 @@ fn handle_customize_picker(app: &mut App, code: KeyCode) {
     }
 }
 
-fn handle_customize_hex(app: &mut App, code: KeyCode) {
+fn handle_customize_hex(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.customize_hex_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.customize_hex_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.customize_hex_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.customize_hex_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.customize_hex_ctrl_e(); return; }
+            _ => {}
+        }
+    }
     match code {
         KeyCode::Enter     => app.customize_hex_confirm(),
         KeyCode::Esc       => app.customize_hex_cancel(),
         KeyCode::Left      => app.customize_hex_left(),
         KeyCode::Right     => app.customize_hex_right(),
+        KeyCode::Home      => app.customize_hex_ctrl_a(),
+        KeyCode::End       => app.customize_hex_ctrl_e(),
         KeyCode::Backspace => app.customize_hex_backspace(),
-        KeyCode::Char(ch)  => app.customize_hex_char(ch),
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
+                          && !modifiers.contains(KeyModifiers::ALT) => app.customize_hex_char(ch),
         _ => {}
     }
 }

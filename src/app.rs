@@ -611,12 +611,36 @@ pub struct App {
     redo_stack: Vec<Snapshot>,
     // Utilities Customize dialog (None = closed)
     pub customize_state: Option<CustomizeState>,
+    // Kill buffer (Ctrl+U / Ctrl+K → Ctrl+Y yank; readline-style)
+    pub kill_buffer: String,
 }
 
 // ── Byte-offset helper ────────────────────────────────────────────────────────
 
 fn char_to_byte(s: &str, n: usize) -> usize {
     s.char_indices().nth(n).map(|(b, _)| b).unwrap_or(s.len())
+}
+
+// ── Kill-buffer pure helpers ──────────────────────────────────────────────────
+
+/// Kill text from start to cursor. Returns (new_buf, killed_text, new_cursor=0).
+fn kb_kill_to_start(buf: &str, cursor: usize) -> (String, String, usize) {
+    let bp = char_to_byte(buf, cursor);
+    (buf[bp..].to_string(), buf[..bp].to_string(), 0)
+}
+
+/// Kill text from cursor to end. Returns (new_buf, killed_text, new_cursor=cursor).
+fn kb_kill_to_end(buf: &str, cursor: usize) -> (String, String, usize) {
+    let bp = char_to_byte(buf, cursor);
+    (buf[..bp].to_string(), buf[bp..].to_string(), cursor)
+}
+
+/// Yank kill buffer at cursor. Returns (new_buf, new_cursor).
+fn kb_yank(buf: &str, cursor: usize, kill: &str) -> (String, usize) {
+    let bp = char_to_byte(buf, cursor);
+    let new_buf = format!("{}{}{}", &buf[..bp], kill, &buf[bp..]);
+    let new_cursor = cursor + kill.chars().count();
+    (new_buf, new_cursor)
 }
 
 // ── Word-wrap helpers (for item text cursor navigation) ───────────────────────
@@ -1836,6 +1860,7 @@ impl App {
             undo_stack:      Vec::new(),
             redo_stack:      Vec::new(),
             customize_state: None,
+            kill_buffer:     String::new(),
         }
     }
 
@@ -1889,6 +1914,7 @@ impl App {
             undo_stack:      Vec::new(),
             redo_stack:      Vec::new(),
             customize_state: None,
+            kill_buffer:     String::new(),
         }
     }
 
@@ -7607,6 +7633,698 @@ impl App {
         } else {
             crate::theme::Theme::for_scheme(scheme)
         };
+    }
+
+    // ── Kill buffer / readline-style editing ──────────────────────────────────
+
+    /// True when any text-editing field is active (Ctrl+Y should yank, not redo).
+    pub fn is_editing(&self) -> bool {
+        matches!(&self.mode,
+            Mode::Edit { .. } | Mode::Create { .. } |
+            Mode::ItemProps { edit_buf: Some(_), .. })
+        || matches!(&self.cat_state.mode,
+            CatMode::Edit { .. } | CatMode::Create { .. } | CatMode::Props { .. })
+        || matches!(&self.vmgr_state.mode,
+            ViewMgrMode::Rename { .. } |
+            ViewMgrMode::Props { name_editing: true, .. })
+        || matches!(&self.col_mode, ColMode::Form { .. } | ColMode::Props { .. })
+        || matches!(&self.sec_mode,
+            SectionMode::Props { active_field: SecPropsField::Head, .. })
+        || self.customize_state.as_ref()
+               .map_or(false, |s| matches!(&s.sub_mode, CustomizeSubMode::EditHex { .. }))
+        || matches!(&self.view_mode, ViewMode::Add { .. })
+        || matches!(&self.save_state, SaveState::PasswordEntry { .. })
+        || self.item_search.is_some()
+    }
+
+    // ── Mode::Edit / Mode::Create (view item text & column values) ────────────
+
+    pub fn edit_ctrl_u(&mut self) {
+        let (new_buf, killed, new_cur) = match &self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } =>
+                kb_kill_to_start(buffer, *cursor),
+            _ => return,
+        };
+        self.kill_buffer = killed;
+        match &mut self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } => {
+                *buffer = new_buf; *cursor = new_cur;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn edit_ctrl_k(&mut self) {
+        let (new_buf, killed, new_cur) = match &self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } =>
+                kb_kill_to_end(buffer, *cursor),
+            _ => return,
+        };
+        self.kill_buffer = killed;
+        match &mut self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } => {
+                *buffer = new_buf; *cursor = new_cur;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn edit_ctrl_y(&mut self) {
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = match &self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } =>
+                kb_yank(buffer, *cursor, &kill),
+            _ => return,
+        };
+        match &mut self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } => {
+                *buffer = new_buf; *cursor = new_cur;
+            }
+            _ => {}
+        }
+    }
+
+    // ── Mode::ItemProps text editing ──────────────────────────────────────────
+
+    pub fn item_props_text_ctrl_u(&mut self) {
+        let (new_buf, killed, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &self.mode {
+            kb_kill_to_start(buf, *cur)
+        } else { return };
+        self.kill_buffer = killed;
+        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+            *buf = new_buf; *cur = new_cur;
+        }
+    }
+
+    pub fn item_props_text_ctrl_k(&mut self) {
+        let (new_buf, killed, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &self.mode {
+            kb_kill_to_end(buf, *cur)
+        } else { return };
+        self.kill_buffer = killed;
+        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+            *buf = new_buf; *cur = new_cur;
+        }
+    }
+
+    pub fn item_props_text_ctrl_y(&mut self) {
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &self.mode {
+            kb_yank(buf, *cur, &kill)
+        } else { return };
+        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+            *buf = new_buf; *cur = new_cur;
+        }
+    }
+
+    pub fn item_props_text_ctrl_a(&mut self) {
+        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode { *cur = 0; }
+    }
+
+    pub fn item_props_text_ctrl_e(&mut self) {
+        let len = if let Mode::ItemProps { edit_buf: Some((buf, _)), .. } = &self.mode {
+            buf.chars().count()
+        } else { return };
+        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode { *cur = len; }
+    }
+
+    // ── CatMode::Edit / CatMode::Create ──────────────────────────────────────
+
+    pub fn cat_edit_ctrl_u(&mut self) {
+        let (new_buf, killed, new_cur) = match &self.cat_state.mode {
+            CatMode::Edit { buffer, cursor } | CatMode::Create { buffer, cursor, .. } =>
+                kb_kill_to_start(buffer, *cursor),
+            _ => return,
+        };
+        self.kill_buffer = killed;
+        match &mut self.cat_state.mode {
+            CatMode::Edit { buffer, cursor } | CatMode::Create { buffer, cursor, .. } => {
+                *buffer = new_buf; *cursor = new_cur;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn cat_edit_ctrl_k(&mut self) {
+        let (new_buf, killed, new_cur) = match &self.cat_state.mode {
+            CatMode::Edit { buffer, cursor } | CatMode::Create { buffer, cursor, .. } =>
+                kb_kill_to_end(buffer, *cursor),
+            _ => return,
+        };
+        self.kill_buffer = killed;
+        match &mut self.cat_state.mode {
+            CatMode::Edit { buffer, cursor } | CatMode::Create { buffer, cursor, .. } => {
+                *buffer = new_buf; *cursor = new_cur;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn cat_edit_ctrl_y(&mut self) {
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = match &self.cat_state.mode {
+            CatMode::Edit { buffer, cursor } | CatMode::Create { buffer, cursor, .. } =>
+                kb_yank(buffer, *cursor, &kill),
+            _ => return,
+        };
+        match &mut self.cat_state.mode {
+            CatMode::Edit { buffer, cursor } | CatMode::Create { buffer, cursor, .. } => {
+                *buffer = new_buf; *cursor = new_cur;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn cat_edit_ctrl_a(&mut self) {
+        match &mut self.cat_state.mode {
+            CatMode::Edit { cursor, .. } | CatMode::Create { cursor, .. } => *cursor = 0,
+            _ => {}
+        }
+    }
+
+    pub fn cat_edit_ctrl_e(&mut self) {
+        let len = match &self.cat_state.mode {
+            CatMode::Edit { buffer, .. } | CatMode::Create { buffer, .. } => buffer.chars().count(),
+            _ => return,
+        };
+        match &mut self.cat_state.mode {
+            CatMode::Edit { cursor, .. } | CatMode::Create { cursor, .. } => *cursor = len,
+            _ => {}
+        }
+    }
+
+    // ── CatMode::Props (active text field) ────────────────────────────────────
+
+    /// Extract the active text field (buf, cursor) from CatMode::Props.
+    fn cat_props_active_buf_cur(&self) -> Option<(&str, usize)> {
+        if let CatMode::Props { name_buf, name_cur, short_name_buf, short_name_cur,
+            also_match_buf, also_match_cur, note_file_buf, note_file_cur, active_field, .. }
+            = &self.cat_state.mode
+        {
+            Some(match active_field {
+                CatPropsField::Name       => (name_buf.as_str(), *name_cur),
+                CatPropsField::ShortName  => (short_name_buf.as_str(), *short_name_cur),
+                CatPropsField::AlsoMatch  => (also_match_buf.as_str(), *also_match_cur),
+                CatPropsField::NoteFile   => (note_file_buf.as_str(), *note_file_cur),
+                _ => return None,
+            })
+        } else { None }
+    }
+
+    fn cat_props_set_active_buf_cur(&mut self, new_buf: String, new_cur: usize) {
+        if let CatMode::Props { name_buf, name_cur, short_name_buf, short_name_cur,
+            also_match_buf, also_match_cur, note_file_buf, note_file_cur, active_field, .. }
+            = &mut self.cat_state.mode
+        {
+            match active_field {
+                CatPropsField::Name      => { *name_buf = new_buf; *name_cur = new_cur; }
+                CatPropsField::ShortName => { *short_name_buf = new_buf; *short_name_cur = new_cur; }
+                CatPropsField::AlsoMatch => { *also_match_buf = new_buf; *also_match_cur = new_cur; }
+                CatPropsField::NoteFile  => { *note_file_buf = new_buf; *note_file_cur = new_cur; }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn cat_props_ctrl_u(&mut self) {
+        let Some((buf, cur)) = self.cat_props_active_buf_cur() else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_start(buf, cur);
+        self.kill_buffer = killed;
+        self.cat_props_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn cat_props_ctrl_k(&mut self) {
+        let Some((buf, cur)) = self.cat_props_active_buf_cur() else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_end(buf, cur);
+        self.kill_buffer = killed;
+        self.cat_props_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn cat_props_ctrl_y(&mut self) {
+        let Some((buf, cur)) = self.cat_props_active_buf_cur() else { return };
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = kb_yank(buf, cur, &kill);
+        self.cat_props_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn cat_props_ctrl_a(&mut self) {
+        let Some((_, _)) = self.cat_props_active_buf_cur() else { return };
+        self.cat_props_set_active_buf_cur_only_cur(0);
+    }
+
+    pub fn cat_props_ctrl_e(&mut self) {
+        let Some((buf, _)) = self.cat_props_active_buf_cur() else { return };
+        let len = buf.chars().count();
+        self.cat_props_set_active_buf_cur_only_cur(len);
+    }
+
+    fn cat_props_set_active_buf_cur_only_cur(&mut self, new_cur: usize) {
+        if let CatMode::Props { name_cur, short_name_cur, also_match_cur, note_file_cur, active_field, .. }
+            = &mut self.cat_state.mode
+        {
+            match active_field {
+                CatPropsField::Name      => *name_cur = new_cur,
+                CatPropsField::ShortName => *short_name_cur = new_cur,
+                CatPropsField::AlsoMatch => *also_match_cur = new_cur,
+                CatPropsField::NoteFile  => *note_file_cur = new_cur,
+                _ => {}
+            }
+        }
+    }
+
+    // ── ViewMgrMode::Rename ───────────────────────────────────────────────────
+
+    pub fn vmgr_rename_ctrl_u(&mut self) {
+        let (new_buf, killed, new_cur) = if let ViewMgrMode::Rename { buffer, cursor } = &self.vmgr_state.mode {
+            kb_kill_to_start(buffer, *cursor)
+        } else { return };
+        self.kill_buffer = killed;
+        if let ViewMgrMode::Rename { buffer, cursor } = &mut self.vmgr_state.mode {
+            *buffer = new_buf; *cursor = new_cur;
+        }
+    }
+
+    pub fn vmgr_rename_ctrl_k(&mut self) {
+        let (new_buf, killed, new_cur) = if let ViewMgrMode::Rename { buffer, cursor } = &self.vmgr_state.mode {
+            kb_kill_to_end(buffer, *cursor)
+        } else { return };
+        self.kill_buffer = killed;
+        if let ViewMgrMode::Rename { buffer, cursor } = &mut self.vmgr_state.mode {
+            *buffer = new_buf; *cursor = new_cur;
+        }
+    }
+
+    pub fn vmgr_rename_ctrl_y(&mut self) {
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = if let ViewMgrMode::Rename { buffer, cursor } = &self.vmgr_state.mode {
+            kb_yank(buffer, *cursor, &kill)
+        } else { return };
+        if let ViewMgrMode::Rename { buffer, cursor } = &mut self.vmgr_state.mode {
+            *buffer = new_buf; *cursor = new_cur;
+        }
+    }
+
+    pub fn vmgr_rename_ctrl_a(&mut self) {
+        if let ViewMgrMode::Rename { cursor, .. } = &mut self.vmgr_state.mode { *cursor = 0; }
+    }
+
+    pub fn vmgr_rename_ctrl_e(&mut self) {
+        let len = if let ViewMgrMode::Rename { buffer, .. } = &self.vmgr_state.mode {
+            buffer.chars().count()
+        } else { return };
+        if let ViewMgrMode::Rename { cursor, .. } = &mut self.vmgr_state.mode { *cursor = len; }
+    }
+
+    // ── ViewMgrMode::Props name field ─────────────────────────────────────────
+
+    pub fn vmgr_props_name_ctrl_u(&mut self) {
+        let (new_buf, killed, new_cur) = if let ViewMgrMode::Props { name_buf, name_cur, name_editing: true, .. }
+            = &self.vmgr_state.mode { kb_kill_to_start(name_buf, *name_cur) } else { return };
+        self.kill_buffer = killed;
+        if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut self.vmgr_state.mode {
+            *name_buf = new_buf; *name_cur = new_cur;
+        }
+    }
+
+    pub fn vmgr_props_name_ctrl_k(&mut self) {
+        let (new_buf, killed, new_cur) = if let ViewMgrMode::Props { name_buf, name_cur, name_editing: true, .. }
+            = &self.vmgr_state.mode { kb_kill_to_end(name_buf, *name_cur) } else { return };
+        self.kill_buffer = killed;
+        if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut self.vmgr_state.mode {
+            *name_buf = new_buf; *name_cur = new_cur;
+        }
+    }
+
+    pub fn vmgr_props_name_ctrl_y(&mut self) {
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = if let ViewMgrMode::Props { name_buf, name_cur, name_editing: true, .. }
+            = &self.vmgr_state.mode { kb_yank(name_buf, *name_cur, &kill) } else { return };
+        if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut self.vmgr_state.mode {
+            *name_buf = new_buf; *name_cur = new_cur;
+        }
+    }
+
+    pub fn vmgr_props_name_ctrl_a(&mut self) {
+        if let ViewMgrMode::Props { name_cur, name_editing: true, .. } = &mut self.vmgr_state.mode {
+            *name_cur = 0;
+        }
+    }
+
+    pub fn vmgr_props_name_ctrl_e(&mut self) {
+        let len = if let ViewMgrMode::Props { name_buf, name_editing: true, .. } = &self.vmgr_state.mode {
+            name_buf.chars().count()
+        } else { return };
+        if let ViewMgrMode::Props { name_cur, .. } = &mut self.vmgr_state.mode { *name_cur = len; }
+    }
+
+    // ── ColMode::Form (width field) ───────────────────────────────────────────
+
+    pub fn col_form_ctrl_u(&mut self) {
+        let (new_buf, killed, new_cur) = if let ColMode::Form { width_buf, width_cur, active_field: ColFormField::Width, .. }
+            = &self.col_mode { kb_kill_to_start(width_buf, *width_cur) } else { return };
+        self.kill_buffer = killed;
+        if let ColMode::Form { width_buf, width_cur, .. } = &mut self.col_mode {
+            *width_buf = new_buf; *width_cur = new_cur;
+        }
+    }
+
+    pub fn col_form_ctrl_k(&mut self) {
+        let (new_buf, killed, new_cur) = if let ColMode::Form { width_buf, width_cur, active_field: ColFormField::Width, .. }
+            = &self.col_mode { kb_kill_to_end(width_buf, *width_cur) } else { return };
+        self.kill_buffer = killed;
+        if let ColMode::Form { width_buf, width_cur, .. } = &mut self.col_mode {
+            *width_buf = new_buf; *width_cur = new_cur;
+        }
+    }
+
+    pub fn col_form_ctrl_y(&mut self) {
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = if let ColMode::Form { width_buf, width_cur, active_field: ColFormField::Width, .. }
+            = &self.col_mode { kb_yank(width_buf, *width_cur, &kill) } else { return };
+        if let ColMode::Form { width_buf, width_cur, .. } = &mut self.col_mode {
+            *width_buf = new_buf; *width_cur = new_cur;
+        }
+    }
+
+    pub fn col_form_ctrl_a(&mut self) {
+        if let ColMode::Form { width_cur, active_field: ColFormField::Width, .. } = &mut self.col_mode {
+            *width_cur = 0;
+        }
+    }
+
+    pub fn col_form_ctrl_e(&mut self) {
+        let len = if let ColMode::Form { width_buf, active_field: ColFormField::Width, .. } = &self.col_mode {
+            width_buf.chars().count()
+        } else { return };
+        if let ColMode::Form { width_cur, .. } = &mut self.col_mode { *width_cur = len; }
+    }
+
+    // ── ColMode::Props (head and width fields) ────────────────────────────────
+
+    fn col_props_active_buf_cur(&self) -> Option<(&str, usize)> {
+        if let ColMode::Props { head_buf, head_cur, width_buf, width_cur, active_field, .. } = &self.col_mode {
+            Some(match active_field {
+                PropsField::Head  => (head_buf.as_str(), *head_cur),
+                PropsField::Width => (width_buf.as_str(), *width_cur),
+                _ => return None,
+            })
+        } else { None }
+    }
+
+    fn col_props_set_active_buf_cur(&mut self, new_buf: String, new_cur: usize) {
+        if let ColMode::Props { head_buf, head_cur, width_buf, width_cur, active_field, .. } = &mut self.col_mode {
+            match active_field {
+                PropsField::Head  => { *head_buf = new_buf; *head_cur = new_cur; }
+                PropsField::Width => { *width_buf = new_buf; *width_cur = new_cur; }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn col_props_ctrl_u(&mut self) {
+        let Some((buf, cur)) = self.col_props_active_buf_cur() else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_start(buf, cur);
+        self.kill_buffer = killed;
+        self.col_props_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn col_props_ctrl_k(&mut self) {
+        let Some((buf, cur)) = self.col_props_active_buf_cur() else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_end(buf, cur);
+        self.kill_buffer = killed;
+        self.col_props_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn col_props_ctrl_y(&mut self) {
+        let Some((buf, cur)) = self.col_props_active_buf_cur() else { return };
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = kb_yank(buf, cur, &kill);
+        self.col_props_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn col_props_ctrl_a(&mut self) {
+        let Some((_, _)) = self.col_props_active_buf_cur() else { return };
+        self.col_props_set_cur_only(0);
+    }
+
+    pub fn col_props_ctrl_e(&mut self) {
+        let Some((buf, _)) = self.col_props_active_buf_cur() else { return };
+        let len = buf.chars().count();
+        self.col_props_set_cur_only(len);
+    }
+
+    fn col_props_set_cur_only(&mut self, new_cur: usize) {
+        if let ColMode::Props { head_cur, width_cur, active_field, .. } = &mut self.col_mode {
+            match active_field {
+                PropsField::Head  => *head_cur = new_cur,
+                PropsField::Width => *width_cur = new_cur,
+                _ => {}
+            }
+        }
+    }
+
+    // ── SectionMode::Props head field ─────────────────────────────────────────
+
+    pub fn sec_props_head_ctrl_u(&mut self) {
+        let (new_buf, killed, new_cur) = if let SectionMode::Props { head_buf, head_cur,
+            active_field: SecPropsField::Head, .. } = &self.sec_mode
+        { kb_kill_to_start(head_buf, *head_cur) } else { return };
+        self.kill_buffer = killed;
+        if let SectionMode::Props { head_buf, head_cur, .. } = &mut self.sec_mode {
+            *head_buf = new_buf; *head_cur = new_cur;
+        }
+    }
+
+    pub fn sec_props_head_ctrl_k(&mut self) {
+        let (new_buf, killed, new_cur) = if let SectionMode::Props { head_buf, head_cur,
+            active_field: SecPropsField::Head, .. } = &self.sec_mode
+        { kb_kill_to_end(head_buf, *head_cur) } else { return };
+        self.kill_buffer = killed;
+        if let SectionMode::Props { head_buf, head_cur, .. } = &mut self.sec_mode {
+            *head_buf = new_buf; *head_cur = new_cur;
+        }
+    }
+
+    pub fn sec_props_head_ctrl_y(&mut self) {
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = if let SectionMode::Props { head_buf, head_cur,
+            active_field: SecPropsField::Head, .. } = &self.sec_mode
+        { kb_yank(head_buf, *head_cur, &kill) } else { return };
+        if let SectionMode::Props { head_buf, head_cur, .. } = &mut self.sec_mode {
+            *head_buf = new_buf; *head_cur = new_cur;
+        }
+    }
+
+    pub fn sec_props_head_ctrl_a(&mut self) {
+        if let SectionMode::Props { head_cur, active_field: SecPropsField::Head, .. } = &mut self.sec_mode {
+            *head_cur = 0;
+        }
+    }
+
+    pub fn sec_props_head_ctrl_e(&mut self) {
+        let len = if let SectionMode::Props { head_buf, active_field: SecPropsField::Head, .. } = &self.sec_mode {
+            head_buf.chars().count()
+        } else { return };
+        if let SectionMode::Props { head_cur, .. } = &mut self.sec_mode { *head_cur = len; }
+    }
+
+    // ── CustomizeSubMode::EditHex ─────────────────────────────────────────────
+
+    pub fn customize_hex_ctrl_u(&mut self) {
+        let (new_buf, killed, new_cur) = if let Some(CustomizeState {
+            sub_mode: CustomizeSubMode::EditHex { buf, char_cur, .. }, .. }) = &self.customize_state
+        { kb_kill_to_start(buf, *char_cur) } else { return };
+        self.kill_buffer = killed;
+        if let Some(CustomizeState { sub_mode: CustomizeSubMode::EditHex { buf, char_cur, .. }, .. })
+            = &mut self.customize_state { *buf = new_buf; *char_cur = new_cur; }
+    }
+
+    pub fn customize_hex_ctrl_k(&mut self) {
+        let (new_buf, killed, new_cur) = if let Some(CustomizeState {
+            sub_mode: CustomizeSubMode::EditHex { buf, char_cur, .. }, .. }) = &self.customize_state
+        { kb_kill_to_end(buf, *char_cur) } else { return };
+        self.kill_buffer = killed;
+        if let Some(CustomizeState { sub_mode: CustomizeSubMode::EditHex { buf, char_cur, .. }, .. })
+            = &mut self.customize_state { *buf = new_buf; *char_cur = new_cur; }
+    }
+
+    pub fn customize_hex_ctrl_y(&mut self) {
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = if let Some(CustomizeState {
+            sub_mode: CustomizeSubMode::EditHex { buf, char_cur, .. }, .. }) = &self.customize_state
+        { kb_yank(buf, *char_cur, &kill) } else { return };
+        if let Some(CustomizeState { sub_mode: CustomizeSubMode::EditHex { buf, char_cur, .. }, .. })
+            = &mut self.customize_state { *buf = new_buf; *char_cur = new_cur; }
+    }
+
+    pub fn customize_hex_ctrl_a(&mut self) {
+        if let Some(CustomizeState { sub_mode: CustomizeSubMode::EditHex { char_cur, .. }, .. })
+            = &mut self.customize_state { *char_cur = 0; }
+    }
+
+    pub fn customize_hex_ctrl_e(&mut self) {
+        let len = if let Some(CustomizeState { sub_mode: CustomizeSubMode::EditHex { buf, .. }, .. })
+            = &self.customize_state { buf.chars().count() } else { return };
+        if let Some(CustomizeState { sub_mode: CustomizeSubMode::EditHex { char_cur, .. }, .. })
+            = &mut self.customize_state { *char_cur = len; }
+    }
+
+    // ── ViewMode::Add ─────────────────────────────────────────────────────────
+
+    fn view_add_active_buf_cur(&self) -> Option<(&str, usize)> {
+        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, active_field, .. } = &self.view_mode {
+            Some(match active_field {
+                ViewAddField::Name    => (name_buf.as_str(), *name_cursor),
+                ViewAddField::Section => (sec_buf.as_str(), *sec_cursor),
+            })
+        } else { None }
+    }
+
+    fn view_add_set_active_buf_cur(&mut self, new_buf: String, new_cur: usize) {
+        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, active_field, .. } = &mut self.view_mode {
+            match active_field {
+                ViewAddField::Name    => { *name_buf = new_buf; *name_cursor = new_cur; }
+                ViewAddField::Section => { *sec_buf = new_buf; *sec_cursor = new_cur; }
+            }
+        }
+    }
+
+    pub fn view_add_ctrl_u(&mut self) {
+        let Some((buf, cur)) = self.view_add_active_buf_cur() else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_start(buf, cur);
+        self.kill_buffer = killed;
+        self.view_add_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn view_add_ctrl_k(&mut self) {
+        let Some((buf, cur)) = self.view_add_active_buf_cur() else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_end(buf, cur);
+        self.kill_buffer = killed;
+        self.view_add_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn view_add_ctrl_y(&mut self) {
+        let Some((buf, cur)) = self.view_add_active_buf_cur() else { return };
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = kb_yank(buf, cur, &kill);
+        self.view_add_set_active_buf_cur(new_buf, new_cur);
+    }
+
+    pub fn view_add_ctrl_a(&mut self) {
+        let Some((_, _)) = self.view_add_active_buf_cur() else { return };
+        self.view_add_set_cur_only(0);
+    }
+
+    pub fn view_add_ctrl_e(&mut self) {
+        let Some((buf, _)) = self.view_add_active_buf_cur() else { return };
+        let len = buf.chars().count();
+        self.view_add_set_cur_only(len);
+    }
+
+    fn view_add_set_cur_only(&mut self, new_cur: usize) {
+        if let ViewMode::Add { name_cursor, sec_cursor, active_field, .. } = &mut self.view_mode {
+            match active_field {
+                ViewAddField::Name    => *name_cursor = new_cur,
+                ViewAddField::Section => *sec_cursor = new_cur,
+            }
+        }
+    }
+
+    // ── SaveState::PasswordEntry ──────────────────────────────────────────────
+
+    fn password_active_buf_cur(&self) -> Option<(&str, usize)> {
+        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &self.save_state {
+            if *confirm_active {
+                Some((confirm_buf.as_str(), confirm_buf.len()))  // confirm field: cursor at end
+            } else {
+                Some((buf.as_str(), *cursor))
+            }
+        } else { None }
+    }
+
+    pub fn password_ctrl_u(&mut self) {
+        let Some((buf, cur)) = self.password_active_buf_cur() else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_start(buf, cur);
+        self.kill_buffer = killed;
+        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
+            if *confirm_active {
+                *confirm_buf = new_buf;
+            } else {
+                *buf = new_buf; *cursor = new_cur;
+            }
+        }
+    }
+
+    pub fn password_ctrl_k(&mut self) {
+        let Some((buf, cur)) = self.password_active_buf_cur() else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_end(buf, cur);
+        self.kill_buffer = killed;
+        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
+            if *confirm_active {
+                *confirm_buf = new_buf;
+            } else {
+                *buf = new_buf; *cursor = new_cur;
+            }
+        }
+    }
+
+    pub fn password_ctrl_y(&mut self) {
+        let Some((buf, cur)) = self.password_active_buf_cur() else { return };
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = kb_yank(buf, cur, &kill);
+        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
+            if *confirm_active {
+                *confirm_buf = new_buf;
+            } else {
+                *buf = new_buf; *cursor = new_cur;
+            }
+        }
+    }
+
+    pub fn password_ctrl_a(&mut self) {
+        if let SaveState::PasswordEntry { cursor, confirm_active: false, .. } = &mut self.save_state {
+            *cursor = 0;
+        }
+        // confirm field has no cursor tracking — no-op
+    }
+
+    pub fn password_ctrl_e(&mut self) {
+        if let SaveState::PasswordEntry { buf, cursor, confirm_active: false, .. } = &mut self.save_state {
+            *cursor = buf.chars().count();
+        }
+        // confirm field has no cursor tracking — no-op
+    }
+
+    // ── item_search ───────────────────────────────────────────────────────────
+
+    pub fn search_ctrl_u(&mut self) {
+        let Some((buf, cur)) = &self.item_search else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_start(buf, *cur);
+        self.kill_buffer = killed;
+        self.item_search = Some((new_buf, new_cur));
+    }
+
+    pub fn search_ctrl_k(&mut self) {
+        let Some((buf, cur)) = &self.item_search else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_end(buf, *cur);
+        self.kill_buffer = killed;
+        self.item_search = Some((new_buf, new_cur));
+    }
+
+    pub fn search_ctrl_y(&mut self) {
+        let Some((buf, cur)) = &self.item_search else { return };
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = kb_yank(buf, *cur, &kill);
+        self.item_search = Some((new_buf, new_cur));
+    }
+
+    pub fn search_ctrl_a(&mut self) {
+        if let Some((_, cur)) = &mut self.item_search { *cur = 0; }
+    }
+
+    pub fn search_ctrl_e(&mut self) {
+        if let Some((buf, cur)) = &mut self.item_search {
+            *cur = buf.chars().count();
+        }
     }
 }
 
