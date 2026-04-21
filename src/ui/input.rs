@@ -506,6 +506,10 @@ fn handle_view_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::End       => app.edit_cursor_end(),
         KeyCode::Up   if is_item_text => app.edit_cursor_line_up(),
         KeyCode::Down if is_item_text => app.edit_cursor_line_down(),
+        // Tab / Shift+Tab: accept edit and move to adjacent column (if any).
+        KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => { app.confirm(); app.cursor_col_left(); }
+        KeyCode::BackTab => { app.confirm(); app.cursor_col_left(); }
+        KeyCode::Tab     => { app.confirm(); app.cursor_col_right(); }
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
                           && !modifiers.contains(KeyModifiers::ALT) => app.input_char(ch),
         _ => {}
