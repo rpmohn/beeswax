@@ -59,7 +59,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let pad = w.saturating_sub(left_w + hint_w);
         let second_line = format!("{}{}{}", left, " ".repeat(pad), hint);
         let title = Paragraph::new(vec![
-            Line::from(Span::raw(title_bar_top(area.width, app.file_path.as_deref()))),
+            Line::from(Span::raw(title_bar_top(area.width, app.file_path.as_deref(), app.dirty))),
             Line::from(Span::raw(second_line)),
         ])
         .style(app.theme.bar);

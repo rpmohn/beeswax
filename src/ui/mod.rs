@@ -9,8 +9,9 @@ pub mod viewmgr;
 
 /// Build the first line of the two-line title bar:
 /// "File: <path>" left, "beeswax <version> " right-aligned.
-pub fn title_bar_top(width: u16, file_path: Option<&std::path::Path>) -> String {
-    let left = format!(" File: {}", file_path.map(|p| p.display().to_string()).unwrap_or_default());
+pub fn title_bar_top(width: u16, file_path: Option<&std::path::Path>, dirty: bool) -> String {
+    let marker = if dirty { "*" } else { "" };
+    let left = format!(" File: {}{}", marker, file_path.map(|p| p.display().to_string()).unwrap_or_default());
     let right = format!("beeswax v{} ", env!("CARGO_PKG_VERSION"));
     let w = width as usize;
     let pad = w.saturating_sub(left.chars().count() + right.chars().count());
