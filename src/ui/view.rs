@@ -62,7 +62,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             format!(" View: {}", app.view.name)
         };
         let title = Paragraph::new(vec![
-            Line::from(Span::raw(title_bar_top(area.width, app.file_path.as_deref(), app.dirty))),
+            title_bar_top(area.width, app.file_path.as_deref(), app.dirty, app.theme.item_selected_field),
             Line::from(Span::raw(second_line)),
         ])
         .style(app.theme.bar);

@@ -201,11 +201,14 @@ pub fn handle_event(app: &mut App, event: Event) {
 
     // Undo / Redo — Ctrl+Z / Ctrl+Y (universal); Ctrl+R in vi mode
     // Ctrl+Y is only redo when NOT in an editing field (otherwise it yanks).
+    // Ctrl+PgDn/PgUp — cycle through views (universal, not in edit fields).
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('z') if !app.is_editing() => { app.undo(); return; }
             KeyCode::Char('y') if !app.is_editing() => { app.redo(); return; }
             KeyCode::Char('r') if !app.is_editing() && app.nav_mode == NavMode::Vi => { app.redo(); return; }
+            KeyCode::PageDown  if !app.is_editing() => { app.cycle_view_next(); return; }
+            KeyCode::PageUp    if !app.is_editing() => { app.cycle_view_prev(); return; }
             _ => {}
         }
     }

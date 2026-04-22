@@ -6532,15 +6532,35 @@ impl App {
     pub fn vmgr_select(&mut self) {
         self.push_undo();
         let idx = self.vmgr_state.cursor;
+        self.switch_to_view_at(idx);
+        self.close_view_mgr();
+    }
+
+    /// Cycle to the next view in display order (wraps around).
+    pub fn cycle_view_next(&mut self) {
+        let count = 1 + self.inactive_views.len();
+        if count <= 1 { return; }
+        self.push_undo();
+        let new_idx = (self.view_order_idx + 1) % count;
+        self.switch_to_view_at(new_idx);
+    }
+
+    /// Cycle to the previous view in display order (wraps around).
+    pub fn cycle_view_prev(&mut self) {
+        let count = 1 + self.inactive_views.len();
+        if count <= 1 { return; }
+        self.push_undo();
+        let new_idx = (self.view_order_idx + count - 1) % count;
+        self.switch_to_view_at(new_idx);
+    }
+
+    fn switch_to_view_at(&mut self, idx: usize) {
         let voi = self.view_order_idx;
         if idx != voi {
-            // Which inactive slot holds the selected view?
             let inact_from = Self::vmgr_inact_idx(idx, voi);
-            let new_view  = self.inactive_views.remove(inact_from);
-            let old_view  = std::mem::replace(&mut self.view, new_view);
-            // Re-insert old active view at the position where active previously lived.
-            // After the remove, if inact_from < voi then voi shifts left by one.
-            let insert_at = if inact_from < voi { voi - 1 } else { voi };
+            let new_view   = self.inactive_views.remove(inact_from);
+            let old_view   = std::mem::replace(&mut self.view, new_view);
+            let insert_at  = if inact_from < voi { voi - 1 } else { voi };
             self.inactive_views.insert(insert_at, old_view);
             self.view_order_idx = idx;
         }
@@ -6549,7 +6569,6 @@ impl App {
         self.mode       = Mode::Normal;
         self.col_mode   = ColMode::Normal;
         self.sec_mode   = SectionMode::Normal;
-        self.close_view_mgr();
     }
 
     /// Map an ordered display index to an `inactive_views` index.

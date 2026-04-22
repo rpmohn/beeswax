@@ -9,13 +9,30 @@ pub mod viewmgr;
 
 /// Build the first line of the two-line title bar:
 /// "File: <path>" left, "beeswax <version> " right-aligned.
-pub fn title_bar_top(width: u16, file_path: Option<&std::path::Path>, dirty: bool) -> String {
-    let marker = if dirty { "*" } else { "" };
-    let left = format!(" File: {}{}", marker, file_path.map(|p| p.display().to_string()).unwrap_or_default());
+/// The dirty marker uses `dirty_style`; the rest inherits the bar style from the Paragraph.
+pub fn title_bar_top(width: u16, file_path: Option<&std::path::Path>, dirty: bool, dirty_style: ratatui::style::Style) -> ratatui::text::Line<'static> {
+    let file_str = file_path.map(|p| p.display().to_string()).unwrap_or_default();
     let right = format!("beeswax v{} ", env!("CARGO_PKG_VERSION"));
     let w = width as usize;
-    let pad = w.saturating_sub(left.chars().count() + right.chars().count());
-    format!("{}{}{}", left, " ".repeat(pad), right)
+
+    if dirty {
+        let prefix = " File: ".to_string();
+        let marker = "*".to_string();
+        let suffix_and_pad = {
+            let total_left = prefix.len() + 1 + file_str.chars().count();
+            let pad = w.saturating_sub(total_left + right.chars().count());
+            format!("{}{}{}", file_str, " ".repeat(pad), right)
+        };
+        ratatui::text::Line::from(vec![
+            ratatui::text::Span::raw(prefix),
+            ratatui::text::Span::styled(marker, dirty_style),
+            ratatui::text::Span::raw(suffix_and_pad),
+        ])
+    } else {
+        let left = format!(" File: {}", file_str);
+        let pad = w.saturating_sub(left.chars().count() + right.chars().count());
+        ratatui::text::Line::from(ratatui::text::Span::raw(format!("{}{}{}", left, " ".repeat(pad), right)))
+    }
 }
 
 /// Split `buffer` at char index `cursor` into (left, highlighted, right).
