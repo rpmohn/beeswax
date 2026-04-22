@@ -588,6 +588,11 @@ pub struct App {
     pub file_path:        Option<PathBuf>,
     pub session_password: Option<String>,
     pub dirty:            bool,
+    /// Undo-stack depth at the time of the last successful save.
+    /// `None` means the file has never been saved (new file) or the save point
+    /// was branched away from (undo past it then new edit). When undo returns
+    /// the stack to this depth, `dirty` is cleared.
+    save_depth:           Option<usize>,
     pub save_state:       SaveState,
     // Misc
     pub quit:        bool,
@@ -1847,6 +1852,7 @@ impl App {
             file_path:        None,
             session_password: None,
             dirty:            false,
+            save_depth:       None,
             save_state:       SaveState::Idle,
             quit:         false,
             next_id:      7,
@@ -1901,6 +1907,7 @@ impl App {
             file_path:        path,
             session_password: password,
             dirty:            false,
+            save_depth:       Some(0),  // undo stack is empty; current state matches disk
             save_state:       SaveState::Idle,
             quit:         false,
             next_id:      data.next_id,
@@ -1934,18 +1941,28 @@ impl App {
         }
     }
 
-    /// Call at the start of every mutation method. Saves current state for undo
-    /// and clears the redo stack.
+    /// Call at the start of every mutation method. Saves current state for undo,
+    /// clears the redo stack, and marks the file dirty.
     fn push_undo(&mut self) {
+        // If the save point was in the redo direction (we had undone past it),
+        // branching now makes it permanently unreachable — invalidate it.
+        if self.save_depth.map_or(false, |d| self.undo_stack.len() < d) {
+            self.save_depth = None;
+        }
         let snap = self.snapshot();
         self.undo_stack.push(snap);
         self.redo_stack.clear();
+        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn undo(&mut self) {
         let Some(snap) = self.undo_stack.pop() else { return };
         self.redo_stack.push(self.snapshot());
         self.apply_snapshot(snap);
+        // apply_snapshot marks dirty=true; override if we're back at the save point.
+        if self.save_depth == Some(self.undo_stack.len()) {
+            self.dirty = false;
+        }
     }
 
     pub fn redo(&mut self) {
@@ -2224,7 +2241,6 @@ impl App {
         self.inactive_views.push(old);
         self.cursor = CursorPos::SectionHead(0);
         self.col_cursor = 0; self.col_mode = ColMode::Normal; self.sec_mode = SectionMode::Normal;
-        if self.file_path.is_some() { self.dirty = true; }
     }
     pub fn view_add_cancel(&mut self) {
         self.view_mode = ViewMode::Normal;
@@ -3299,7 +3315,6 @@ impl App {
             CursorPos::SectionHead(s)
         };
         self.clamp_cursor_to_visible();
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     // ── Item Properties modal ─────────────────────────────────────────────────
@@ -3541,7 +3556,6 @@ impl App {
             self.items[gi].values.insert(done_id, now_datetime_string());
         }
         self.clamp_cursor_to_visible();
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     // ── Section sort ──────────────────────────────────────────────────────────
@@ -3591,7 +3605,6 @@ impl App {
             CursorPos::Item { section, .. }  => *section,
         };
         self.apply_section_sort(sec_idx);
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn item_remove(&mut self) {
@@ -3634,7 +3647,6 @@ impl App {
             CursorPos::SectionHead(s)
         };
         self.clamp_cursor_to_visible();
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn col_begin_move(&mut self) {
@@ -4932,7 +4944,6 @@ impl App {
             let trimmed = head_buf.trim().to_string();
             if !trimmed.is_empty() && sec_idx < self.view.sections.len() {
                 self.view.sections[sec_idx].name = trimmed;
-                if self.file_path.is_some() { self.dirty = true; }
             }
         }
         self.sec_mode = SectionMode::Normal;
@@ -5041,7 +5052,6 @@ impl App {
                 .filter_map(|c| entries.get(&c.id).map(|&op| FilterEntry { cat_id: c.id, op }))
                 .collect();
             self.view.sections[sec_idx].filter = new_filter;
-            if self.file_path.is_some() { self.dirty = true; }
         }
         if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
             *filter_state = FilterState::Closed;
@@ -5123,7 +5133,6 @@ impl App {
                 sec.secondary_na     = secondary_na;
                 sec.secondary_cat_id = secondary_cat_id;
                 sec.secondary_seq    = secondary_seq;
-                if self.file_path.is_some() { self.dirty = true; }
             }
         }
         if let SectionMode::Props { ref mut sort_state, .. } = self.sec_mode {
@@ -6271,7 +6280,10 @@ impl App {
         } else {
             persist::save_plain(&path, &self.categories, &self.items, &self.view, &self.inactive_views, self.view_order_idx, self.next_id)
         };
-        if result.is_ok() { self.dirty = false; }
+        if result.is_ok() {
+            self.dirty = false;
+            self.save_depth = Some(self.undo_stack.len());
+        }
         result
     }
 
@@ -6493,7 +6505,6 @@ impl App {
             self.inactive_views.swap(p - 2, p - 1);
         }
         self.vmgr_state.cursor -= 1;
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn vmgr_move_down(&mut self) {
@@ -6516,7 +6527,6 @@ impl App {
             self.inactive_views.swap(p - 1, p);
         }
         self.vmgr_state.cursor += 1;
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn vmgr_select(&mut self) {
@@ -6540,7 +6550,6 @@ impl App {
         self.col_mode   = ColMode::Normal;
         self.sec_mode   = SectionMode::Normal;
         self.close_view_mgr();
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     /// Map an ordered display index to an `inactive_views` index.
@@ -6616,7 +6625,6 @@ impl App {
             if !name.is_empty() {
                 self.push_undo();
                 self.vmgr_set_view_name_at_cursor(name);
-                if self.file_path.is_some() { self.dirty = true; }
             }
         }
         self.vmgr_state.mode = ViewMgrMode::Normal;
@@ -6848,7 +6856,6 @@ impl App {
             }
             _ => {}
         }
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn vmgr_props_cancel(&mut self) {
@@ -7165,7 +7172,6 @@ impl App {
             sec.secondary_on     = so;   sec.secondary_order  = soor;  sec.secondary_na  = sna;
             sec.secondary_cat_id = scid; sec.secondary_seq    = sseq;
         }
-        if self.file_path.is_some() { self.dirty = true; }
         if let ViewMgrMode::Props { ref mut sort_state, .. } = self.vmgr_state.mode {
             *sort_state = SortState::Closed;
         }
@@ -7331,7 +7337,6 @@ impl App {
             if self.vmgr_state.cursor >= count { self.vmgr_state.cursor = count - 1; }
         }
         self.vmgr_state.mode = ViewMgrMode::Normal;
-        if self.file_path.is_some() { self.dirty = true; }
     }
 
     pub fn vmgr_delete_cancel(&mut self) {

@@ -256,11 +256,6 @@ pub fn handle_event(app: &mut App, event: Event) {
         }
         AppScreen::ViewMgr => {} // handled above as priority block
     }
-    // Mark dirty after any key event that reached the main handlers.
-    // (Over-marks navigation keys, which is acceptable per spec.)
-    if app.file_path.is_some() {
-        app.dirty = true;
-    }
 }
 
 // ── Ask-save dialog handler ───────────────────────────────────────────────────
