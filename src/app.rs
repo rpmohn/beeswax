@@ -1793,6 +1793,7 @@ impl App {
             hide_inherited_items: false, hide_column_heads: false, section_separators: false,
             number_items: false,
             section_sort_method: SectionSortMethod::None, section_sort_order: SortOrder::Ascending,
+            cursor_section: 0, cursor_item: None, cursor_col: 0,
         };
 
         fn date(id: usize, name: &str) -> Category {
@@ -1880,7 +1881,7 @@ impl App {
         let idx = data.current_view.min(all_views.len().saturating_sub(1));
         let view = all_views.remove(idx);
         let inactive_views = all_views;
-        App {
+        let mut app = App {
             screen:     AppScreen::View,
             items:      data.items,
             view,
@@ -1922,7 +1923,9 @@ impl App {
             redo_stack:      Vec::new(),
             customize_state: None,
             kill_buffer:     String::new(),
-        }
+        };
+        app.restore_cursor_from_view();
+        app
     }
 
     // ── Undo / Redo ───────────────────────────────────────────────────────────
@@ -1949,6 +1952,8 @@ impl App {
         if self.save_depth.map_or(false, |d| self.undo_stack.len() < d) {
             self.save_depth = None;
         }
+        // Sync live cursor into the view struct so snapshots capture the correct position.
+        self.sync_cursor_to_view();
         let snap = self.snapshot();
         self.undo_stack.push(snap);
         self.redo_stack.clear();
@@ -2236,7 +2241,8 @@ impl App {
                               hide_column_heads: false, section_separators: false,
                               number_items: false,
                               section_sort_method: SectionSortMethod::None,
-                              section_sort_order: SortOrder::Ascending };
+                              section_sort_order: SortOrder::Ascending,
+                              cursor_section: 0, cursor_item: None, cursor_col: 0 };
         let old = std::mem::replace(&mut self.view, new_view);
         self.inactive_views.push(old);
         self.cursor = CursorPos::SectionHead(0);
@@ -6275,6 +6281,7 @@ impl App {
             Some(p) => p.clone(),
             None    => return Ok(()),
         };
+        self.sync_cursor_to_view();
         let result = if let Some(pw) = &self.session_password.clone() {
             persist::save_encrypted(&path, pw, &self.categories, &self.items, &self.view, &self.inactive_views, self.view_order_idx, self.next_id)
         } else {
@@ -6530,7 +6537,6 @@ impl App {
     }
 
     pub fn vmgr_select(&mut self) {
-        self.push_undo();
         let idx = self.vmgr_state.cursor;
         self.switch_to_view_at(idx);
         self.close_view_mgr();
@@ -6540,7 +6546,6 @@ impl App {
     pub fn cycle_view_next(&mut self) {
         let count = 1 + self.inactive_views.len();
         if count <= 1 { return; }
-        self.push_undo();
         let new_idx = (self.view_order_idx + 1) % count;
         self.switch_to_view_at(new_idx);
     }
@@ -6549,12 +6554,12 @@ impl App {
     pub fn cycle_view_prev(&mut self) {
         let count = 1 + self.inactive_views.len();
         if count <= 1 { return; }
-        self.push_undo();
         let new_idx = (self.view_order_idx + count - 1) % count;
         self.switch_to_view_at(new_idx);
     }
 
     fn switch_to_view_at(&mut self, idx: usize) {
+        self.sync_cursor_to_view();
         let voi = self.view_order_idx;
         if idx != voi {
             let inact_from = Self::vmgr_inact_idx(idx, voi);
@@ -6564,11 +6569,45 @@ impl App {
             self.inactive_views.insert(insert_at, old_view);
             self.view_order_idx = idx;
         }
-        self.cursor     = CursorPos::SectionHead(0);
-        self.col_cursor = 0;
-        self.mode       = Mode::Normal;
-        self.col_mode   = ColMode::Normal;
-        self.sec_mode   = SectionMode::Normal;
+        self.restore_cursor_from_view();
+        self.mode     = Mode::Normal;
+        self.col_mode = ColMode::Normal;
+        self.sec_mode = SectionMode::Normal;
+    }
+
+    /// Write the current cursor position into the active view's saved-cursor fields.
+    /// Does not mark dirty — cursor position is saved opportunistically.
+    fn sync_cursor_to_view(&mut self) {
+        match self.cursor {
+            CursorPos::SectionHead(s) => {
+                self.view.cursor_section = s;
+                self.view.cursor_item    = None;
+            }
+            CursorPos::Item { section, item } => {
+                self.view.cursor_section = section;
+                self.view.cursor_item    = Some(item);
+            }
+        }
+        self.view.cursor_col = self.col_cursor;
+    }
+
+    /// Restore cursor from the active view's saved-cursor fields, clamping to valid bounds.
+    fn restore_cursor_from_view(&mut self) {
+        let n_sections = self.view.sections.len();
+        let sec = self.view.cursor_section.min(n_sections.saturating_sub(1));
+        let saved_item = self.view.cursor_item;
+        self.cursor = match saved_item {
+            None => CursorPos::SectionHead(sec),
+            Some(item) => {
+                let n_vis = visible_item_indices(&self.items, &self.view, sec, &self.categories).len();
+                if n_vis == 0 {
+                    CursorPos::SectionHead(sec)
+                } else {
+                    CursorPos::Item { section: sec, item: item.min(n_vis - 1) }
+                }
+            }
+        };
+        self.col_cursor = self.view.cursor_col;
     }
 
     /// Map an ordered display index to an `inactive_views` index.

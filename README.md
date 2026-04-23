@@ -61,6 +61,8 @@ When opening an encrypted file beeswax prompts for the password before entering 
 |-----|--------|
 | ↑ / ↓ | Move up / down |
 | ← / → or Tab / Shift+Tab | Move left / right across columns |
+| PgUp / PgDn | Scroll up / down 10 rows |
+| Ctrl+PgUp / Ctrl+PgDn | Cycle to previous / next view |
 | Ctrl+F | Open search bar |
 | Home | Move to current section head (or previous section head if already there) |
 | End | Move to last item in current section (or next section if already there) |
@@ -70,12 +72,11 @@ When opening an encrypted file beeswax prompts for the password before entering 
 | F4 | Mark item done |
 | F5 | Open note in `$EDITOR` |
 | F6 | Item / section / column properties |
-| F7 | Mark item |
 | F8 | View Manager |
 | F9 | Category Manager |
 | F10 | Menu |
 | Insert | Create new blank item below cursor |
-| Delete | Remove item from section's category |
+| Delete | Remove item from section's category (on section head: remove section) |
 | Shift+Delete | Discard item from all categories permanently |
 | Ctrl+S | Save file |
 | Ctrl+Z | Undo |
@@ -101,12 +102,15 @@ Set `nav_mode = "vi"` in `config.toml` (or via F10 → Utilities → Customize) 
 | j / k | Down / up |
 | h / l | Column left / right |
 | H | First visible row on screen |
+| M | Middle visible row on screen |
 | L | Last visible row on screen |
 | { | Section head of current section (like Home) |
 | } | Last item of current section (like End) |
 | gg | First section head of the first section |
 | G | Last item of the last section |
 | zz | Re-centre scroll so cursor is in the middle of the screen |
+| z Enter | Scroll so cursor is at the top of the screen |
+| z- | Scroll so cursor is at the bottom of the screen |
 | Ctrl+F | Page down |
 | Ctrl+B | Page up |
 | / | Open search bar |
@@ -114,6 +118,7 @@ Set `nav_mode = "vi"` in `config.toml` (or via F10 → Utilities → Customize) 
 | o | New item below cursor |
 | O | New item above cursor |
 | x | Delete (remove from section category) |
+| u | Undo |
 | r | Redo |
 
 ## Configuration

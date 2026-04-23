@@ -46,4 +46,8 @@ pub struct View {
     // Section ordering
     #[serde(default)] pub section_sort_method: SectionSortMethod,
     #[serde(default)] pub section_sort_order:  SortOrder,
+    // Saved cursor position (restored on view switch)
+    #[serde(default)] pub cursor_section: usize,
+    #[serde(default)] pub cursor_item:    Option<usize>,  // None = SectionHead, Some(i) = Item row
+    #[serde(default)] pub cursor_col:     usize,
 }

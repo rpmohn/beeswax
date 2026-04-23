@@ -69,7 +69,8 @@ fn view_v1_to_view(v: ViewV1) -> View {
            hide_inherited_items: false, hide_column_heads: false, section_separators: false,
            number_items: false,
            section_sort_method: crate::model::SectionSortMethod::None,
-           section_sort_order:  crate::model::SortOrder::Ascending }
+           section_sort_order:  crate::model::SortOrder::Ascending,
+           cursor_section: 0, cursor_item: None, cursor_col: 0 }
 }
 
 fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
@@ -148,6 +149,9 @@ fn clone_view(view: &View) -> View {
         number_items:          view.number_items,
         section_sort_method:   view.section_sort_method,
         section_sort_order:    view.section_sort_order,
+        cursor_section:        view.cursor_section,
+        cursor_item:           view.cursor_item,
+        cursor_col:            view.cursor_col,
     }
 }
 
