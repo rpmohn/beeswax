@@ -111,6 +111,9 @@ pub struct Section {
     pub id:     usize,
     pub name:   String,
     pub cat_id: usize,   // backing category
+    /// True when the section was created automatically by a Subs/All dynamic rule.
+    /// Auto sections are re-synced whenever the category tree changes.
+    #[serde(default)] pub auto: bool,
     #[serde(default)] pub sort_new:          SortNewItems,
     #[serde(default)] pub primary_on:        SortOn,
     #[serde(default)] pub primary_order:     SortOrder,

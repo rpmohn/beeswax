@@ -70,7 +70,8 @@ fn view_v1_to_view(v: ViewV1) -> View {
            number_items: false,
            section_sort_method: crate::model::SectionSortMethod::None,
            section_sort_order:  crate::model::SortOrder::Ascending,
-           cursor_section: 0, cursor_item: None, cursor_col: 0 }
+           cursor_section: 0, cursor_item: None, cursor_col: 0,
+           sec_subs: vec![], sec_all: vec![] }
 }
 
 fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
@@ -124,6 +125,7 @@ fn clone_view(view: &View) -> View {
             id:               s.id,
             name:             s.name.clone(),
             cat_id:           s.cat_id,
+            auto:             s.auto,
             sort_new:         s.sort_new,
             primary_on:       s.primary_on,   primary_order:   s.primary_order,  primary_na:   s.primary_na,
             primary_cat_id:   s.primary_cat_id, primary_seq:   s.primary_seq,
@@ -152,6 +154,8 @@ fn clone_view(view: &View) -> View {
         cursor_section:        view.cursor_section,
         cursor_item:           view.cursor_item,
         cursor_col:            view.cursor_col,
+        sec_subs:              view.sec_subs.clone(),
+        sec_all:               view.sec_all.clone(),
     }
 }
 

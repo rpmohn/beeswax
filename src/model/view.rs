@@ -50,4 +50,7 @@ pub struct View {
     #[serde(default)] pub cursor_section: usize,
     #[serde(default)] pub cursor_item:    Option<usize>,  // None = SectionHead, Some(i) = Item row
     #[serde(default)] pub cursor_col:     usize,
+    // Dynamic section rules: categories whose descendants (or selves) auto-populate sections
+    #[serde(default)] pub sec_subs: Vec<usize>,  // cat ID → all child cats become sections (not self)
+    #[serde(default)] pub sec_all:  Vec<usize>,  // cat ID → self + all child cats become sections
 }

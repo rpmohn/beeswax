@@ -937,6 +937,53 @@ fn flatten_inner(cats: &[Category], depth: usize, prefix: &[usize], out: &mut Ve
     }
 }
 
+/// Find a category by ID anywhere in the (nested) tree.
+fn find_cat_in_tree(cats: &[Category], id: usize) -> Option<&Category> {
+    for cat in cats {
+        if cat.id == id { return Some(cat); }
+        if let Some(found) = find_cat_in_tree(&cat.children, id) { return Some(found); }
+    }
+    None
+}
+
+/// Recursively collect all descendant IDs (not the category itself).
+fn collect_descendant_ids(cat: &Category, ids: &mut std::collections::HashSet<usize>) {
+    for child in &cat.children {
+        ids.insert(child.id);
+        collect_descendant_ids(child, ids);
+    }
+}
+
+/// Collect every cat_id that exists in the tree.
+fn collect_all_cat_ids(cats: &[Category], ids: &mut std::collections::HashSet<usize>) {
+    for cat in cats {
+        ids.insert(cat.id);
+        collect_all_cat_ids(&cat.children, ids);
+    }
+}
+
+/// Compute the set of cat_ids that should be auto-managed as sections given
+/// the view's `sec_subs` / `sec_all` rules against the current category tree.
+fn dynamic_wanted_ids(
+    sec_subs: &[usize],
+    sec_all:  &[usize],
+    cats:     &[Category],
+) -> std::collections::HashSet<usize> {
+    let mut ids = std::collections::HashSet::new();
+    for &cat_id in sec_subs {
+        if let Some(cat) = find_cat_in_tree(cats, cat_id) {
+            collect_descendant_ids(cat, &mut ids);
+        }
+    }
+    for &cat_id in sec_all {
+        ids.insert(cat_id);
+        if let Some(cat) = find_cat_in_tree(cats, cat_id) {
+            collect_descendant_ids(cat, &mut ids);
+        }
+    }
+    ids
+}
+
 /// Compute the ordered list of visible SortField values for the sort dialog.
 fn sort_visible_fields(
     primary_on:       SortOn,
@@ -1776,6 +1823,7 @@ impl App {
             id:               1,
             name:             "Initial Section".to_string(),
             cat_id:           6,
+            auto:             false,
             sort_new:         SortNewItems::OnLeavingSection,
             primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
             primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
@@ -1794,6 +1842,7 @@ impl App {
             number_items: false,
             section_sort_method: SectionSortMethod::None, section_sort_order: SortOrder::Ascending,
             cursor_section: 0, cursor_item: None, cursor_col: 0,
+            sec_subs: vec![], sec_all: vec![],
         };
 
         fn date(id: usize, name: &str) -> Category {
@@ -1925,6 +1974,7 @@ impl App {
             kill_buffer:     String::new(),
         };
         app.restore_cursor_from_view();
+        app.sync_dynamic_sections();
         app
     }
 
@@ -2226,7 +2276,7 @@ impl App {
         let view_id = self.alloc_id();
         let sec_id  = self.alloc_id();
         let section = Section {
-            id: sec_id, name: sec_name, cat_id,
+            id: sec_id, name: sec_name, cat_id, auto: false,
             sort_new:         SortNewItems::OnLeavingSection,
             primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
             primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
@@ -2242,7 +2292,8 @@ impl App {
                               number_items: false,
                               section_sort_method: SectionSortMethod::None,
                               section_sort_order: SortOrder::Ascending,
-                              cursor_section: 0, cursor_item: None, cursor_col: 0 };
+                              cursor_section: 0, cursor_item: None, cursor_col: 0,
+                              sec_subs: vec![], sec_all: vec![] };
         let old = std::mem::replace(&mut self.view, new_view);
         self.inactive_views.push(old);
         self.cursor = CursorPos::SectionHead(0);
@@ -4688,6 +4739,7 @@ impl App {
             id,
             name,
             cat_id:           sec_cat,
+            auto:             false,
             sort_new:         SortNewItems::OnLeavingSection,
             primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
             primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
@@ -5507,6 +5559,7 @@ impl App {
             }
             CatMode::Normal | CatMode::Move | CatMode::ConfirmDelete { .. } | CatMode::ProtectedWarning { .. } | CatMode::Props { .. } => {}
         }
+        self.sync_dynamic_sections();
     }
 
     pub fn cat_cancel(&mut self) {
@@ -5697,6 +5750,7 @@ impl App {
         let new_flat = flatten_cats(&self.categories);
         self.cat_state.cursor =
             self.cat_state.cursor.min(new_flat.len().saturating_sub(1));
+        self.sync_dynamic_sections();
     }
 
     /// Open the delete confirmation dialog for the category at the cursor.
@@ -5759,6 +5813,7 @@ impl App {
                 let new_flat = flatten_cats(&self.categories);
                 self.cat_state.cursor =
                     self.cat_state.cursor.min(new_flat.len().saturating_sub(1));
+                self.sync_dynamic_sections();
             }
         }
     }
@@ -5799,6 +5854,7 @@ impl App {
         if let Some(pos) = new_flat.iter().position(|e| e.id == cat_id) {
             self.cat_state.cursor = pos;
         }
+        self.sync_dynamic_sections();
     }
 
     /// Demote: make current category the last child of its previous sibling.
@@ -5828,6 +5884,7 @@ impl App {
         if let Some(pos) = new_flat.iter().position(|e| e.id == cat_id) {
             self.cat_state.cursor = pos;
         }
+        self.sync_dynamic_sections();
     }
 
     // ── Category Move (Alt+F10) ───────────────────────────────────────────────
@@ -6292,6 +6349,53 @@ impl App {
             self.save_depth = Some(self.undo_stack.len());
         }
         result
+    }
+
+    // ── Dynamic section sync ──────────────────────────────────────────────────
+
+    /// Ensure all views' sections match their `sec_subs`/`sec_all` rules against
+    /// the current category tree.  Call after any structural category mutation.
+    pub fn sync_dynamic_sections(&mut self) {
+        let cats = self.categories.clone();  // clone to avoid split-borrow issues
+        Self::sync_one_view_dynamic(&mut self.view, &cats, &mut self.next_id);
+        for view in &mut self.inactive_views {
+            Self::sync_one_view_dynamic(view, &cats, &mut self.next_id);
+        }
+    }
+
+    fn sync_one_view_dynamic(view: &mut View, cats: &[Category], next_id: &mut usize) {
+        if view.sec_subs.is_empty() && view.sec_all.is_empty() { return; }
+
+        let wanted = dynamic_wanted_ids(&view.sec_subs, &view.sec_all, cats);
+
+        let mut existing_cats = std::collections::HashSet::new();
+        collect_all_cat_ids(cats, &mut existing_cats);
+
+        // Remove auto sections whose category was deleted, or that are no longer wanted.
+        view.sections.retain(|s| {
+            if !existing_cats.contains(&s.cat_id) { return false; }   // category gone
+            if s.auto && !wanted.contains(&s.cat_id) { return false; } // rule removed
+            true
+        });
+
+        // Add auto sections for wanted cat_ids not yet present (in flatten order).
+        let current: std::collections::HashSet<usize> =
+            view.sections.iter().map(|s| s.cat_id).collect();
+        for entry in flatten_cats(cats) {
+            if wanted.contains(&entry.id) && !current.contains(&entry.id) {
+                let id = *next_id;
+                *next_id += 1;
+                view.sections.push(Section {
+                    id, name: entry.name, cat_id: entry.id, auto: true,
+                    sort_new:         SortNewItems::OnLeavingSection,
+                    primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
+                    primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
+                    secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
+                    secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
+                    filter:           vec![],
+                });
+            }
+        }
     }
 
     /// Called when the user presses Alt-Q.
@@ -7007,10 +7111,16 @@ impl App {
         }
     }
 
-    /// Space: toggle the cursor category as a section.
-    /// If the view already has one or more sections with this cat_id, remove the last one.
-    /// If none, add a new one.  The asterisk in the picker reflects the new state on the
-    /// next render because it reads directly from view.sections each frame.
+    /// Space: cycle the cursor category through section-inclusion states.
+    ///
+    /// For leaf categories (no children): Off ↔ On.
+    /// For parent categories: Off → On → Subs → All → Off, where:
+    ///   On   – manual section for this category (marker `*`)
+    ///   Subs – all descendant categories auto-managed as sections (marker `S`)
+    ///   All  – self + all descendants auto-managed (marker `A`)
+    ///
+    /// Categories that are auto-governed by a parent's Subs/All rule cannot be
+    /// toggled directly.
     pub fn vmgr_sec_pick_toggle(&mut self) {
         let idx = match &self.vmgr_state.mode {
             ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } => *cursor,
@@ -7019,41 +7129,81 @@ impl App {
         let flat = flatten_cats(&self.categories);
         let entry = match flat.get(idx) { Some(e) => e, None => return };
         let cat_id   = entry.id;
-        let sec_name = entry.name.clone();
+        let cat_name = entry.name.clone();
+
+        let has_children = find_cat_in_tree(&self.categories, cat_id)
+            .map(|c| !c.children.is_empty())
+            .unwrap_or(false);
 
         let v_idx = self.vmgr_state.cursor;
         let voi   = self.view_order_idx;
 
-        // Phase 1: check (immutable) whether the cat is already a section.
-        let remove_pos = {
-            let view_ref = if v_idx == voi { &self.view }
-                           else { match self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)) {
-                               Some(v) => v, None => return,
-                           }};
-            view_ref.sections.iter().rposition(|s| s.cat_id == cat_id)
+        // Phase 1: determine current state and whether this cat is governed.
+        // State: 0=Off 1=On 2=Subs 3=All
+        let (state, governed) = {
+            let vr = if v_idx == voi { &self.view }
+                     else { match self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)) {
+                         Some(v) => v, None => return,
+                     }};
+            let in_all  = vr.sec_all.contains(&cat_id);
+            let in_subs = vr.sec_subs.contains(&cat_id);
+            let has_sec = vr.sections.iter().any(|s| s.cat_id == cat_id);
+            let st = if in_all { 3 } else if in_subs { 2 } else if has_sec { 1 } else { 0 };
+            // Governed = wanted by a parent rule, but not itself a rule source.
+            let wanted = dynamic_wanted_ids(&vr.sec_subs, &vr.sec_all, &self.categories);
+            let gov = wanted.contains(&cat_id) && !in_all && !in_subs;
+            (st, gov)
         };
 
-        // Phase 2: allocate an id only when adding (avoids wasting ids on the remove path).
-        let sec_id = if remove_pos.is_none() { Some(self.alloc_id()) } else { None };
+        if governed { return; }
+
+        // Phase 2: allocate id only when adding a manual section (Off → On).
+        let new_sec_id = if state == 0 { Some(self.alloc_id()) } else { None };
 
         // Phase 3: mutate.
-        let view = if v_idx == voi { &mut self.view }
-                   else { match self.inactive_views.get_mut(Self::vmgr_inact_idx(v_idx, voi)) {
-                       Some(v) => v, None => return,
-                   }};
-        if let Some(pos) = remove_pos {
-            view.sections.remove(pos);
-        } else if let Some(id) = sec_id {
-            view.sections.push(Section {
-                id, name: sec_name, cat_id,
-                sort_new:         SortNewItems::OnLeavingSection,
-                primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
-                primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
-                secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
-                secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
-                filter:           vec![],
-            });
+        {
+            let view = if v_idx == voi { &mut self.view }
+                       else { match self.inactive_views.get_mut(Self::vmgr_inact_idx(v_idx, voi)) {
+                           Some(v) => v, None => return,
+                       }};
+            match state {
+                0 => {
+                    // Off → On: add manual section.
+                    if let Some(id) = new_sec_id {
+                        view.sections.push(Section {
+                            id, name: cat_name, cat_id, auto: false,
+                            sort_new:         SortNewItems::OnLeavingSection,
+                            primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
+                            primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
+                            secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
+                            secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
+                            filter:           vec![],
+                        });
+                    }
+                }
+                1 if has_children => {
+                    // On → Subs: remove manual section, start tracking all descendants.
+                    view.sections.retain(|s| s.cat_id != cat_id);
+                    view.sec_subs.push(cat_id);
+                }
+                1 => {
+                    // On → Off (leaf): remove section.
+                    view.sections.retain(|s| s.cat_id != cat_id);
+                }
+                2 => {
+                    // Subs → All: include self as well.
+                    view.sec_subs.retain(|&id| id != cat_id);
+                    view.sec_all.push(cat_id);
+                }
+                _ => {
+                    // All → Off: remove dynamic tracking entirely.
+                    view.sec_all.retain(|&id| id != cat_id);
+                }
+            }
         }
+
+        // Sync auto sections for any state that touches sec_subs/sec_all.
+        self.sync_dynamic_sections();
     }
 
     /// Enter: close the picker, accepting whatever toggles were made.

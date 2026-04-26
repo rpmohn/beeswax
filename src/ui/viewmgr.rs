@@ -507,8 +507,10 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
         let mut pick_lines: Vec<Line<'static>> = vec![view_line];
         for (i, entry) in cats.iter().enumerate().skip(start).take(visible) {
-            let is_section = used_ids.contains(&entry.id);
-            let marker = if is_section { "*" } else { " " };
+            let in_all   = view_ref.sec_all.contains(&entry.id);
+            let in_subs  = view_ref.sec_subs.contains(&entry.id);
+            let is_sec   = used_ids.contains(&entry.id);
+            let marker = if in_all { "A" } else if in_subs { "S" } else if is_sec { "*" } else { " " };
             let note_ind = cat_note_indicator(&app.categories, entry.id);
             let type_ind = match entry.kind {
                 CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
