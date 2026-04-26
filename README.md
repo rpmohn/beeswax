@@ -221,6 +221,19 @@ A hierarchical tree of all categories. Use arrow keys to navigate, F2 to rename,
 
 Lists all views. Enter switches to the selected view, F2 renames inline, F4 deletes with confirmation, F6 opens the view properties dialog.
 
+**View Properties (F6) — Section Select**
+
+Press F3 on the Sections field to open the Section Select picker. Space cycles each category through inclusion states:
+
+| Marker | Meaning |
+|--------|---------|
+| (space) | Not included |
+| `*` | Included as a section (manual) |
+| `S` | Subs — all descendant categories are automatically added as sections; updates whenever subcategories are added or removed |
+| `A` | All — same as Subs, but also includes the category itself |
+
+`S` and `A` are only available for categories that have subcategories. Categories governed by a parent `S`/`A` rule are shown with `*` and cannot be toggled independently.
+
 ### Customize (F10 → Utilities → Customize)
 
 Live color and navigation-mode editor. Navigate with arrow keys (or hjkl in vi mode). On any color field, press F2 or type a hex character to begin editing, Space to reset to terminal default. Selecting a built-in theme and then editing a color automatically switches to the Custom scheme with all other colors pre-filled from the chosen theme.
