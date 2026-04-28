@@ -8,7 +8,7 @@ use ratatui::{
 use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
                  CursorPos, FilterState, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
                  SecPropsField, SectionFormField, SectionInsert, SectionMode, SortField, SortState,
-                 TimeField, ViewAddField, ViewMode, cat_note_indicator, col_autocomplete_match,
+                 TimeField, ViewAddField, ViewMode, cat_is_date, cat_note_indicator, col_autocomplete_match,
                  col_display_values, flatten_cats, format_date_value,
                  visible_item_indices};
 use crate::model::{FilterOp, SortNewItems, SortOn, SortOrder, SortSeq};
@@ -2515,7 +2515,7 @@ pub fn render_sort_dialog(
             Span::styled(cat_label, flbl(a)),
             Span::styled(display, fval(a)),
         ]));
-        if let Some(_) = primary_cat_id {
+        if primary_cat_id.is_some() && !cat_is_date(&app.categories, primary_cat_id) {
             let a = active_field == SortField::PrimarySequence;
             rows.push(Line::from(vec![
                 Span::styled(seq_label, flbl(a)),
@@ -2551,7 +2551,7 @@ pub fn render_sort_dialog(
             Span::styled(cat_label, flbl(a)),
             Span::styled(display, fval(a)),
         ]));
-        if let Some(_) = secondary_cat_id {
+        if secondary_cat_id.is_some() && !cat_is_date(&app.categories, secondary_cat_id) {
             let a = active_field == SortField::SecondarySequence;
             rows.push(Line::from(vec![
                 Span::styled(seq_label, flbl(a)),

@@ -1006,12 +1006,21 @@ fn dynamic_wanted_ids(
     ids
 }
 
+/// Returns true when the category with the given id is of type Date.
+pub fn cat_is_date(cats: &[Category], id: Option<usize>) -> bool {
+    let Some(id) = id else { return false; };
+    flatten_cats(cats).into_iter().find(|e| e.id == id)
+        .map(|e| e.kind == CategoryKind::Date)
+        .unwrap_or(false)
+}
+
 /// Compute the ordered list of visible SortField values for the sort dialog.
 fn sort_visible_fields(
     primary_on:       SortOn,
     primary_cat_id:   Option<usize>,
     secondary_on:     SortOn,
     secondary_cat_id: Option<usize>,
+    cats:             &[Category],
 ) -> Vec<SortField> {
     let mut f = vec![SortField::SortNewItems, SortField::PrimaryOn];
     if primary_on != SortOn::None {
@@ -1020,7 +1029,8 @@ fn sort_visible_fields(
     }
     if primary_on == SortOn::Category {
         f.push(SortField::PrimaryCategory);
-        if primary_cat_id.is_some() {
+        // Sequence is fixed to Date for Date categories — don't show the field.
+        if primary_cat_id.is_some() && !cat_is_date(cats, primary_cat_id) {
             f.push(SortField::PrimarySequence);
         }
     }
@@ -1031,7 +1041,7 @@ fn sort_visible_fields(
     }
     if secondary_on == SortOn::Category {
         f.push(SortField::SecondaryCategory);
-        if secondary_cat_id.is_some() {
+        if secondary_cat_id.is_some() && !cat_is_date(cats, secondary_cat_id) {
             f.push(SortField::SecondarySequence);
         }
     }
@@ -5196,7 +5206,7 @@ impl App {
         if let SectionMode::Props {
             sort_state: SortState::Dialog { active_field, primary_on, primary_cat_id, secondary_on, secondary_cat_id, .. }, ..
         } = &mut self.sec_mode {
-            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id);
+            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id, &self.categories);
             let pos = fields.iter().position(|f| f == active_field).unwrap_or(0);
             *active_field = fields[(pos + 1) % fields.len()];
         }
@@ -5206,7 +5216,7 @@ impl App {
         if let SectionMode::Props {
             sort_state: SortState::Dialog { active_field, primary_on, primary_cat_id, secondary_on, secondary_cat_id, .. }, ..
         } = &mut self.sec_mode {
-            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id);
+            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id, &self.categories);
             let pos = fields.iter().position(|f| f == active_field).unwrap_or(0);
             *active_field = if pos == 0 { *fields.last().unwrap_or(&SortField::SortNewItems) } else { fields[pos - 1] };
         }
@@ -5389,7 +5399,10 @@ impl App {
                     if let Some(&v) = SortNa::ALL.get(cursor) { *primary_na = v; }
                 }
                 SortField::PrimaryCategory => {
-                    if let Some(e) = flat_cats.get(cursor) { *primary_cat_id = Some(e.id); }
+                    if let Some(e) = flat_cats.get(cursor) {
+                        *primary_cat_id = Some(e.id);
+                        if e.kind == CategoryKind::Date { *primary_seq = SortSeq::Date; }
+                    }
                 }
                 SortField::PrimarySequence => {
                     if let Some(&v) = SortSeq::ALL.get(cursor) { *primary_seq = v; }
@@ -5407,7 +5420,10 @@ impl App {
                     if let Some(&v) = SortNa::ALL.get(cursor) { *secondary_na = v; }
                 }
                 SortField::SecondaryCategory => {
-                    if let Some(e) = flat_cats.get(cursor) { *secondary_cat_id = Some(e.id); }
+                    if let Some(e) = flat_cats.get(cursor) {
+                        *secondary_cat_id = Some(e.id);
+                        if e.kind == CategoryKind::Date { *secondary_seq = SortSeq::Date; }
+                    }
                 }
                 SortField::SecondarySequence => {
                     if let Some(&v) = SortSeq::ALL.get(cursor) { *secondary_seq = v; }
@@ -7395,7 +7411,7 @@ impl App {
         if let ViewMgrMode::Props {
             sort_state: SortState::Dialog { active_field, primary_on, primary_cat_id, secondary_on, secondary_cat_id, .. }, ..
         } = &mut self.vmgr_state.mode {
-            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id);
+            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id, &self.categories);
             let pos = fields.iter().position(|f| f == active_field).unwrap_or(0);
             *active_field = fields[(pos + 1) % fields.len()];
         }
@@ -7405,7 +7421,7 @@ impl App {
         if let ViewMgrMode::Props {
             sort_state: SortState::Dialog { active_field, primary_on, primary_cat_id, secondary_on, secondary_cat_id, .. }, ..
         } = &mut self.vmgr_state.mode {
-            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id);
+            let fields = sort_visible_fields(*primary_on, *primary_cat_id, *secondary_on, *secondary_cat_id, &self.categories);
             let pos = fields.iter().position(|f| f == active_field).unwrap_or(0);
             *active_field = if pos == 0 { *fields.last().unwrap_or(&SortField::SortNewItems) } else { fields[pos - 1] };
         }
@@ -7547,12 +7563,22 @@ impl App {
                 SortField::PrimaryOn => { if let Some(&v) = SortOn::ALL.get(cursor) { if v != SortOn::Category { *primary_cat_id = None; } *primary_on = v; } }
                 SortField::PrimaryOrder => { if let Some(&v) = SortOrder::ALL.get(cursor) { *primary_order = v; } }
                 SortField::PrimaryNa => { if let Some(&v) = SortNa::ALL.get(cursor) { *primary_na = v; } }
-                SortField::PrimaryCategory => { if let Some(e) = flat_cats.get(cursor) { *primary_cat_id = Some(e.id); } }
+                SortField::PrimaryCategory => {
+                    if let Some(e) = flat_cats.get(cursor) {
+                        *primary_cat_id = Some(e.id);
+                        if e.kind == CategoryKind::Date { *primary_seq = SortSeq::Date; }
+                    }
+                }
                 SortField::PrimarySequence => { if let Some(&v) = SortSeq::ALL.get(cursor) { *primary_seq = v; } }
                 SortField::SecondaryOn => { if let Some(&v) = SortOn::ALL.get(cursor) { if v != SortOn::Category { *secondary_cat_id = None; } *secondary_on = v; } }
                 SortField::SecondaryOrder => { if let Some(&v) = SortOrder::ALL.get(cursor) { *secondary_order = v; } }
                 SortField::SecondaryNa => { if let Some(&v) = SortNa::ALL.get(cursor) { *secondary_na = v; } }
-                SortField::SecondaryCategory => { if let Some(e) = flat_cats.get(cursor) { *secondary_cat_id = Some(e.id); } }
+                SortField::SecondaryCategory => {
+                    if let Some(e) = flat_cats.get(cursor) {
+                        *secondary_cat_id = Some(e.id);
+                        if e.kind == CategoryKind::Date { *secondary_seq = SortSeq::Date; }
+                    }
+                }
                 SortField::SecondarySequence => { if let Some(&v) = SortSeq::ALL.get(cursor) { *secondary_seq = v; } }
             }
             *picker = None;
