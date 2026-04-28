@@ -3632,9 +3632,12 @@ impl App {
         let sorted = section_item_indices_sorted(&self.items, &self.view, sec_idx, &self.categories);
 
         // Save the ID of the item under the cursor so we can restore it.
+        // cursor.item is always an index into visible_item_indices (not section_item_indices),
+        // so we must use visible_item_indices here to look up the correct item ID.
         let cursor_item_id = match &self.cursor {
             CursorPos::Item { section, item } if *section == sec_idx => {
-                natural.get(*item).map(|&gi| self.items[gi].id)
+                visible_item_indices(&self.items, &self.view, sec_idx, &self.categories)
+                    .get(*item).map(|&gi| self.items[gi].id)
             }
             _ => None,
         };
@@ -3645,10 +3648,10 @@ impl App {
             self.items[*slot] = item;
         }
 
-        // Restore cursor position.
+        // Restore cursor position using visible basis (same as cursor.item index space).
         if let Some(id) = cursor_item_id {
-            let new_natural = section_item_indices(&self.items, &self.view, sec_idx, &self.categories);
-            if let Some(new_local) = new_natural.iter().position(|&gi| self.items[gi].id == id) {
+            let new_vis = visible_item_indices(&self.items, &self.view, sec_idx, &self.categories);
+            if let Some(new_local) = new_vis.iter().position(|&gi| self.items[gi].id == id) {
                 self.cursor = CursorPos::Item { section: sec_idx, item: new_local };
             }
         }
