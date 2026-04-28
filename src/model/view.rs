@@ -1,4 +1,4 @@
-use super::section::{Section, SortOrder};
+use super::section::{Section, SortNewItems, SortOn, SortOrder, SortNa, SortSeq};
 use super::column::Column;
 
 #[derive(Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -53,4 +53,16 @@ pub struct View {
     // Dynamic section rules: categories whose descendants (or selves) auto-populate sections
     #[serde(default)] pub sec_subs: Vec<usize>,  // cat ID → all child cats become sections (not self)
     #[serde(default)] pub sec_all:  Vec<usize>,  // cat ID → self + all child cats become sections
+    // View-level item sort defaults (used for sections that have no explicit sort of their own)
+    #[serde(default)] pub sort_new:              SortNewItems,
+    #[serde(default)] pub sort_primary_on:       SortOn,
+    #[serde(default)] pub sort_primary_order:    SortOrder,
+    #[serde(default)] pub sort_primary_na:       SortNa,
+    #[serde(default)] pub sort_primary_cat_id:   Option<usize>,
+    #[serde(default)] pub sort_primary_seq:      SortSeq,
+    #[serde(default)] pub sort_secondary_on:     SortOn,
+    #[serde(default)] pub sort_secondary_order:  SortOrder,
+    #[serde(default)] pub sort_secondary_na:     SortNa,
+    #[serde(default)] pub sort_secondary_cat_id: Option<usize>,
+    #[serde(default)] pub sort_secondary_seq:    SortSeq,
 }

@@ -64,14 +64,22 @@ struct SaveDataV2 {
 }
 
 fn view_v1_to_view(v: ViewV1) -> View {
+    use crate::model::section::{SortNewItems, SortOn, SortOrder, SortNa, SortSeq};
     View { id: v.id, name: v.name, sections: v.sections, columns: v.columns, left_count: v.left_count,
            hide_empty_sections: false, hide_done_items: false, hide_dependent_items: false,
            hide_inherited_items: false, hide_column_heads: false, section_separators: false,
            number_items: false,
            section_sort_method: crate::model::SectionSortMethod::None,
-           section_sort_order:  crate::model::SortOrder::Ascending,
+           section_sort_order:  SortOrder::Ascending,
            cursor_section: 0, cursor_item: None, cursor_col: 0,
-           sec_subs: vec![], sec_all: vec![] }
+           sec_subs: vec![], sec_all: vec![],
+           sort_new: SortNewItems::OnDemand,
+           sort_primary_on: SortOn::None,       sort_primary_order: SortOrder::Ascending,
+           sort_primary_na: SortNa::Bottom,     sort_primary_cat_id: None,
+           sort_primary_seq: SortSeq::CategoryHierarchy,
+           sort_secondary_on: SortOn::None,     sort_secondary_order: SortOrder::Ascending,
+           sort_secondary_na: SortNa::Bottom,   sort_secondary_cat_id: None,
+           sort_secondary_seq: SortSeq::CategoryHierarchy }
 }
 
 fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
@@ -156,6 +164,17 @@ fn clone_view(view: &View) -> View {
         cursor_col:            view.cursor_col,
         sec_subs:              view.sec_subs.clone(),
         sec_all:               view.sec_all.clone(),
+        sort_new:              view.sort_new,
+        sort_primary_on:       view.sort_primary_on,
+        sort_primary_order:    view.sort_primary_order,
+        sort_primary_na:       view.sort_primary_na,
+        sort_primary_cat_id:   view.sort_primary_cat_id,
+        sort_primary_seq:      view.sort_primary_seq,
+        sort_secondary_on:     view.sort_secondary_on,
+        sort_secondary_order:  view.sort_secondary_order,
+        sort_secondary_na:     view.sort_secondary_na,
+        sort_secondary_cat_id: view.sort_secondary_cat_id,
+        sort_secondary_seq:    view.sort_secondary_seq,
     }
 }
 

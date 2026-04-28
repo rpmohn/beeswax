@@ -732,6 +732,25 @@ pub fn visible_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &
     all.into_iter().filter(|&gi| !items[gi].values.contains_key(&did)).collect()
 }
 
+/// Returns effective item-sort parameters for a section.
+/// A section with `primary_on != None` uses its own sort settings (explicit override).
+/// A section with `primary_on == None` falls back to the view-level sort defaults.
+fn effective_sort(sec: &Section, view: &View)
+    -> (SortNewItems, SortOn, SortOrder, SortNa, Option<usize>, SortSeq,
+        SortOn, SortOrder, SortNa, Option<usize>, SortSeq)
+{
+    if sec.primary_on != SortOn::None {
+        (sec.sort_new, sec.primary_on, sec.primary_order, sec.primary_na,
+         sec.primary_cat_id, sec.primary_seq, sec.secondary_on, sec.secondary_order,
+         sec.secondary_na, sec.secondary_cat_id, sec.secondary_seq)
+    } else {
+        (view.sort_new, view.sort_primary_on, view.sort_primary_order, view.sort_primary_na,
+         view.sort_primary_cat_id, view.sort_primary_seq, view.sort_secondary_on,
+         view.sort_secondary_order, view.sort_secondary_na, view.sort_secondary_cat_id,
+         view.sort_secondary_seq)
+    }
+}
+
 /// Like `section_item_indices` but applies the section's sort criteria.
 /// Used by `apply_section_sort` to determine the desired order before
 /// physically reordering items.
@@ -750,40 +769,43 @@ fn section_item_indices_sorted(items: &[Item], view: &View, sec_idx: usize, cats
         .collect();
     apply_section_filter(&mut indices, items, sec, &parent_map);
 
-    if sec.primary_on != SortOn::None {
+    let (_, p_on, p_order, p_na, p_cat_id, p_seq, s_on, s_order, s_na, s_cat_id, s_seq)
+        = effective_sort(sec, view);
+
+    if p_on != SortOn::None {
         let flat = flatten_cats(cats);
         let flat_order: HashMap<usize, usize> = flat.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
 
         indices.sort_by(|&a, &b| {
             use std::cmp::Ordering;
-            let na_a = item_is_na(&items[a], sec.primary_on, sec.primary_cat_id, cat_id, &parent_map);
-            let na_b = item_is_na(&items[b], sec.primary_on, sec.primary_cat_id, cat_id, &parent_map);
+            let na_a = item_is_na(&items[a], p_on, p_cat_id, cat_id, &parent_map);
+            let na_b = item_is_na(&items[b], p_on, p_cat_id, cat_id, &parent_map);
             match (na_a, na_b) {
-                (true, false) => return if sec.primary_na == SortNa::Bottom { Ordering::Greater } else { Ordering::Less },
-                (false, true) => return if sec.primary_na == SortNa::Bottom { Ordering::Less } else { Ordering::Greater },
+                (true, false) => return if p_na == SortNa::Bottom { Ordering::Greater } else { Ordering::Less },
+                (false, true) => return if p_na == SortNa::Bottom { Ordering::Less } else { Ordering::Greater },
                 _ => {}
             }
-            let ka = item_sort_key(&items[a], sec.primary_on, sec.primary_cat_id, sec.primary_seq,
+            let ka = item_sort_key(&items[a], p_on, p_cat_id, p_seq,
                                    cat_id, &parent_map, &name_map, &flat_order, cats);
-            let kb = item_sort_key(&items[b], sec.primary_on, sec.primary_cat_id, sec.primary_seq,
+            let kb = item_sort_key(&items[b], p_on, p_cat_id, p_seq,
                                    cat_id, &parent_map, &name_map, &flat_order, cats);
             let ord = ka.cmp(&kb);
-            let ord = if sec.primary_order == SortOrder::Descending { ord.reverse() } else { ord };
+            let ord = if p_order == SortOrder::Descending { ord.reverse() } else { ord };
             if ord != Ordering::Equal { return ord; }
-            if sec.secondary_on != SortOn::None {
-                let na2_a = item_is_na(&items[a], sec.secondary_on, sec.secondary_cat_id, cat_id, &parent_map);
-                let na2_b = item_is_na(&items[b], sec.secondary_on, sec.secondary_cat_id, cat_id, &parent_map);
+            if s_on != SortOn::None {
+                let na2_a = item_is_na(&items[a], s_on, s_cat_id, cat_id, &parent_map);
+                let na2_b = item_is_na(&items[b], s_on, s_cat_id, cat_id, &parent_map);
                 match (na2_a, na2_b) {
-                    (true, false) => return if sec.secondary_na == SortNa::Bottom { Ordering::Greater } else { Ordering::Less },
-                    (false, true) => return if sec.secondary_na == SortNa::Bottom { Ordering::Less } else { Ordering::Greater },
+                    (true, false) => return if s_na == SortNa::Bottom { Ordering::Greater } else { Ordering::Less },
+                    (false, true) => return if s_na == SortNa::Bottom { Ordering::Less } else { Ordering::Greater },
                     _ => {}
                 }
-                let sa = item_sort_key(&items[a], sec.secondary_on, sec.secondary_cat_id, sec.secondary_seq,
+                let sa = item_sort_key(&items[a], s_on, s_cat_id, s_seq,
                                        cat_id, &parent_map, &name_map, &flat_order, cats);
-                let sb = item_sort_key(&items[b], sec.secondary_on, sec.secondary_cat_id, sec.secondary_seq,
+                let sb = item_sort_key(&items[b], s_on, s_cat_id, s_seq,
                                        cat_id, &parent_map, &name_map, &flat_order, cats);
                 let ord2 = sa.cmp(&sb);
-                if sec.secondary_order == SortOrder::Descending { ord2.reverse() } else { ord2 }
+                if s_order == SortOrder::Descending { ord2.reverse() } else { ord2 }
             } else {
                 Ordering::Equal
             }
@@ -1843,6 +1865,13 @@ impl App {
             section_sort_method: SectionSortMethod::None, section_sort_order: SortOrder::Ascending,
             cursor_section: 0, cursor_item: None, cursor_col: 0,
             sec_subs: vec![], sec_all: vec![],
+            sort_new: SortNewItems::OnDemand,
+            sort_primary_on: SortOn::None,       sort_primary_order: SortOrder::Ascending,
+            sort_primary_na: SortNa::Bottom,     sort_primary_cat_id: None,
+            sort_primary_seq: SortSeq::CategoryHierarchy,
+            sort_secondary_on: SortOn::None,     sort_secondary_order: SortOrder::Ascending,
+            sort_secondary_na: SortNa::Bottom,   sort_secondary_cat_id: None,
+            sort_secondary_seq: SortSeq::CategoryHierarchy,
         };
 
         fn date(id: usize, name: &str) -> Category {
@@ -2293,7 +2322,14 @@ impl App {
                               section_sort_method: SectionSortMethod::None,
                               section_sort_order: SortOrder::Ascending,
                               cursor_section: 0, cursor_item: None, cursor_col: 0,
-                              sec_subs: vec![], sec_all: vec![] };
+                              sec_subs: vec![], sec_all: vec![],
+                              sort_new: SortNewItems::OnDemand,
+                              sort_primary_on: SortOn::None,     sort_primary_order: SortOrder::Ascending,
+                              sort_primary_na: SortNa::Bottom,   sort_primary_cat_id: None,
+                              sort_primary_seq: SortSeq::CategoryHierarchy,
+                              sort_secondary_on: SortOn::None,   sort_secondary_order: SortOrder::Ascending,
+                              sort_secondary_na: SortNa::Bottom, sort_secondary_cat_id: None,
+                              sort_secondary_seq: SortSeq::CategoryHierarchy };
         let old = std::mem::replace(&mut self.view, new_view);
         self.inactive_views.push(old);
         self.cursor = CursorPos::SectionHead(0);
@@ -2639,7 +2675,8 @@ impl App {
         };
         if new_sec != old_sec {
             if let Some(sec) = self.view.sections.get(old_sec) {
-                if sec.sort_new == SortNewItems::OnLeavingSection {
+                let eff_sort_new = effective_sort(sec, &self.view).0;
+                if eff_sort_new == SortNewItems::OnLeavingSection {
                     self.apply_section_sort(old_sec);
                 }
             }
@@ -2711,7 +2748,8 @@ impl App {
         };
         if new_sec != old_sec {
             if let Some(sec) = self.view.sections.get(old_sec) {
-                if sec.sort_new == SortNewItems::OnLeavingSection {
+                let eff_sort_new = effective_sort(sec, &self.view).0;
+                if eff_sort_new == SortNewItems::OnLeavingSection {
                     self.apply_section_sort(old_sec);
                 }
             }
@@ -3219,10 +3257,11 @@ impl App {
             CursorPos::SectionHead(s)       => *s,
             CursorPos::Item { section, .. } => *section,
         };
-        if sec_idx < self.view.sections.len()
-            && self.view.sections[sec_idx].sort_new == SortNewItems::WhenEntered
-        {
-            self.apply_section_sort(sec_idx);
+        if sec_idx < self.view.sections.len() {
+            let eff_sort_new = effective_sort(&self.view.sections[sec_idx], &self.view).0;
+            if eff_sort_new == SortNewItems::WhenEntered {
+                self.apply_section_sort(sec_idx);
+            }
         }
     }
 
@@ -3622,7 +3661,8 @@ impl App {
     /// The cursor is updated to follow the item it was on (by item ID).
     pub fn apply_section_sort(&mut self, sec_idx: usize) {
         if sec_idx >= self.view.sections.len() { return; }
-        if self.view.sections[sec_idx].primary_on == SortOn::None { return; }
+        let eff_primary_on = effective_sort(&self.view.sections[sec_idx], &self.view).1;
+        if eff_primary_on == SortOn::None { return; }
 
         // Natural (physical) order of global indices for this section.
         let natural = section_item_indices(&self.items, &self.view, sec_idx, &self.categories);
@@ -6999,14 +7039,14 @@ impl App {
         view.number_items         = ni;
         view.section_sort_method  = ssm;
         view.section_sort_order   = sso;
-        // Apply section sort in place.
-        match ssm {
+        // Apply section sort in place, then follow the cursor's section by ID.
+        let sort_applied = match ssm {
             SectionSortMethod::Alphabetic => {
                 view.sections.sort_by(|a, b| {
                     let c = a.name.to_lowercase().cmp(&b.name.to_lowercase());
                     if sso == SortOrder::Descending { c.reverse() } else { c }
                 });
-                if idx == voi { self.cursor = CursorPos::SectionHead(0); self.mode = Mode::Normal; }
+                true
             }
             SectionSortMethod::CategoryOrder => {
                 let flat = flatten_cats(&self.categories);
@@ -7017,9 +7057,24 @@ impl App {
                     let c = pos_of(a).cmp(&pos_of(b));
                     if sso == SortOrder::Descending { c.reverse() } else { c }
                 });
-                if idx == voi { self.cursor = CursorPos::SectionHead(0); self.mode = Mode::Normal; }
+                true
             }
-            _ => {}
+            _ => false,
+        };
+        if sort_applied && idx == voi {
+            // Follow cursor's section by ID rather than resetting to 0.
+            let cur_sec_id = match self.cursor {
+                CursorPos::SectionHead(s) | CursorPos::Item { section: s, .. } =>
+                    self.view.sections.get(s).map(|sec| sec.id),
+            };
+            self.cursor = match cur_sec_id.and_then(|id| self.view.sections.iter().position(|s| s.id == id)) {
+                Some(new_s) => match self.cursor {
+                    CursorPos::SectionHead(_)      => CursorPos::SectionHead(new_s),
+                    CursorPos::Item { item, .. }   => CursorPos::Item { section: new_s, item },
+                },
+                None => CursorPos::SectionHead(0),
+            };
+            self.mode = Mode::Normal;
         }
     }
 
@@ -7314,16 +7369,13 @@ impl App {
         let voi   = self.view_order_idx;
         let view_ref = if v_idx == voi { &self.view }
                        else { self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)).unwrap_or(&self.view) };
-        let (sn, po, poor, pna, pcid, pseq, so, soor, sna, scid, sseq) =
-            if let Some(sec) = view_ref.sections.first() {
-                (sec.sort_new, sec.primary_on, sec.primary_order, sec.primary_na,
-                 sec.primary_cat_id, sec.primary_seq, sec.secondary_on, sec.secondary_order,
-                 sec.secondary_na, sec.secondary_cat_id, sec.secondary_seq)
-            } else {
-                (SortNewItems::OnDemand, SortOn::None, SortOrder::Ascending, SortNa::Bottom,
-                 None, SortSeq::CategoryHierarchy, SortOn::None, SortOrder::Ascending,
-                 SortNa::Bottom, None, SortSeq::CategoryHierarchy)
-            };
+        let (sn, po, poor, pna, pcid, pseq, so, soor, sna, scid, sseq) = (
+            view_ref.sort_new,
+            view_ref.sort_primary_on,   view_ref.sort_primary_order,   view_ref.sort_primary_na,
+            view_ref.sort_primary_cat_id, view_ref.sort_primary_seq,
+            view_ref.sort_secondary_on, view_ref.sort_secondary_order, view_ref.sort_secondary_na,
+            view_ref.sort_secondary_cat_id, view_ref.sort_secondary_seq,
+        );
         if let ViewMgrMode::Props { active_field: ViewPropsField::ItemSorting, ref mut sort_state, .. }
             = self.vmgr_state.mode
         {
@@ -7372,17 +7424,15 @@ impl App {
             _ => return,
         };
         let (sn, po, poor, pna, pcid, pseq, so, soor, sna, scid, sseq) = vals;
-        // Apply to every section in the view at cursor.
+        // Apply to view-level sort defaults (sections with their own sort settings are unaffected).
         let voi = self.view_order_idx;
         let view = if v_idx == voi { &mut self.view }
                    else { match self.inactive_views.get_mut(Self::vmgr_inact_idx(v_idx, voi)) { Some(v) => v, None => return } };
-        for sec in &mut view.sections {
-            sec.sort_new         = sn;
-            sec.primary_on       = po;   sec.primary_order    = poor;  sec.primary_na    = pna;
-            sec.primary_cat_id   = pcid; sec.primary_seq      = pseq;
-            sec.secondary_on     = so;   sec.secondary_order  = soor;  sec.secondary_na  = sna;
-            sec.secondary_cat_id = scid; sec.secondary_seq    = sseq;
-        }
+        view.sort_new              = sn;
+        view.sort_primary_on       = po;   view.sort_primary_order    = poor;  view.sort_primary_na    = pna;
+        view.sort_primary_cat_id   = pcid; view.sort_primary_seq      = pseq;
+        view.sort_secondary_on     = so;   view.sort_secondary_order  = soor;  view.sort_secondary_na  = sna;
+        view.sort_secondary_cat_id = scid; view.sort_secondary_seq    = sseq;
         if let ViewMgrMode::Props { ref mut sort_state, .. } = self.vmgr_state.mode {
             *sort_state = SortState::Closed;
         }
