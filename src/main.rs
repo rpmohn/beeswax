@@ -164,9 +164,24 @@ fn main() -> io::Result<()> {
             // Spawn editor.
             let default_editor = if cfg!(windows) { "notepad.exe" } else { "vi" };
             let editor = std::env::var("EDITOR").unwrap_or_else(|_| default_editor.to_string());
+            #[cfg(windows)]
+            let spawn_time = std::time::Instant::now();
             let _ = std::process::Command::new(&editor)
                 .arg(&tmp_path)
                 .status();
+
+            // On Windows, many editors (Notepad, Notepad++ in single-instance mode, etc.)
+            // do not block when an existing instance is open — they hand off to that instance
+            // and exit immediately, so .status() returns before the user has edited anything.
+            // If the editor returned in under a second, prompt for Enter so the user can
+            // signal when they have finished editing and saved the file.
+            #[cfg(windows)]
+            if spawn_time.elapsed() < std::time::Duration::from_secs(1) {
+                use std::io::{BufRead, Write};
+                print!("\r\nSave the file in your editor, then press Enter here to continue...");
+                let _ = std::io::stdout().flush();
+                let _ = std::io::stdin().lock().lines().next();
+            }
 
             // Read result back.
             let content = std::fs::read_to_string(&tmp_path).unwrap_or_default();
