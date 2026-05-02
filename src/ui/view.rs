@@ -7,7 +7,7 @@ use ratatui::{
 };
 use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
                  CursorPos, FilePropsField, FilePropsPasswordSub, FilterState, MenuState, Mode,
-                 PasswordPurpose, PropsField, SaveState, SecPropsField, SectionFormField, SectionInsert,
+                 PropsField, SaveState, SecPropsField, SectionFormField, SectionInsert,
                  SectionMode, SortField, SortState, TimeField, ViewAddField, ViewMode, cat_is_date,
                  cat_note_indicator, col_autocomplete_match, col_display_values, flatten_cats,
                  format_date_value, visible_item_indices};
@@ -1458,6 +1458,27 @@ pub fn render(frame: &mut Frame, app: &App) {
         ]).style(app.theme.dialog), inner);
     }
 
+    // ── Section auto-remove error modal ───────────────────────────────────────
+    if matches!(app.sec_mode, SectionMode::AutoRemoveError) {
+        let dlg_rect = centered_rect(60, 7, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .title(" Cannot Remove Section ")
+            .title_bottom(Line::from(" Press any key to continue ").alignment(Alignment::Center))
+            .style(app.theme.dialog_border);
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+        frame.render_widget(Paragraph::new(vec![
+            Line::from(""),
+            Line::from("  This section cannot be removed. It is automatically"),
+            Line::from("  generated because a parent category has 'S' or 'A'"),
+            Line::from("  set. Change View Properties to disable this rule."),
+            Line::from(""),
+        ]).style(app.theme.dialog), inner);
+    }
+
     // ── Assignment Profile modal ──────────────────────────────────────────────
     if let AssignMode::Profile { gi, cursor: prof_cursor, on_sub } = &app.assign_mode {
         let (gi, prof_cur, prof_on_sub) = (*gi, *prof_cursor, *on_sub);
@@ -1567,7 +1588,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Some((*cat_idx, *insert, *active_field, None::<usize>)),
         SectionMode::Choices { cat_idx, insert, active_field, picker_cursor } =>
             Some((*cat_idx, *insert, *active_field, Some(*picker_cursor))),
-        SectionMode::Normal | SectionMode::ConfirmRemove { .. } | SectionMode::Props { .. } => None,
+        SectionMode::Normal | SectionMode::AutoRemoveError | SectionMode::ConfirmRemove { .. } | SectionMode::Props { .. } => None,
     };
     if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
         let cats       = flatten_cats(&app.categories);
@@ -1924,78 +1945,6 @@ pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 // ── Password-entry dialog ─────────────────────────────────────────────────────
-
-pub fn render_password_entry_dialog(frame: &mut Frame, app: &App, area: Rect) {
-    let SaveState::PasswordEntry { purpose, buf, confirm_buf, confirm_active, error, .. } = &app.save_state
-    else { return };
-
-    let title = match purpose {
-        PasswordPurpose::Enable  => " Enable Encryption ",
-        PasswordPurpose::Change  => " Change Password ",
-        PasswordPurpose::Disable => " Disable Encryption ",
-    };
-
-    let need_confirm = *purpose != PasswordPurpose::Disable;
-    let dlg_h: u16 = if need_confirm { 9 } else { 7 };
-
-    let dlg = centered_rect(50, dlg_h, area);
-    frame.render_widget(Clear, dlg);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .style(app.theme.dialog_border)
-        .title(title);
-    frame.render_widget(block.clone(), dlg);
-    let inner = block.inner(dlg);
-
-    let dlabel     = app.theme.dialog_label;
-    let dlabel_sel = app.theme.dialog_label_sel;
-    let rev        = app.theme.item_selected_field;
-
-    let fw = inner.width.saturating_sub(14) as usize;  // field width
-
-    let stars: String = "*".repeat(buf.chars().count());
-    let pw_field = format!("{:<width$}", stars, width = fw);
-    let pw_active = !*confirm_active;
-    let pw_line = Line::from(vec![
-        Span::styled("  Password:  ", if pw_active { dlabel_sel } else { dlabel }),
-        Span::raw("["),
-        Span::styled(pw_field, if pw_active { rev } else { Style::default() }),
-        Span::raw("]"),
-    ]);
-
-    let mut lines = vec![Line::from(""), pw_line];
-
-    if need_confirm {
-        let cf_stars: String = "*".repeat(confirm_buf.chars().count());
-        let cf_field = format!("{:<width$}", cf_stars, width = fw);
-        let cf_active = *confirm_active;
-        let cf_line = Line::from(vec![
-            Span::styled("  Confirm:   ", if cf_active { dlabel_sel } else { dlabel }),
-            Span::raw("["),
-            Span::styled(cf_field, if cf_active { rev } else { Style::default() }),
-            Span::raw("]"),
-        ]);
-        lines.push(cf_line);
-    }
-
-    lines.push(Line::from(""));
-
-    if let Some(err) = error {
-        lines.push(Line::from(Span::styled(
-            format!("  {}", err),
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
-    } else {
-        lines.push(Line::from(""));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from("  \u{2500}\u{2500}\u{2500} ENTER to confirm, ESC to cancel \u{2500}\u{2500}\u{2500}"));
-
-    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
-}
 
 // ── View Add dialog ───────────────────────────────────────────────────────────
 

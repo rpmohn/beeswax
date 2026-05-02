@@ -158,7 +158,7 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &SEARCH_FKEYS
     } else if matches!(app.assign_mode, AssignMode::Profile { .. }) {
         &ASSIGN_FKEYS
-    } else if matches!(app.sec_mode, SectionMode::Choices { .. } | SectionMode::ConfirmRemove { .. }) {
+    } else if matches!(app.sec_mode, SectionMode::Choices { .. } | SectionMode::ConfirmRemove { .. } | SectionMode::AutoRemoveError) {
         &MENU_FKEYS   // self-describing dialogs
     } else if matches!(app.sec_mode, SectionMode::Add { .. }) {
         &CHOICES_FKEYS   // F3 = Choices (category picker)

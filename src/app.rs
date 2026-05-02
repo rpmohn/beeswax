@@ -379,6 +379,7 @@ pub enum SortState {
 
 pub enum SectionMode {
     Normal,
+    AutoRemoveError,
     Add {
         cat_idx:      Option<usize>,
         insert:       SectionInsert,
@@ -427,9 +428,6 @@ pub enum MenuState {
 pub enum AskChoice { Yes, No }
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum PasswordPurpose { Enable, Change, Disable }
-
-#[derive(Clone, Copy, PartialEq)]
 pub enum FilePropsField { Description, Password }
 
 pub struct FilePropsPasswordSub {
@@ -447,14 +445,6 @@ pub struct FilePropsPasswordSub {
 pub enum SaveState {
     Idle,
     AskOnQuit { choice: AskChoice },
-    PasswordEntry {
-        purpose:        PasswordPurpose,
-        buf:            String,
-        cursor:         usize,
-        confirm_buf:    String,
-        confirm_active: bool,
-        error:          Option<String>,
-    },
     FileProps {
         desc_buf:     String,
         desc_cursor:  usize,
@@ -2592,9 +2582,6 @@ impl App {
             MenuAction::ViewProperties   => self.open_view_props(),
             MenuAction::FileSave                => { self.handle_file_save(); }
             MenuAction::FileProperties          => { self.open_file_props(); }
-            MenuAction::FileEnableEncryption
-            | MenuAction::FileChangePassword
-            | MenuAction::FileDisableEncryption => { self.handle_file_encryption(action); }
             MenuAction::Customize => { self.open_customize(); return; }
             MenuAction::Noop => {}
         }
@@ -4992,9 +4979,19 @@ impl App {
     /// Open "Remove this section?" confirmation. Only valid on a SectionHead.
     pub fn sec_open_confirm_remove(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
-        if !matches!(self.cursor, CursorPos::SectionHead(_)) { return; }
+        let s = match self.cursor { CursorPos::SectionHead(s) => s, _ => return };
         if self.view.sections.len() <= 1 { return; }   // must keep at least one section
+        if self.view.sections[s].auto {
+            self.sec_mode = SectionMode::AutoRemoveError;
+            return;
+        }
         self.sec_mode = SectionMode::ConfirmRemove { yes: true };
+    }
+
+    pub fn sec_close_auto_error(&mut self) {
+        if matches!(self.sec_mode, SectionMode::AutoRemoveError) {
+            self.sec_mode = SectionMode::Normal;
+        }
     }
 
     pub fn sec_confirm_remove_toggle(&mut self) {
@@ -6773,119 +6770,13 @@ impl App {
 
     // ── Password-entry dialog ─────────────────────────────────────────────────
 
-    pub fn password_entry_open(&mut self, purpose: PasswordPurpose) {
-        self.save_state = SaveState::PasswordEntry {
-            purpose,
-            buf:            String::new(),
-            cursor:         0,
-            confirm_buf:    String::new(),
-            confirm_active: false,
-            error:          None,
-        };
-    }
-
-    pub fn password_entry_char(&mut self, ch: char) {
-        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
-            if *confirm_active {
-                confirm_buf.push(ch);
-            } else {
-                let byte_pos = char_to_byte(buf, *cursor);
-                buf.insert(byte_pos, ch);
-                *cursor += 1;
-            }
-        }
-    }
-
-    pub fn password_entry_backspace(&mut self) {
-        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
-            if *confirm_active {
-                confirm_buf.pop();
-            } else if *cursor > 0 {
-                *cursor -= 1;
-                let byte_pos = char_to_byte(buf, *cursor);
-                buf.remove(byte_pos);
-            }
-        }
-    }
-
-    pub fn password_entry_tab(&mut self) {
-        if let SaveState::PasswordEntry { confirm_active, purpose, .. } = &mut self.save_state {
-            if *purpose != PasswordPurpose::Disable {
-                *confirm_active = !*confirm_active;
-            }
-        }
-    }
-
-    /// Confirm the password entry dialog.
-    /// Returns false and sets an error message if validation fails.
-    pub fn password_entry_confirm(&mut self) -> bool {
-        let (purpose, buf, confirm_buf) = match &self.save_state {
-            SaveState::PasswordEntry { purpose, buf, confirm_buf, .. } => {
-                (*purpose, buf.clone(), confirm_buf.clone())
-            }
-            _ => return false,
-        };
-
-        match purpose {
-            PasswordPurpose::Disable => {
-                self.session_password = None;
-                self.save_state = SaveState::Idle;
-                let _ = self.save();
-                true
-            }
-            PasswordPurpose::Enable | PasswordPurpose::Change => {
-                if buf.is_empty() {
-                    if let SaveState::PasswordEntry { error, .. } = &mut self.save_state {
-                        *error = Some("Password cannot be empty".to_string());
-                    }
-                    return false;
-                }
-                if buf != confirm_buf {
-                    if let SaveState::PasswordEntry { error, confirm_buf: cb, confirm_active, .. } = &mut self.save_state {
-                        *error  = Some("Passwords do not match".to_string());
-                        cb.clear();
-                        *confirm_active = true;
-                    }
-                    return false;
-                }
-                self.session_password = Some(buf);
-                self.save_state = SaveState::Idle;
-                let _ = self.save();
-                true
-            }
-        }
-    }
-
-    pub fn password_entry_cancel(&mut self) {
-        self.save_state = SaveState::Idle;
-    }
-
     // ── Menu action dispatch ──────────────────────────────────────────────────
 
     pub fn handle_file_save(&mut self) {
         let _ = self.save();
     }
 
-    pub fn handle_file_encryption(&mut self, action: MenuAction) {
-        match action {
-            MenuAction::FileEnableEncryption => {
-                if self.file_path.is_some() {
-                    self.password_entry_open(PasswordPurpose::Enable);
-                }
-            }
-            MenuAction::FileChangePassword => {
-                if self.file_path.is_some() && self.session_password.is_some() {
-                    self.password_entry_open(PasswordPurpose::Change);
-                }
-            }
-            MenuAction::FileDisableEncryption => {
-                if self.session_password.is_some() {
-                    self.password_entry_open(PasswordPurpose::Disable);
-                }
-            }
-            _ => {}
-        }
-    }
+
 
     // ── File Properties dialog ────────────────────────────────────────────────
 
@@ -7737,6 +7628,62 @@ impl App {
         }
     }
 
+    pub fn vmgr_sec_pick_pgup(&mut self, page: usize) {
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            *cursor = cursor.saturating_sub(page);
+        }
+    }
+
+    pub fn vmgr_sec_pick_pgdn(&mut self, page: usize) {
+        let max = flatten_cats(&self.categories).len().saturating_sub(1);
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            *cursor = (*cursor + page).min(max);
+        }
+    }
+
+    pub fn vmgr_sec_pick_home(&mut self) {
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            *cursor = 0;
+        }
+    }
+
+    pub fn vmgr_sec_pick_end(&mut self) {
+        let max = flatten_cats(&self.categories).len().saturating_sub(1);
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            *cursor = max;
+        }
+    }
+
+    pub fn vmgr_sec_pick_screen_top(&mut self) {
+        let n = flatten_cats(&self.categories).len();
+        if n == 0 { return; }
+        let visible = n.min(16);
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            let start = if *cursor >= visible { *cursor - visible + 1 } else { 0 };
+            *cursor = start;
+        }
+    }
+
+    pub fn vmgr_sec_pick_screen_mid(&mut self) {
+        let n = flatten_cats(&self.categories).len();
+        if n == 0 { return; }
+        let visible = n.min(16);
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            let start = if *cursor >= visible { *cursor - visible + 1 } else { 0 };
+            *cursor = (start + visible / 2).min(n - 1);
+        }
+    }
+
+    pub fn vmgr_sec_pick_screen_bot(&mut self) {
+        let n = flatten_cats(&self.categories).len();
+        if n == 0 { return; }
+        let visible = n.min(16);
+        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+            let start = if *cursor >= visible { *cursor - visible + 1 } else { 0 };
+            *cursor = (start + visible - 1).min(n - 1);
+        }
+    }
+
     /// Space: cycle the cursor category through section-inclusion states.
     ///
     /// For leaf categories (no children): Off ↔ On.
@@ -8497,7 +8444,6 @@ impl App {
         || self.customize_state.as_ref()
                .map_or(false, |s| matches!(&s.sub_mode, CustomizeSubMode::EditHex { .. }))
         || matches!(&self.view_mode, ViewMode::Add { .. })
-        || matches!(&self.save_state, SaveState::PasswordEntry { .. })
         || matches!(&self.save_state, SaveState::FileProps { .. })
         || self.item_search.is_some()
     }
@@ -9072,101 +9018,6 @@ impl App {
                 ViewAddField::Section => *sec_cursor = new_cur,
             }
         }
-    }
-
-    // ── SaveState::PasswordEntry ──────────────────────────────────────────────
-
-    fn password_active_buf_cur(&self) -> Option<(&str, usize)> {
-        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &self.save_state {
-            if *confirm_active {
-                Some((confirm_buf.as_str(), confirm_buf.len()))  // confirm field: cursor at end
-            } else {
-                Some((buf.as_str(), *cursor))
-            }
-        } else { None }
-    }
-
-    pub fn password_ctrl_u(&mut self) {
-        let Some((buf, cur)) = self.password_active_buf_cur() else { return };
-        let (new_buf, killed, new_cur) = kb_kill_to_start(buf, cur);
-        self.kill_buffer = killed;
-        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
-            if *confirm_active {
-                *confirm_buf = new_buf;
-            } else {
-                *buf = new_buf; *cursor = new_cur;
-            }
-        }
-    }
-
-    pub fn password_ctrl_k(&mut self) {
-        let Some((buf, cur)) = self.password_active_buf_cur() else { return };
-        let (new_buf, killed, new_cur) = kb_kill_to_end(buf, cur);
-        self.kill_buffer = killed;
-        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
-            if *confirm_active {
-                *confirm_buf = new_buf;
-            } else {
-                *buf = new_buf; *cursor = new_cur;
-            }
-        }
-    }
-
-    pub fn password_ctrl_y(&mut self) {
-        let Some((buf, cur)) = self.password_active_buf_cur() else { return };
-        let kill = self.kill_buffer.clone();
-        let (new_buf, new_cur) = kb_yank(buf, cur, &kill);
-        if let SaveState::PasswordEntry { buf, cursor, confirm_buf, confirm_active, .. } = &mut self.save_state {
-            if *confirm_active {
-                *confirm_buf = new_buf;
-            } else {
-                *buf = new_buf; *cursor = new_cur;
-            }
-        }
-    }
-
-    pub fn password_ctrl_a(&mut self) {
-        if let SaveState::PasswordEntry { cursor, confirm_active: false, .. } = &mut self.save_state {
-            *cursor = 0;
-        }
-        // confirm field has no cursor tracking — no-op
-    }
-
-    pub fn password_ctrl_e(&mut self) {
-        if let SaveState::PasswordEntry { buf, cursor, confirm_active: false, .. } = &mut self.save_state {
-            *cursor = buf.chars().count();
-        }
-        // confirm field has no cursor tracking — no-op
-    }
-
-    pub fn password_cursor_left(&mut self) {
-        if let SaveState::PasswordEntry { cursor, confirm_active: false, .. } = &mut self.save_state {
-            if *cursor > 0 { *cursor -= 1; }
-        }
-    }
-
-    pub fn password_cursor_right(&mut self) {
-        if let SaveState::PasswordEntry { buf, cursor, confirm_active: false, .. } = &mut self.save_state {
-            if *cursor < buf.chars().count() { *cursor += 1; }
-        }
-    }
-
-    pub fn password_word_left(&mut self) {
-        let (buf, cur) = match &self.save_state {
-            SaveState::PasswordEntry { buf, cursor, confirm_active: false, .. } => (buf.clone(), *cursor),
-            _ => return,
-        };
-        let new_cur = buf_word_left(&buf, cur);
-        if let SaveState::PasswordEntry { cursor, .. } = &mut self.save_state { *cursor = new_cur; }
-    }
-
-    pub fn password_word_right(&mut self) {
-        let (buf, cur) = match &self.save_state {
-            SaveState::PasswordEntry { buf, cursor, confirm_active: false, .. } => (buf.clone(), *cursor),
-            _ => return,
-        };
-        let new_cur = buf_word_right(&buf, cur);
-        if let SaveState::PasswordEntry { cursor, .. } = &mut self.save_state { *cursor = new_cur; }
     }
 
     // ── item_search ───────────────────────────────────────────────────────────

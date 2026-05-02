@@ -16,9 +16,6 @@ pub enum MenuAction {
     CategoryMove,
     FileSave,
     FileProperties,
-    FileEnableEncryption,
-    FileChangePassword,
-    FileDisableEncryption,
     Customize,
 }
 
@@ -42,20 +39,9 @@ pub struct TopItem {
 
 // ── View screen sub-menus ─────────────────────────────────────────────────────
 
-static ENCRYPTION_SUB: &[SubSubItem] = &[
-    SubSubItem { label: "Enable",   description: "Enable encryption for this file",          action: MenuAction::FileEnableEncryption },
-    SubSubItem { label: "Change",   description: "Change the encryption password",           action: MenuAction::FileChangePassword },
-    SubSubItem { label: "Disable",  description: "Remove encryption from this file",         action: MenuAction::FileDisableEncryption },
-];
-
 static FILE_SUB: &[SubItem] = &[
-    SubItem { label: "Retrieve",    description: "Retrieve a saved view from disk",          action: MenuAction::Noop,     children: None },
-    SubItem { label: "Save",        description: "Save current work to disk (Ctrl-S)",       action: MenuAction::FileSave, children: None },
-    SubItem { label: "Encryption",  description: "Enable, change, or disable encryption",    action: MenuAction::Noop,     children: Some(ENCRYPTION_SUB) },
-    SubItem { label: "Abandon",     description: "Abandon changes since last save",          action: MenuAction::Noop,     children: None },
+    SubItem { label: "Save",        description: "Save current work to disk (Ctrl-S)",       action: MenuAction::FileSave,       children: None },
     SubItem { label: "Properties",  description: "View or change file properties",           action: MenuAction::FileProperties, children: None },
-    SubItem { label: "Transfer",    description: "Transfer data to or from another file",    action: MenuAction::Noop,     children: None },
-    SubItem { label: "Maintenance", description: "Perform file maintenance operations",      action: MenuAction::Noop,     children: None },
 ];
 
 static ITEM_SUB: &[SubItem] = &[
