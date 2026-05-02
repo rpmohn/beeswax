@@ -21,12 +21,14 @@ pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize)]
 pub struct SaveData {
-    pub version:      u32,
-    pub categories:   Vec<Category>,
-    pub items:        Vec<Item>,   // global item pool shared across all views
-    pub views:        Vec<View>,   // views[current_view] is the active view
-    pub current_view: usize,
-    pub next_id:      usize,
+    pub version:          u32,
+    pub categories:       Vec<Category>,
+    pub items:            Vec<Item>,   // global item pool shared across all views
+    pub views:            Vec<View>,   // views[current_view] is the active view
+    pub current_view:     usize,
+    pub next_id:          usize,
+    #[serde(default)]
+    pub file_description: String,
 }
 
 // ── Migration ─────────────────────────────────────────────────────────────────
@@ -88,12 +90,13 @@ fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
             let v1: SaveDataV1 = serde_json::from_str(json).map_err(|_| LoadError::Corrupt)?;
             let items = v1.view.items.clone();
             Ok(SaveData {
-                version:      3,
-                categories:   v1.categories,
+                version:          3,
+                categories:       v1.categories,
                 items,
-                views:        vec![view_v1_to_view(v1.view)],
-                current_view: 0,
-                next_id:      v1.next_id,
+                views:            vec![view_v1_to_view(v1.view)],
+                current_view:     0,
+                next_id:          v1.next_id,
+                file_description: String::new(),
             })
         }
         2 => {
@@ -110,12 +113,13 @@ fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
             }
             let views: Vec<View> = v2.views.into_iter().map(view_v1_to_view).collect();
             Ok(SaveData {
-                version:      3,
-                categories:   v2.categories,
+                version:          3,
+                categories:       v2.categories,
                 items,
                 views,
-                current_view: v2.current_view,
-                next_id:      v2.next_id,
+                current_view:     v2.current_view,
+                next_id:          v2.next_id,
+                file_description: String::new(),
             })
         }
         3 => serde_json::from_str(json).map_err(|_| LoadError::Corrupt),
@@ -179,13 +183,14 @@ fn clone_view(view: &View) -> View {
 }
 
 pub fn save_plain(
-    path:           &Path,
-    categories:     &[Category],
-    items:          &[Item],
-    view:           &View,
-    inactive_views: &[View],
-    view_order_idx: usize,
-    next_id:        usize,
+    path:             &Path,
+    categories:       &[Category],
+    items:            &[Item],
+    view:             &View,
+    inactive_views:   &[View],
+    view_order_idx:   usize,
+    next_id:          usize,
+    file_description: &str,
 ) -> io::Result<()> {
     let voi = view_order_idx.min(inactive_views.len());
     let mut views: Vec<View> = Vec::with_capacity(1 + inactive_views.len());
@@ -193,12 +198,13 @@ pub fn save_plain(
     views.push(clone_view(view));
     views.extend(inactive_views[voi..].iter().map(clone_view));
     let data = SaveData {
-        version:      SCHEMA_VERSION,
-        categories:   categories.to_vec(),
-        items:        items.to_vec(),
+        version:          SCHEMA_VERSION,
+        categories:       categories.to_vec(),
+        items:            items.to_vec(),
         views,
-        current_view: voi,
+        current_view:     voi,
         next_id,
+        file_description: file_description.to_string(),
     };
     let json = serde_json::to_string(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
@@ -211,14 +217,15 @@ pub fn save_plain(
 }
 
 pub fn save_encrypted(
-    path:           &Path,
-    password:       &str,
-    categories:     &[Category],
-    items:          &[Item],
-    view:           &View,
-    inactive_views: &[View],
-    view_order_idx: usize,
-    next_id:        usize,
+    path:             &Path,
+    password:         &str,
+    categories:       &[Category],
+    items:            &[Item],
+    view:             &View,
+    inactive_views:   &[View],
+    view_order_idx:   usize,
+    next_id:          usize,
+    file_description: &str,
 ) -> io::Result<()> {
     let voi = view_order_idx.min(inactive_views.len());
     let mut views: Vec<View> = Vec::with_capacity(1 + inactive_views.len());
@@ -226,12 +233,13 @@ pub fn save_encrypted(
     views.push(clone_view(view));
     views.extend(inactive_views[voi..].iter().map(clone_view));
     let data = SaveData {
-        version:      SCHEMA_VERSION,
-        categories:   categories.to_vec(),
-        items:        items.to_vec(),
+        version:          SCHEMA_VERSION,
+        categories:       categories.to_vec(),
+        items:            items.to_vec(),
         views,
-        current_view: voi,
+        current_view:     voi,
         next_id,
+        file_description: file_description.to_string(),
     };
     let json = serde_json::to_string(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 

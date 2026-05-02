@@ -429,6 +429,21 @@ pub enum AskChoice { Yes, No }
 #[derive(Clone, Copy, PartialEq)]
 pub enum PasswordPurpose { Enable, Change, Disable }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum FilePropsField { Description, Password }
+
+pub struct FilePropsPasswordSub {
+    pub has_current: bool,   // true when file currently has a session password
+    pub cur_buf:     String, // "Current password" input (only when has_current)
+    pub pw_buf:      String, // "Password" / "New password"
+    pub pw2_buf:     String, // "Re-enter password"
+    /// Which row is focused.
+    /// has_current=false: 0=pw, 1=pw2
+    /// has_current=true:  0=cur, 1=pw, 2=pw2
+    pub active:      u8,
+    pub error:       Option<String>,
+}
+
 pub enum SaveState {
     Idle,
     AskOnQuit { choice: AskChoice },
@@ -439,6 +454,13 @@ pub enum SaveState {
         confirm_buf:    String,
         confirm_active: bool,
         error:          Option<String>,
+    },
+    FileProps {
+        desc_buf:     String,
+        desc_cursor:  usize,
+        desc_editing: bool,
+        active_field: FilePropsField,
+        password_sub: Option<FilePropsPasswordSub>,
     },
 }
 
@@ -587,6 +609,7 @@ pub struct App {
     // Persistence
     pub file_path:        Option<PathBuf>,
     pub session_password: Option<String>,
+    pub file_description: String,
     pub dirty:            bool,
     /// Undo-stack depth at the time of the last successful save.
     /// `None` means the file has never been saved (new file) or the save point
@@ -646,6 +669,27 @@ fn kb_yank(buf: &str, cursor: usize, kill: &str) -> (String, usize) {
     let new_buf = format!("{}{}{}", &buf[..bp], kill, &buf[bp..]);
     let new_cursor = cursor + kill.chars().count();
     (new_buf, new_cursor)
+}
+
+// ── Word-movement pure helpers ────────────────────────────────────────────────
+
+/// Move cursor left past whitespace then past a word. Works on any text buffer.
+pub fn buf_word_left(buf: &str, cur: usize) -> usize {
+    let chars: Vec<char> = buf.chars().collect();
+    let mut pos = cur;
+    while pos > 0 && chars[pos - 1].is_whitespace() { pos -= 1; }
+    while pos > 0 && !chars[pos - 1].is_whitespace() { pos -= 1; }
+    pos
+}
+
+/// Move cursor right past a word then past whitespace. Works on any text buffer.
+pub fn buf_word_right(buf: &str, cur: usize) -> usize {
+    let chars: Vec<char> = buf.chars().collect();
+    let len = chars.len();
+    let mut pos = cur;
+    while pos < len && !chars[pos].is_whitespace() { pos += 1; }
+    while pos < len && chars[pos].is_whitespace() { pos += 1; }
+    pos
 }
 
 // ── Word-wrap helpers (for item text cursor navigation) ───────────────────────
@@ -1940,6 +1984,7 @@ impl App {
             pending_note: None,
             file_path:        None,
             session_password: None,
+            file_description: String::new(),
             dirty:            false,
             save_depth:       None,
             save_state:       SaveState::Idle,
@@ -1995,6 +2040,7 @@ impl App {
             pending_note: None,
             file_path:        path,
             session_password: password,
+            file_description: data.file_description,
             dirty:            false,
             save_depth:       Some(0),  // undo stack is empty; current state matches disk
             save_state:       SaveState::Idle,
@@ -2199,6 +2245,34 @@ impl App {
             }
         }
     }
+    pub fn view_add_word_left(&mut self) {
+        let (buf, cur) = match &self.view_mode {
+            ViewMode::Add { active_field: ViewAddField::Name, name_buf, name_cursor, .. } =>
+                (name_buf.clone(), *name_cursor),
+            ViewMode::Add { sec_buf, sec_cursor, .. } =>
+                (sec_buf.clone(), *sec_cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        if let ViewMode::Add { active_field, name_cursor, sec_cursor, .. } = &mut self.view_mode {
+            if *active_field == ViewAddField::Name { *name_cursor = new_cur; } else { *sec_cursor = new_cur; }
+        }
+    }
+
+    pub fn view_add_word_right(&mut self) {
+        let (buf, cur) = match &self.view_mode {
+            ViewMode::Add { active_field: ViewAddField::Name, name_buf, name_cursor, .. } =>
+                (name_buf.clone(), *name_cursor),
+            ViewMode::Add { sec_buf, sec_cursor, .. } =>
+                (sec_buf.clone(), *sec_cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        if let ViewMode::Add { active_field, name_cursor, sec_cursor, .. } = &mut self.view_mode {
+            if *active_field == ViewAddField::Name { *name_cursor = new_cur; } else { *sec_cursor = new_cur; }
+        }
+    }
+
     pub fn view_add_tab(&mut self) {
         if let ViewMode::Add { active_field, .. } = &mut self.view_mode {
             *active_field = match *active_field {
@@ -2517,18 +2591,14 @@ impl App {
             MenuAction::ViewAdd          => self.view_add_open(),
             MenuAction::ViewProperties   => self.open_view_props(),
             MenuAction::FileSave                => { self.handle_file_save(); }
+            MenuAction::FileProperties          => { self.open_file_props(); }
             MenuAction::FileEnableEncryption
             | MenuAction::FileChangePassword
             | MenuAction::FileDisableEncryption => { self.handle_file_encryption(action); }
             MenuAction::Customize => { self.open_customize(); return; }
             MenuAction::Noop => {}
         }
-        // Don't close the menu if we opened a password dialog
-        if !matches!(self.save_state, SaveState::PasswordEntry { .. }) {
-            self.menu = MenuState::Closed;
-        } else {
-            self.menu = MenuState::Closed;
-        }
+        self.menu = MenuState::Closed;
     }
 
     pub fn menu_left(&mut self) {
@@ -2962,6 +3032,30 @@ impl App {
             Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } => {
                 *cursor = buffer.chars().count();
             }
+            _ => {}
+        }
+    }
+
+    pub fn edit_word_left(&mut self) {
+        let (buf, cur) = match &self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } => (buffer.clone(), *cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        match &mut self.mode {
+            Mode::Edit { cursor, .. } | Mode::Create { cursor, .. } => { *cursor = new_cur; }
+            _ => {}
+        }
+    }
+
+    pub fn edit_word_right(&mut self) {
+        let (buf, cur) = match &self.mode {
+            Mode::Edit { buffer, cursor, .. } | Mode::Create { buffer, cursor } => (buffer.clone(), *cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        match &mut self.mode {
+            Mode::Edit { cursor, .. } | Mode::Create { cursor, .. } => { *cursor = new_cur; }
             _ => {}
         }
     }
@@ -3514,6 +3608,24 @@ impl App {
         }
     }
 
+    pub fn item_props_text_word_left(&mut self) {
+        let (buf, cur) = match &self.mode {
+            Mode::ItemProps { edit_buf: Some((b, c)), .. } => (b.clone(), *c),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode { *cur = new_cur; }
+    }
+
+    pub fn item_props_text_word_right(&mut self) {
+        let (buf, cur) = match &self.mode {
+            Mode::ItemProps { edit_buf: Some((b, c)), .. } => (b.clone(), *c),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode { *cur = new_cur; }
+    }
+
     /// Build sorted assigned-category list: (cat_id, name, kind, stored_value).
     pub fn item_props_assigned(&self, gi: usize) -> Vec<(usize, String, CategoryKind, String)> {
         let flat = flatten_cats(&self.categories);
@@ -4022,6 +4134,20 @@ impl App {
         }
     }
 
+    pub fn col_form_word_left(&mut self) {
+        if let ColMode::Form { active_field: ColFormField::Width, width_buf, width_cur, .. } = &self.col_mode {
+            let new_cur = buf_word_left(width_buf, *width_cur);
+            if let ColMode::Form { width_cur, .. } = &mut self.col_mode { *width_cur = new_cur; }
+        }
+    }
+
+    pub fn col_form_word_right(&mut self) {
+        if let ColMode::Form { active_field: ColFormField::Width, width_buf, width_cur, .. } = &self.col_mode {
+            let new_cur = buf_word_right(width_buf, *width_cur);
+            if let ColMode::Form { width_cur, .. } = &mut self.col_mode { *width_cur = new_cur; }
+        }
+    }
+
     pub fn col_open_choices(&mut self) {
         let active = match &self.col_mode {
             ColMode::Form { active_field, .. } => *active_field,
@@ -4393,6 +4519,46 @@ impl App {
         }
     }
 
+    pub fn col_props_word_left(&mut self) {
+        let (buf, cur, field) = match &self.col_mode {
+            ColMode::Props { active_field, head_buf, head_cur, width_buf, width_cur, .. } =>
+                match active_field {
+                    PropsField::Head  => (head_buf.clone(),  *head_cur,  PropsField::Head),
+                    PropsField::Width => (width_buf.clone(), *width_cur, PropsField::Width),
+                    _ => return,
+                },
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        if let ColMode::Props { active_field, head_cur, width_cur, .. } = &mut self.col_mode {
+            match (active_field, field) {
+                (PropsField::Head,  PropsField::Head)  => *head_cur  = new_cur,
+                (PropsField::Width, PropsField::Width) => *width_cur = new_cur,
+                _ => {}
+            }
+        }
+    }
+
+    pub fn col_props_word_right(&mut self) {
+        let (buf, cur, field) = match &self.col_mode {
+            ColMode::Props { active_field, head_buf, head_cur, width_buf, width_cur, .. } =>
+                match active_field {
+                    PropsField::Head  => (head_buf.clone(),  *head_cur,  PropsField::Head),
+                    PropsField::Width => (width_buf.clone(), *width_cur, PropsField::Width),
+                    _ => return,
+                },
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        if let ColMode::Props { active_field, head_cur, width_cur, .. } = &mut self.col_mode {
+            match (active_field, field) {
+                (PropsField::Head,  PropsField::Head)  => *head_cur  = new_cur,
+                (PropsField::Width, PropsField::Width) => *width_cur = new_cur,
+                _ => {}
+            }
+        }
+    }
+
     pub fn cursor_col_left(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
         self.sub_row = 0;
@@ -4584,6 +4750,20 @@ impl App {
     pub fn search_cursor_right(&mut self) {
         if let Some((buf, cur)) = &mut self.item_search {
             if *cur < buf.chars().count() { *cur += 1; }
+        }
+    }
+
+    pub fn search_word_left(&mut self) {
+        if let Some((buf, cur)) = &self.item_search {
+            let new_cur = buf_word_left(buf, *cur);
+            if let Some((_, cur)) = &mut self.item_search { *cur = new_cur; }
+        }
+    }
+
+    pub fn search_word_right(&mut self) {
+        if let Some((buf, cur)) = &self.item_search {
+            let new_cur = buf_word_right(buf, *cur);
+            if let Some((_, cur)) = &mut self.item_search { *cur = new_cur; }
         }
     }
 
@@ -5047,6 +5227,26 @@ impl App {
         {
             if *head_cur < head_buf.chars().count() { *head_cur += 1; }
         }
+    }
+
+    pub fn sec_props_head_word_left(&mut self) {
+        let (buf, cur) = match &self.sec_mode {
+            SectionMode::Props { head_buf, head_cur, active_field: SecPropsField::Head, .. } =>
+                (head_buf.clone(), *head_cur),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        if let SectionMode::Props { head_cur, .. } = &mut self.sec_mode { *head_cur = new_cur; }
+    }
+
+    pub fn sec_props_head_word_right(&mut self) {
+        let (buf, cur) = match &self.sec_mode {
+            SectionMode::Props { head_buf, head_cur, active_field: SecPropsField::Head, .. } =>
+                (head_buf.clone(), *head_cur),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        if let SectionMode::Props { head_cur, .. } = &mut self.sec_mode { *head_cur = new_cur; }
     }
 
     pub fn sec_props_confirm(&mut self) {
@@ -5515,6 +5715,30 @@ impl App {
         }
     }
 
+    pub fn cat_edit_word_left(&mut self) {
+        let (buf, cur) = match &self.cat_state.mode {
+            CatMode::Edit { buffer, cursor } | CatMode::Create { buffer, cursor, .. } => (buffer.clone(), *cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        match &mut self.cat_state.mode {
+            CatMode::Edit { cursor, .. } | CatMode::Create { cursor, .. } => { *cursor = new_cur; }
+            _ => {}
+        }
+    }
+
+    pub fn cat_edit_word_right(&mut self) {
+        let (buf, cur) = match &self.cat_state.mode {
+            CatMode::Edit { buffer, cursor } | CatMode::Create { buffer, cursor, .. } => (buffer.clone(), *cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        match &mut self.cat_state.mode {
+            CatMode::Edit { cursor, .. } | CatMode::Create { cursor, .. } => { *cursor = new_cur; }
+            _ => {}
+        }
+    }
+
     // ── CatMgr mode transitions ───────────────────────────────────────────────
 
     pub fn cat_begin_edit(&mut self) {
@@ -5794,6 +6018,52 @@ impl App {
             CatPropsField::ExclChildren   => *excl_children    = !*excl_children,
             CatPropsField::MatchCatName   => *match_cat_name   = !*match_cat_name,
             CatPropsField::MatchShortName => *match_short_name = !*match_short_name,
+        }
+    }
+
+    pub fn cat_props_word_left(&mut self) {
+        let CatMode::Props { active_field, name_buf, name_cur, short_name_buf, short_name_cur,
+            also_match_buf, also_match_cur, note_file_buf, note_file_cur, .. }
+            = &self.cat_state.mode else { return };
+        let (buf, cur) = match active_field {
+            CatPropsField::Name      => (name_buf.clone(),       *name_cur),
+            CatPropsField::ShortName => (short_name_buf.clone(), *short_name_cur),
+            CatPropsField::AlsoMatch => (also_match_buf.clone(), *also_match_cur),
+            CatPropsField::NoteFile  => (note_file_buf.clone(),  *note_file_cur),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        let CatMode::Props { active_field, name_cur, short_name_cur, also_match_cur, note_file_cur, .. }
+            = &mut self.cat_state.mode else { return };
+        match active_field {
+            CatPropsField::Name      => *name_cur       = new_cur,
+            CatPropsField::ShortName => *short_name_cur = new_cur,
+            CatPropsField::AlsoMatch => *also_match_cur = new_cur,
+            CatPropsField::NoteFile  => *note_file_cur  = new_cur,
+            _ => {}
+        }
+    }
+
+    pub fn cat_props_word_right(&mut self) {
+        let CatMode::Props { active_field, name_buf, name_cur, short_name_buf, short_name_cur,
+            also_match_buf, also_match_cur, note_file_buf, note_file_cur, .. }
+            = &self.cat_state.mode else { return };
+        let (buf, cur) = match active_field {
+            CatPropsField::Name      => (name_buf.clone(),       *name_cur),
+            CatPropsField::ShortName => (short_name_buf.clone(), *short_name_cur),
+            CatPropsField::AlsoMatch => (also_match_buf.clone(), *also_match_cur),
+            CatPropsField::NoteFile  => (note_file_buf.clone(),  *note_file_cur),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        let CatMode::Props { active_field, name_cur, short_name_cur, also_match_cur, note_file_cur, .. }
+            = &mut self.cat_state.mode else { return };
+        match active_field {
+            CatPropsField::Name      => *name_cur       = new_cur,
+            CatPropsField::ShortName => *short_name_cur = new_cur,
+            CatPropsField::AlsoMatch => *also_match_cur = new_cur,
+            CatPropsField::NoteFile  => *note_file_cur  = new_cur,
+            _ => {}
         }
     }
 
@@ -6398,10 +6668,11 @@ impl App {
             None    => return Ok(()),
         };
         self.sync_cursor_to_view();
+        let desc = self.file_description.clone();
         let result = if let Some(pw) = &self.session_password.clone() {
-            persist::save_encrypted(&path, pw, &self.categories, &self.items, &self.view, &self.inactive_views, self.view_order_idx, self.next_id)
+            persist::save_encrypted(&path, pw, &self.categories, &self.items, &self.view, &self.inactive_views, self.view_order_idx, self.next_id, &desc)
         } else {
-            persist::save_plain(&path, &self.categories, &self.items, &self.view, &self.inactive_views, self.view_order_idx, self.next_id)
+            persist::save_plain(&path, &self.categories, &self.items, &self.view, &self.inactive_views, self.view_order_idx, self.next_id, &desc)
         };
         if result.is_ok() {
             self.dirty = false;
@@ -6613,6 +6884,251 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    // ── File Properties dialog ────────────────────────────────────────────────
+
+    pub fn open_file_props(&mut self) {
+        let cursor = self.file_description.chars().count();
+        self.save_state = SaveState::FileProps {
+            desc_buf:     self.file_description.clone(),
+            desc_cursor:  cursor,
+            desc_editing: false,
+            active_field: FilePropsField::Description,
+            password_sub: None,
+        };
+    }
+
+    pub fn file_props_tab(&mut self) {
+        if let SaveState::FileProps { active_field, desc_editing, password_sub: None, .. } = &mut self.save_state {
+            if *active_field == FilePropsField::Description { *desc_editing = false; }
+            *active_field = match *active_field {
+                FilePropsField::Description => FilePropsField::Password,
+                FilePropsField::Password    => FilePropsField::Description,
+            };
+        }
+    }
+
+    pub fn file_props_desc_begin_edit(&mut self) {
+        if let SaveState::FileProps { active_field: FilePropsField::Description, desc_editing, .. } = &mut self.save_state {
+            *desc_editing = true;
+        }
+    }
+
+    pub fn file_props_char(&mut self, ch: char) {
+        if let SaveState::FileProps { active_field: FilePropsField::Description, desc_buf, desc_cursor, .. } = &mut self.save_state {
+            let byte_pos = char_to_byte(desc_buf, *desc_cursor);
+            desc_buf.insert(byte_pos, ch);
+            *desc_cursor += 1;
+        }
+    }
+
+    pub fn file_props_backspace(&mut self) {
+        if let SaveState::FileProps { active_field: FilePropsField::Description, desc_buf, desc_cursor, .. } = &mut self.save_state {
+            if *desc_cursor > 0 {
+                *desc_cursor -= 1;
+                let byte_pos = char_to_byte(desc_buf, *desc_cursor);
+                desc_buf.remove(byte_pos);
+            }
+        }
+    }
+
+    pub fn file_props_ctrl_u(&mut self) {
+        let Some((buf, cur)) = (match &self.save_state {
+            SaveState::FileProps { active_field: FilePropsField::Description, desc_buf, desc_cursor, .. } =>
+                Some((desc_buf.clone(), *desc_cursor)),
+            _ => None,
+        }) else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_start(&buf, cur);
+        self.kill_buffer = killed;
+        if let SaveState::FileProps { desc_buf, desc_cursor, .. } = &mut self.save_state {
+            *desc_buf = new_buf; *desc_cursor = new_cur;
+        }
+    }
+
+    pub fn file_props_ctrl_k(&mut self) {
+        let Some((buf, cur)) = (match &self.save_state {
+            SaveState::FileProps { active_field: FilePropsField::Description, desc_buf, desc_cursor, .. } =>
+                Some((desc_buf.clone(), *desc_cursor)),
+            _ => None,
+        }) else { return };
+        let (new_buf, killed, new_cur) = kb_kill_to_end(&buf, cur);
+        self.kill_buffer = killed;
+        if let SaveState::FileProps { desc_buf, desc_cursor, .. } = &mut self.save_state {
+            *desc_buf = new_buf; *desc_cursor = new_cur;
+        }
+    }
+
+    pub fn file_props_ctrl_y(&mut self) {
+        let is_desc = matches!(&self.save_state,
+            SaveState::FileProps { active_field: FilePropsField::Description, .. });
+        if !is_desc { return; }
+        let Some((buf, cur)) = (match &self.save_state {
+            SaveState::FileProps { desc_buf, desc_cursor, .. } => Some((desc_buf.clone(), *desc_cursor)),
+            _ => None,
+        }) else { return };
+        let kill = self.kill_buffer.clone();
+        let (new_buf, new_cur) = kb_yank(&buf, cur, &kill);
+        if let SaveState::FileProps { desc_buf, desc_cursor, .. } = &mut self.save_state {
+            *desc_buf = new_buf; *desc_cursor = new_cur;
+        }
+    }
+
+    pub fn file_props_ctrl_a(&mut self) {
+        if let SaveState::FileProps { active_field: FilePropsField::Description, desc_cursor, .. } = &mut self.save_state {
+            *desc_cursor = 0;
+        }
+    }
+
+    pub fn file_props_ctrl_e(&mut self) {
+        if let SaveState::FileProps { active_field: FilePropsField::Description, desc_buf, desc_cursor, .. } = &mut self.save_state {
+            *desc_cursor = desc_buf.chars().count();
+        }
+    }
+
+    pub fn file_props_cursor_left(&mut self) {
+        if let SaveState::FileProps { active_field: FilePropsField::Description, desc_cursor, .. } = &mut self.save_state {
+            if *desc_cursor > 0 { *desc_cursor -= 1; }
+        }
+    }
+
+    pub fn file_props_cursor_right(&mut self) {
+        if let SaveState::FileProps { active_field: FilePropsField::Description, desc_buf, desc_cursor, .. } = &mut self.save_state {
+            if *desc_cursor < desc_buf.chars().count() { *desc_cursor += 1; }
+        }
+    }
+
+    pub fn file_props_word_left(&mut self) {
+        let Some((buf, cur)) = (match &self.save_state {
+            SaveState::FileProps { active_field: FilePropsField::Description, desc_buf, desc_cursor, .. } =>
+                Some((desc_buf.clone(), *desc_cursor)),
+            _ => None,
+        }) else { return };
+        let new_cur = buf_word_left(&buf, cur);
+        if let SaveState::FileProps { desc_cursor, .. } = &mut self.save_state { *desc_cursor = new_cur; }
+    }
+
+    pub fn file_props_word_right(&mut self) {
+        let Some((buf, cur)) = (match &self.save_state {
+            SaveState::FileProps { active_field: FilePropsField::Description, desc_buf, desc_cursor, .. } =>
+                Some((desc_buf.clone(), *desc_cursor)),
+            _ => None,
+        }) else { return };
+        let new_cur = buf_word_right(&buf, cur);
+        if let SaveState::FileProps { desc_cursor, .. } = &mut self.save_state { *desc_cursor = new_cur; }
+    }
+
+    pub fn file_props_confirm(&mut self) {
+        if let SaveState::FileProps { password_sub: Some(_), .. } = &self.save_state {
+            self.file_props_pw_confirm();
+            return;
+        }
+        let desc = match &self.save_state {
+            SaveState::FileProps { desc_buf, .. } => desc_buf.clone(),
+            _ => return,
+        };
+        self.file_description = desc;
+        self.dirty = true;
+        self.save_state = SaveState::Idle;
+    }
+
+    pub fn file_props_cancel(&mut self) {
+        if let SaveState::FileProps { password_sub: Some(_), .. } = &self.save_state {
+            if let SaveState::FileProps { password_sub, .. } = &mut self.save_state {
+                *password_sub = None;
+            }
+            return;
+        }
+        if let SaveState::FileProps { desc_editing: true, .. } = &self.save_state {
+            let orig = self.file_description.clone();
+            if let SaveState::FileProps { desc_buf, desc_cursor, desc_editing, .. } = &mut self.save_state {
+                *desc_cursor = orig.chars().count();
+                *desc_buf = orig;
+                *desc_editing = false;
+            }
+            return;
+        }
+        self.save_state = SaveState::Idle;
+    }
+
+    pub fn file_props_open_password(&mut self) {
+        if !matches!(&self.save_state, SaveState::FileProps { active_field: FilePropsField::Password, password_sub: None, .. }) {
+            return;
+        }
+        let has_current = self.session_password.is_some();
+        if let SaveState::FileProps { password_sub, .. } = &mut self.save_state {
+            *password_sub = Some(FilePropsPasswordSub {
+                has_current,
+                cur_buf:     String::new(),
+                pw_buf:      String::new(),
+                pw2_buf:     String::new(),
+                active:      0,
+                error:       None,
+            });
+        }
+    }
+
+    pub fn file_props_pw_tab(&mut self) {
+        if let SaveState::FileProps { password_sub: Some(sub), .. } = &mut self.save_state {
+            let max = if sub.has_current { 2u8 } else { 1u8 };
+            sub.active = (sub.active + 1) % (max + 1);
+            sub.error = None;
+        }
+    }
+
+    pub fn file_props_pw_char(&mut self, ch: char) {
+        if let SaveState::FileProps { password_sub: Some(sub), .. } = &mut self.save_state {
+            match (sub.has_current, sub.active) {
+                (false, 0) | (true, 1) => sub.pw_buf.push(ch),
+                (false, 1) | (true, 2) => sub.pw2_buf.push(ch),
+                (true,  0)             => sub.cur_buf.push(ch),
+                _                      => {}
+            }
+        }
+    }
+
+    pub fn file_props_pw_backspace(&mut self) {
+        if let SaveState::FileProps { password_sub: Some(sub), .. } = &mut self.save_state {
+            match (sub.has_current, sub.active) {
+                (false, 0) | (true, 1) => { sub.pw_buf.pop(); }
+                (false, 1) | (true, 2) => { sub.pw2_buf.pop(); }
+                (true,  0)             => { sub.cur_buf.pop(); }
+                _                      => {}
+            }
+        }
+    }
+
+    pub fn file_props_pw_confirm(&mut self) {
+        let (has_current, cur_buf, pw_buf, pw2_buf) = match &self.save_state {
+            SaveState::FileProps { password_sub: Some(sub), .. } =>
+                (sub.has_current, sub.cur_buf.clone(), sub.pw_buf.clone(), sub.pw2_buf.clone()),
+            _ => return,
+        };
+
+        if has_current {
+            if self.session_password.as_deref() != Some(&cur_buf) {
+                if let SaveState::FileProps { password_sub: Some(sub), .. } = &mut self.save_state {
+                    sub.error  = Some("Current password is incorrect".to_string());
+                    sub.active = 0;
+                }
+                return;
+            }
+        }
+
+        if pw_buf != pw2_buf {
+            if let SaveState::FileProps { password_sub: Some(sub), .. } = &mut self.save_state {
+                sub.error  = Some("Passwords do not match".to_string());
+                sub.pw2_buf.clear();
+                sub.active = if sub.has_current { 2 } else { 1 };
+            }
+            return;
+        }
+
+        self.session_password = if pw_buf.is_empty() { None } else { Some(pw_buf) };
+        self.dirty = true;
+        if let SaveState::FileProps { password_sub, .. } = &mut self.save_state {
+            *password_sub = None;
         }
     }
 
@@ -6840,6 +7356,24 @@ impl App {
         }
     }
 
+    pub fn vmgr_rename_word_left(&mut self) {
+        let (buf, cur) = match &self.vmgr_state.mode {
+            ViewMgrMode::Rename { buffer, cursor } => (buffer.clone(), *cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        if let ViewMgrMode::Rename { cursor, .. } = &mut self.vmgr_state.mode { *cursor = new_cur; }
+    }
+
+    pub fn vmgr_rename_word_right(&mut self) {
+        let (buf, cur) = match &self.vmgr_state.mode {
+            ViewMgrMode::Rename { buffer, cursor } => (buffer.clone(), *cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        if let ViewMgrMode::Rename { cursor, .. } = &mut self.vmgr_state.mode { *cursor = new_cur; }
+    }
+
     pub fn vmgr_rename_confirm(&mut self) {
         if let ViewMgrMode::Rename { buffer, .. } = &self.vmgr_state.mode {
             let name = buffer.trim().to_string();
@@ -7022,6 +7556,24 @@ impl App {
         if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut self.vmgr_state.mode {
             if *name_cur < name_buf.chars().count() { *name_cur += 1; }
         }
+    }
+
+    pub fn vmgr_props_name_word_left(&mut self) {
+        let (buf, cur) = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { name_buf, name_cur, .. } => (name_buf.clone(), *name_cur),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        if let ViewMgrMode::Props { name_cur, .. } = &mut self.vmgr_state.mode { *name_cur = new_cur; }
+    }
+
+    pub fn vmgr_props_name_word_right(&mut self) {
+        let (buf, cur) = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { name_buf, name_cur, .. } => (name_buf.clone(), *name_cur),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        if let ViewMgrMode::Props { name_cur, .. } = &mut self.vmgr_state.mode { *name_cur = new_cur; }
     }
 
     pub fn vmgr_props_confirm(&mut self) {
@@ -7946,6 +8498,7 @@ impl App {
                .map_or(false, |s| matches!(&s.sub_mode, CustomizeSubMode::EditHex { .. }))
         || matches!(&self.view_mode, ViewMode::Add { .. })
         || matches!(&self.save_state, SaveState::PasswordEntry { .. })
+        || matches!(&self.save_state, SaveState::FileProps { .. })
         || self.item_search.is_some()
     }
 
@@ -8584,6 +9137,36 @@ impl App {
             *cursor = buf.chars().count();
         }
         // confirm field has no cursor tracking — no-op
+    }
+
+    pub fn password_cursor_left(&mut self) {
+        if let SaveState::PasswordEntry { cursor, confirm_active: false, .. } = &mut self.save_state {
+            if *cursor > 0 { *cursor -= 1; }
+        }
+    }
+
+    pub fn password_cursor_right(&mut self) {
+        if let SaveState::PasswordEntry { buf, cursor, confirm_active: false, .. } = &mut self.save_state {
+            if *cursor < buf.chars().count() { *cursor += 1; }
+        }
+    }
+
+    pub fn password_word_left(&mut self) {
+        let (buf, cur) = match &self.save_state {
+            SaveState::PasswordEntry { buf, cursor, confirm_active: false, .. } => (buf.clone(), *cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_left(&buf, cur);
+        if let SaveState::PasswordEntry { cursor, .. } = &mut self.save_state { *cursor = new_cur; }
+    }
+
+    pub fn password_word_right(&mut self) {
+        let (buf, cur) = match &self.save_state {
+            SaveState::PasswordEntry { buf, cursor, confirm_active: false, .. } => (buf.clone(), *cursor),
+            _ => return,
+        };
+        let new_cur = buf_word_right(&buf, cur);
+        if let SaveState::PasswordEntry { cursor, .. } = &mut self.save_state { *cursor = new_cur; }
     }
 
     // ── item_search ───────────────────────────────────────────────────────────

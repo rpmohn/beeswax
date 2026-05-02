@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, FilterState, FKeyMod, MenuState, Mode, NavMode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, PasswordPurpose, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode, ViewPropsField};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -56,6 +56,12 @@ pub fn handle_event(app: &mut App, event: Event) {
     // Password-entry dialog takes priority
     if matches!(app.save_state, SaveState::PasswordEntry { .. }) {
         handle_password_entry(app, code, modifiers);
+        return;
+    }
+
+    // File Properties dialog takes priority
+    if matches!(app.save_state, SaveState::FileProps { .. }) {
+        handle_file_props(app, code, modifiers);
         return;
     }
 
@@ -122,6 +128,8 @@ pub fn handle_event(app: &mut App, event: Event) {
                 KeyCode::Char('y') | KeyCode::Char('Y') => { app.search_ctrl_y(); return; }
                 KeyCode::Char('a') | KeyCode::Char('A') => { app.search_ctrl_a(); return; }
                 KeyCode::Char('e') | KeyCode::Char('E') => { app.search_ctrl_e(); return; }
+                KeyCode::Left                           => { app.search_word_left();  return; }
+                KeyCode::Right                          => { app.search_word_right(); return; }
                 _ => {}
             }
         }
@@ -305,6 +313,8 @@ fn handle_password_entry(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.password_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.password_ctrl_a(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.password_ctrl_e(); return; }
+            KeyCode::Left                           => { app.password_word_left();  return; }
+            KeyCode::Right                          => { app.password_word_right(); return; }
             _ => {}
         }
     }
@@ -314,6 +324,10 @@ fn handle_password_entry(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
         KeyCode::Tab   => {
             if !is_disable { app.password_entry_tab(); }
         }
+        KeyCode::Left      => app.password_cursor_left(),
+        KeyCode::Right     => app.password_cursor_right(),
+        KeyCode::Home      => app.password_ctrl_a(),
+        KeyCode::End       => app.password_ctrl_e(),
         KeyCode::Backspace => app.password_entry_backspace(),
         KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL)
                          && !modifiers.contains(KeyModifiers::ALT) => app.password_entry_char(c),
@@ -486,6 +500,8 @@ fn handle_view_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.edit_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.edit_cursor_home(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.edit_cursor_end(); return; }
+            KeyCode::Left                           => { app.edit_word_left();  return; }
+            KeyCode::Right                          => { app.edit_word_right(); return; }
             _ => {}
         }
     }
@@ -647,6 +663,8 @@ fn handle_catmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.cat_props_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.cat_props_ctrl_a(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.cat_props_ctrl_e(); return; }
+            KeyCode::Left                           => { app.cat_props_word_left();  return; }
+            KeyCode::Right                          => { app.cat_props_word_right(); return; }
             _ => {}
         }
     }
@@ -690,6 +708,8 @@ fn handle_catmgr_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.cat_edit_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.cat_edit_ctrl_a(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.cat_edit_ctrl_e(); return; }
+            KeyCode::Left                           => { app.cat_edit_word_left();  return; }
+            KeyCode::Right                          => { app.cat_edit_word_right(); return; }
             _ => {}
         }
     }
@@ -735,6 +755,8 @@ fn handle_col_form(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.col_form_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.col_form_ctrl_a(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.col_form_ctrl_e(); return; }
+            KeyCode::Left                           => { app.col_form_word_left();  return; }
+            KeyCode::Right                          => { app.col_form_word_right(); return; }
             _ => {}
         }
     }
@@ -790,6 +812,8 @@ fn handle_col_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.col_props_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.col_props_ctrl_a(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.col_props_ctrl_e(); return; }
+            KeyCode::Left                           => { app.col_props_word_left();  return; }
+            KeyCode::Right                          => { app.col_props_word_right(); return; }
             _ => {}
         }
     }
@@ -950,6 +974,8 @@ fn handle_item_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 KeyCode::Char('y') | KeyCode::Char('Y') => { app.item_props_text_ctrl_y(); return; }
                 KeyCode::Char('a') | KeyCode::Char('A') => { app.item_props_text_ctrl_a(); return; }
                 KeyCode::Char('e') | KeyCode::Char('E') => { app.item_props_text_ctrl_e(); return; }
+                KeyCode::Left                           => { app.item_props_text_word_left();  return; }
+                KeyCode::Right                          => { app.item_props_text_word_right(); return; }
                 _ => {}
             }
         }
@@ -1178,6 +1204,8 @@ fn handle_view_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.view_add_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.view_add_ctrl_a(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.view_add_ctrl_e(); return; }
+            KeyCode::Left                           => { app.view_add_word_left();  return; }
+            KeyCode::Right                          => { app.view_add_word_right(); return; }
             _ => {}
         }
     }
@@ -1256,6 +1284,8 @@ fn handle_vmgr_rename(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.vmgr_rename_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.vmgr_rename_ctrl_a(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.vmgr_rename_ctrl_e(); return; }
+            KeyCode::Left                           => { app.vmgr_rename_word_left();  return; }
+            KeyCode::Right                          => { app.vmgr_rename_word_right(); return; }
             _ => {}
         }
     }
@@ -1292,6 +1322,8 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 KeyCode::Char('y') | KeyCode::Char('Y') => { app.vmgr_props_name_ctrl_y(); return; }
                 KeyCode::Char('a') | KeyCode::Char('A') => { app.vmgr_props_name_ctrl_a(); return; }
                 KeyCode::Char('e') | KeyCode::Char('E') => { app.vmgr_props_name_ctrl_e(); return; }
+                KeyCode::Left                           => { app.vmgr_props_name_word_left();  return; }
+                KeyCode::Right                          => { app.vmgr_props_name_word_right(); return; }
                 _ => {}
             }
         } else {
@@ -1492,6 +1524,8 @@ fn handle_sec_props_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
             KeyCode::Char('y') | KeyCode::Char('Y') => { app.sec_props_head_ctrl_y(); return; }
             KeyCode::Char('a') | KeyCode::Char('A') => { app.sec_props_head_ctrl_a(); return; }
             KeyCode::Char('e') | KeyCode::Char('E') => { app.sec_props_head_ctrl_e(); return; }
+            KeyCode::Left                           => { app.sec_props_head_word_left();  return; }
+            KeyCode::Right                          => { app.sec_props_head_word_right(); return; }
             _ => {}
         }
     }
@@ -1696,6 +1730,67 @@ fn handle_customize_hex(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Backspace => app.customize_hex_backspace(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
                           && !modifiers.contains(KeyModifiers::ALT) => app.customize_hex_char(ch),
+        _ => {}
+    }
+}
+
+fn handle_file_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    let has_pw_sub = matches!(&app.save_state, SaveState::FileProps { password_sub: Some(_), .. });
+
+    if has_pw_sub {
+        // Password sub-window is open — route all input to it
+        match code {
+            KeyCode::Esc   => app.file_props_cancel(),
+            KeyCode::Enter => app.file_props_confirm(),
+            KeyCode::Tab   => app.file_props_pw_tab(),
+            KeyCode::BackTab => app.file_props_pw_tab(),
+            KeyCode::Backspace => app.file_props_pw_backspace(),
+            KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL)
+                             && !modifiers.contains(KeyModifiers::ALT) => app.file_props_pw_char(c),
+            _ => {}
+        }
+        return;
+    }
+
+    let desc_active = matches!(&app.save_state,
+        SaveState::FileProps { active_field: FilePropsField::Description, .. });
+    let desc_editing = matches!(&app.save_state,
+        SaveState::FileProps { active_field: FilePropsField::Description, desc_editing: true, .. });
+
+    if modifiers.contains(KeyModifiers::CONTROL) && desc_editing {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => { app.file_props_ctrl_u(); return; }
+            KeyCode::Char('k') | KeyCode::Char('K') => { app.file_props_ctrl_k(); return; }
+            KeyCode::Char('y') | KeyCode::Char('Y') => { app.file_props_ctrl_y(); return; }
+            KeyCode::Char('a') | KeyCode::Char('A') => { app.file_props_ctrl_a(); return; }
+            KeyCode::Char('e') | KeyCode::Char('E') => { app.file_props_ctrl_e(); return; }
+            KeyCode::Left                           => { app.file_props_word_left();  return; }
+            KeyCode::Right                          => { app.file_props_word_right(); return; }
+            _ => {}
+        }
+    }
+
+    match code {
+        KeyCode::Esc   => app.file_props_cancel(),
+        KeyCode::Enter => app.file_props_confirm(),
+        KeyCode::Tab | KeyCode::Up | KeyCode::Down => app.file_props_tab(),
+        KeyCode::BackTab => app.file_props_tab(),
+        KeyCode::Backspace if desc_editing => app.file_props_backspace(),
+        KeyCode::Left  if desc_editing => app.file_props_cursor_left(),
+        KeyCode::Right if desc_editing => app.file_props_cursor_right(),
+        KeyCode::Home  if desc_editing => app.file_props_ctrl_a(),
+        KeyCode::End   if desc_editing => app.file_props_ctrl_e(),
+        KeyCode::F(2) if desc_active && !desc_editing => app.file_props_desc_begin_edit(),
+        KeyCode::F(2) | KeyCode::F(3) => {
+            // Open password sub-window when Password field is active
+            if !desc_active { app.file_props_open_password(); }
+        }
+        KeyCode::Char('i') if desc_active && !desc_editing
+                           && app.nav_mode == NavMode::Vi => app.file_props_desc_begin_edit(),
+        KeyCode::Char(' ') if !desc_active => app.file_props_open_password(),
+        KeyCode::Char(c) if desc_editing
+                         && !modifiers.contains(KeyModifiers::CONTROL)
+                         && !modifiers.contains(KeyModifiers::ALT) => app.file_props_char(c),
         _ => {}
     }
 }

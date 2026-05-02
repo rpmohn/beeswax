@@ -6,11 +6,11 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
-                 CursorPos, FilterState, MenuState, Mode, PasswordPurpose, PropsField, SaveState,
-                 SecPropsField, SectionFormField, SectionInsert, SectionMode, SortField, SortState,
-                 TimeField, ViewAddField, ViewMode, cat_is_date, cat_note_indicator, col_autocomplete_match,
-                 col_display_values, flatten_cats, format_date_value,
-                 visible_item_indices};
+                 CursorPos, FilePropsField, FilePropsPasswordSub, FilterState, MenuState, Mode,
+                 PasswordPurpose, PropsField, SaveState, SecPropsField, SectionFormField, SectionInsert,
+                 SectionMode, SortField, SortState, TimeField, ViewAddField, ViewMode, cat_is_date,
+                 cat_note_indicator, col_autocomplete_match, col_display_values, flatten_cats,
+                 format_date_value, visible_item_indices};
 use crate::model::{FilterOp, SortNewItems, SortOn, SortOrder, SortSeq};
 use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
@@ -2618,4 +2618,132 @@ pub fn render_sort_dialog(
             }
         }
     }
+}
+
+// ── File Properties dialog ────────────────────────────────────────────────────
+
+pub fn render_file_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
+    let SaveState::FileProps { desc_buf, desc_cursor, desc_editing, active_field, password_sub } = &app.save_state
+    else { return };
+
+    let dlg = centered_rect(62, 9, area);
+    frame.render_widget(Clear, dlg);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .title_top(Line::from(" File Properties ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center))
+        .style(app.theme.dialog_border);
+    frame.render_widget(block.clone(), dlg);
+    let inner = block.inner(dlg);
+
+    let dlabel     = app.theme.dialog_label;
+    let dlabel_sel = app.theme.dialog_label_sel;
+    let rev        = app.theme.item_selected_field;
+
+    let label_w: usize = 22;
+    let field_w = (inner.width as usize).saturating_sub(label_w + 1);
+
+    // Description field
+    let desc_active = *active_field == FilePropsField::Description;
+    let desc_label = Span::styled(format!("{:<w$}", "  File description:", w = label_w), if desc_active { dlabel_sel } else { dlabel });
+    let desc_spans: Vec<Span> = if desc_active && *desc_editing {
+        let mut spans = vec![desc_label];
+        spans.extend(cell_edit_spans(desc_buf, *desc_cursor, field_w, None, app.theme.view_item, app.theme.item_selected_field));
+        spans
+    } else if desc_active {
+        // Selected but not editing — highlight the text without a cursor.
+        let displayed: String = desc_buf.chars().take(field_w).collect();
+        let pad = field_w.saturating_sub(displayed.chars().count());
+        vec![desc_label, Span::styled(displayed, rev), Span::raw(" ".repeat(pad))]
+    } else {
+        let field = format!("{:<width$}", pad_or_trunc(desc_buf, field_w), width = field_w);
+        vec![desc_label, Span::styled(field, app.theme.view_item)]
+    };
+    let desc_line = Line::from(desc_spans);
+
+    // Password field — shows "..." as a non-editable indicator
+    let pw_active = *active_field == FilePropsField::Password;
+    let pw_indicator = if app.session_password.is_some() { "***" } else { "..." };
+    let pw_line = Line::from(vec![
+        Span::styled(format!("{:<w$}", "  Set file password:", w = label_w), if pw_active { dlabel_sel } else { dlabel }),
+        Span::raw(" "),
+        Span::styled(pw_indicator, if pw_active { rev } else { Style::default() }),
+    ]);
+
+    let lines = vec![
+        Line::from(""),
+        desc_line,
+        Line::from(""),
+        pw_line,
+        Line::from(""),
+        Line::from(""),
+        Line::from(""),
+    ];
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
+
+    // Overlay password sub-window if open
+    if let Some(sub) = password_sub {
+        render_file_props_password_sub(frame, app, area, sub);
+    }
+}
+
+fn render_file_props_password_sub(frame: &mut Frame, app: &App, area: Rect, sub: &FilePropsPasswordSub) {
+    let dlg = centered_rect(52, 7, area);
+    frame.render_widget(Clear, dlg);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .title_top(Line::from(" Set File Password ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" ENTER to confirm, ESC to cancel ").alignment(Alignment::Center))
+        .style(app.theme.dialog_border);
+    frame.render_widget(block.clone(), dlg);
+    let inner = block.inner(dlg);
+
+    let dlabel     = app.theme.dialog_label;
+    let dlabel_sel = app.theme.dialog_label_sel;
+    let rev        = app.theme.item_selected_field;
+    let label_w = 22usize;
+    let fw = (inner.width as usize).saturating_sub(label_w + 1);
+
+    let cur_active  = sub.has_current && sub.active == 0;
+    let pw_active   = (!sub.has_current && sub.active == 0) || (sub.has_current && sub.active == 1);
+    let pw2_active  = (!sub.has_current && sub.active == 1) || (sub.has_current && sub.active == 2);
+
+    let stars = |s: &str| "*".repeat(s.chars().count());
+    let field = |s: &str| format!("{:<width$}", stars(s), width = fw);
+
+    let err_line = || -> Line<'static> {
+        if let Some(err) = &sub.error {
+            Line::from(Span::styled(format!("  {err}"), Style::default().add_modifier(Modifier::BOLD)))
+        } else {
+            Line::from("")
+        }
+    };
+
+    // 5 inner lines:
+    //   no current password: blank | pw | pw2 | blank | error
+    //   has current password: blank | cur | pw  | pw2  | error
+    let pw_label = if sub.has_current { "  New password:" } else { "  Password:" };
+    let mut lines: Vec<Line> = vec![Line::from("")];
+    if sub.has_current {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<w$}", "  Current password:", w = label_w), if cur_active { dlabel_sel } else { dlabel }),
+            Span::styled(field(&sub.cur_buf), if cur_active { rev } else { Style::default() }),
+        ]));
+    }
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<w$}", pw_label, w = label_w), if pw_active { dlabel_sel } else { dlabel }),
+        Span::styled(field(&sub.pw_buf), if pw_active { rev } else { Style::default() }),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<w$}", "  Re-enter password:", w = label_w), if pw2_active { dlabel_sel } else { dlabel }),
+        Span::styled(field(&sub.pw2_buf), if pw2_active { rev } else { Style::default() }),
+    ]));
+    if !sub.has_current {
+        lines.push(Line::from(""));
+    }
+    lines.push(err_line());
+
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
 }

@@ -15,6 +15,7 @@ pub enum MenuAction {
     ViewProperties,
     CategoryMove,
     FileSave,
+    FileProperties,
     FileEnableEncryption,
     FileChangePassword,
     FileDisableEncryption,
@@ -52,7 +53,7 @@ static FILE_SUB: &[SubItem] = &[
     SubItem { label: "Save",        description: "Save current work to disk (Ctrl-S)",       action: MenuAction::FileSave, children: None },
     SubItem { label: "Encryption",  description: "Enable, change, or disable encryption",    action: MenuAction::Noop,     children: Some(ENCRYPTION_SUB) },
     SubItem { label: "Abandon",     description: "Abandon changes since last save",          action: MenuAction::Noop,     children: None },
-    SubItem { label: "Properties",  description: "View or change file properties",           action: MenuAction::Noop,     children: None },
+    SubItem { label: "Properties",  description: "View or change file properties",           action: MenuAction::FileProperties, children: None },
     SubItem { label: "Transfer",    description: "Transfer data to or from another file",    action: MenuAction::Noop,     children: None },
     SubItem { label: "Maintenance", description: "Perform file maintenance operations",      action: MenuAction::Noop,     children: None },
 ];
