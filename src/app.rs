@@ -582,10 +582,11 @@ pub struct App {
     pub assign_mode: AssignMode,
     // Category search (shared across CatMgr and Assignment Profile)
     pub cat_search:  Option<String>,
-    // Item search (View screen, '/' key): (buffer, cursor_char_pos)
-    pub item_search: Option<(String, usize)>,
-    // Last confirmed search query (session-only, for repeat search)
+    // Item search (View screen, '/' or '?' key): (buffer, cursor_char_pos, forward)
+    pub item_search: Option<(String, usize, bool)>,
+    // Last confirmed search query and direction (session-only, for repeat search)
     pub last_search: Option<String>,
+    pub last_search_forward: bool,
     // Section
     pub sec_mode:    SectionMode,
     // Menu
@@ -1967,6 +1968,7 @@ impl App {
             cat_search:  None,
             item_search: None,
             last_search: None,
+            last_search_forward: true,
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
@@ -2023,6 +2025,7 @@ impl App {
             cat_search:  None,
             item_search: None,
             last_search: None,
+            last_search_forward: true,
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
@@ -4702,15 +4705,21 @@ impl App {
 
     // ── Item search ───────────────────────────────────────────────────────────
 
-    /// Open the item search bar (triggered by '/').
+    /// Open the forward item search bar (triggered by '/').
     pub fn search_open(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
-        self.item_search = Some((String::new(), 0));
+        self.item_search = Some((String::new(), 0, true));
+    }
+
+    /// Open the backward item search bar (triggered by '?').
+    pub fn search_open_backward(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        self.item_search = Some((String::new(), 0, false));
     }
 
     /// Insert a character at the cursor position and advance the cursor.
     pub fn search_char(&mut self, ch: char) {
-        if let Some((buf, cur)) = &mut self.item_search {
+        if let Some((buf, cur, _)) = &mut self.item_search {
             let byte = char_to_byte(buf, *cur);
             buf.insert(byte, ch);
             *cur += 1;
@@ -4719,7 +4728,7 @@ impl App {
 
     /// Remove the character before the cursor.
     pub fn search_backspace(&mut self) {
-        if let Some((buf, cur)) = &mut self.item_search {
+        if let Some((buf, cur, _)) = &mut self.item_search {
             if *cur > 0 {
                 *cur -= 1;
                 let byte = char_to_byte(buf, *cur);
@@ -4729,28 +4738,28 @@ impl App {
     }
 
     pub fn search_cursor_left(&mut self) {
-        if let Some((_, cur)) = &mut self.item_search {
+        if let Some((_, cur, _)) = &mut self.item_search {
             if *cur > 0 { *cur -= 1; }
         }
     }
 
     pub fn search_cursor_right(&mut self) {
-        if let Some((buf, cur)) = &mut self.item_search {
+        if let Some((buf, cur, _)) = &mut self.item_search {
             if *cur < buf.chars().count() { *cur += 1; }
         }
     }
 
     pub fn search_word_left(&mut self) {
-        if let Some((buf, cur)) = &self.item_search {
+        if let Some((buf, cur, _)) = &self.item_search {
             let new_cur = buf_word_left(buf, *cur);
-            if let Some((_, cur)) = &mut self.item_search { *cur = new_cur; }
+            if let Some((_, cur, _)) = &mut self.item_search { *cur = new_cur; }
         }
     }
 
     pub fn search_word_right(&mut self) {
-        if let Some((buf, cur)) = &self.item_search {
+        if let Some((buf, cur, _)) = &self.item_search {
             let new_cur = buf_word_right(buf, *cur);
-            if let Some((_, cur)) = &mut self.item_search { *cur = new_cur; }
+            if let Some((_, cur, _)) = &mut self.item_search { *cur = new_cur; }
         }
     }
 
@@ -4764,42 +4773,44 @@ impl App {
     /// case-insensitive regular expression, then close.
     /// If the buffer is empty, repeats the last successful query.
     pub fn search_confirm(&mut self) {
-        let pattern = match &self.item_search {
-            Some((q, _)) if !q.trim().is_empty() => q.trim().to_string(),
-            _ => {
-                // Empty buffer — try the last query.
+        let (pattern, forward) = match &self.item_search {
+            Some((q, _, fwd)) if !q.trim().is_empty() => (q.trim().to_string(), *fwd),
+            Some((_, _, fwd)) => {
+                let fwd = *fwd;
                 match self.last_search.clone() {
-                    Some(q) => { self.item_search = None; q }
+                    Some(q) => { self.item_search = None; (q, fwd) }
                     None    => { self.item_search = None; return; }
                 }
             }
+            None => return,
         };
         self.item_search = None;
+        self.last_search = Some(pattern.clone());
+        self.last_search_forward = forward;
+        self.search_with_pattern(&pattern, forward);
+    }
 
+    /// Move to the next item in the direction of the last search (n).
+    pub fn search_next(&mut self) {
+        let pattern = match self.last_search.clone() { Some(p) => p, None => return };
+        self.search_with_pattern(&pattern, self.last_search_forward);
+    }
+
+    /// Move to the previous item (opposite direction of the last search) (N).
+    pub fn search_prev(&mut self) {
+        let pattern = match self.last_search.clone() { Some(p) => p, None => return };
+        self.search_with_pattern(&pattern, !self.last_search_forward);
+    }
+
+    fn search_with_pattern(&mut self, pattern: &str, forward: bool) {
         // Compile case-insensitive regex; fall back to literal match on invalid pattern.
         let re = regex::Regex::new(&format!("(?i){}", pattern))
-            .or_else(|_| regex::Regex::new(&format!("(?i){}", regex::escape(&pattern))))
+            .or_else(|_| regex::Regex::new(&format!("(?i){}", regex::escape(pattern))))
             .ok();
-        if re.is_none() { return; }
-        let re = re.unwrap();
+        let re = match re { Some(r) => r, None => return };
 
-        self.last_search = Some(pattern);
-
-        // Determine (start_sec, start_item) = position *after* the current cursor.
-        let (start_sec, start_item) = match self.cursor {
-            CursorPos::SectionHead(s) => (s, 0),
-            CursorPos::Item { section, item } => {
-                let vis = visible_item_indices(&self.items, &self.view, section, &self.categories);
-                if item + 1 < vis.len() {
-                    (section, item + 1)
-                } else {
-                    (section + 1, 0)
-                }
-            }
-        };
-
+        // Build a flat list of (section_idx, item_idx) for all visible items.
         let n_secs = self.view.sections.len();
-        // Build a list of (s_idx, i_idx) pairs for all visible items.
         let mut candidates: Vec<(usize, usize)> = Vec::new();
         for s_idx in 0..n_secs {
             let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
@@ -4809,15 +4820,29 @@ impl App {
             }
         }
         if candidates.is_empty() { return; }
-
-        // Find the index in candidates that corresponds to (start_sec, start_item).
-        let start_pos = candidates.iter().position(|&(s, i)| s == start_sec && i == start_item)
-            .unwrap_or(0);
-
-        // Search from start_pos, wrapping around.
         let len = candidates.len();
+
+        // Find where the current cursor sits in the candidate list.
+        let cur_pos = match self.cursor {
+            CursorPos::SectionHead(_) => 0,
+            CursorPos::Item { section, item } => {
+                candidates.iter().position(|&(s, i)| s == section && i == item).unwrap_or(0)
+            }
+        };
+
+        // Start one step ahead/behind and search with wrap.
+        let start = if forward {
+            (cur_pos + 1) % len
+        } else {
+            (cur_pos + len - 1) % len
+        };
         for offset in 0..len {
-            let (s_idx, i_idx) = candidates[(start_pos + offset) % len];
+            let idx = if forward {
+                (start + offset) % len
+            } else {
+                (start + len - offset) % len
+            };
+            let (s_idx, i_idx) = candidates[idx];
             let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
             let gi = vis[i_idx];
             if re.is_match(&self.items[gi].text) {
@@ -9023,32 +9048,35 @@ impl App {
     // ── item_search ───────────────────────────────────────────────────────────
 
     pub fn search_ctrl_u(&mut self) {
-        let Some((buf, cur)) = &self.item_search else { return };
+        let Some((buf, cur, fwd)) = &self.item_search else { return };
         let (new_buf, killed, new_cur) = kb_kill_to_start(buf, *cur);
+        let fwd = *fwd;
         self.kill_buffer = killed;
-        self.item_search = Some((new_buf, new_cur));
+        self.item_search = Some((new_buf, new_cur, fwd));
     }
 
     pub fn search_ctrl_k(&mut self) {
-        let Some((buf, cur)) = &self.item_search else { return };
+        let Some((buf, cur, fwd)) = &self.item_search else { return };
         let (new_buf, killed, new_cur) = kb_kill_to_end(buf, *cur);
+        let fwd = *fwd;
         self.kill_buffer = killed;
-        self.item_search = Some((new_buf, new_cur));
+        self.item_search = Some((new_buf, new_cur, fwd));
     }
 
     pub fn search_ctrl_y(&mut self) {
-        let Some((buf, cur)) = &self.item_search else { return };
+        let Some((buf, cur, fwd)) = &self.item_search else { return };
         let kill = self.kill_buffer.clone();
+        let fwd = *fwd;
         let (new_buf, new_cur) = kb_yank(buf, *cur, &kill);
-        self.item_search = Some((new_buf, new_cur));
+        self.item_search = Some((new_buf, new_cur, fwd));
     }
 
     pub fn search_ctrl_a(&mut self) {
-        if let Some((_, cur)) = &mut self.item_search { *cur = 0; }
+        if let Some((_, cur, _)) = &mut self.item_search { *cur = 0; }
     }
 
     pub fn search_ctrl_e(&mut self) {
-        if let Some((buf, cur)) = &mut self.item_search {
+        if let Some((buf, cur, _)) = &mut self.item_search {
             *cur = buf.chars().count();
         }
     }

@@ -15,7 +15,7 @@ There's still a huge amount of work to do, but I am now using Beeswax at both ho
 - **Category Manager** — hierarchical category tree with rename, create, delete, reorder
 - **View Manager** — switch view, rename, create, delete
 - **Notes** — per-item notes opened in `$EDITOR` (defaults to `notepad.exe` on Windows)
-- **Search** — `/` opens a search bar; Enter repeats the last query
+- **Search** — `/` searches forward, `?` searches backward (vi mode); `n`/`N` repeat in same/opposite direction with wrap-around
 - **Undo / Redo** — session-length undo / redo
 - **Encryption** — optional AES-256-GCM file encryption with Argon2id key derivation
 - **Color schemes** — eight built-in themes plus a fully custom, editable, hex-color scheme
@@ -113,7 +113,10 @@ Set `nav_mode = "vi"` in `config.toml` (or via F10 → Utilities → Customize) 
 | z- | Scroll so cursor is at the bottom of the screen |
 | Ctrl+F | Page down |
 | Ctrl+B | Page up |
-| / | Open search bar |
+| / | Open forward search bar |
+| ? | Open backward search bar |
+| n | Repeat last search in same direction (wrap) |
+| N | Repeat last search in opposite direction (wrap) |
 | i | Edit current item / cell |
 | o | New item below cursor |
 | O | New item above cursor |

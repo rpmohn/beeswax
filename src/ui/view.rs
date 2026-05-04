@@ -35,14 +35,18 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Title bar / Menu bar (2 lines) ───────────────────────────────────
     if matches!(app.menu, MenuState::Closed) {
-        let second_line = if let Some((buf, cur)) = &app.item_search {
-            let chars: Vec<char> = buf.chars().collect();
-            let left: String  = chars[..*cur].iter().collect();
-            let right: String = chars[*cur..].iter().collect();
-            format!(" Search: {}|{}", left, right)
+        let second_line: Line = if let Some((buf, cur, fwd)) = &app.item_search {
+            let label = if *fwd { " /: " } else { " ?: " };
+            let (left, hi, right) = cursor_split(buf, *cur);
+            Line::from(vec![
+                Span::raw(label),
+                Span::styled(left,  app.theme.bar_selected),
+                Span::styled(hi,    app.theme.cursor),
+                Span::styled(right, app.theme.bar_selected),
+            ])
         } else if let Mode::ItemProps { cursor, edit_buf, .. } = &app.mode {
-            if edit_buf.is_some() {
-                " Type to edit. Press ENTER to save, ESC to cancel.".to_string()
+            let s = if edit_buf.is_some() {
+                " Type to edit. Press ENTER to save, ESC to cancel."
             } else {
                 match cursor {
                     0 => " Press F2 to edit the item text.",
@@ -50,20 +54,21 @@ pub fn render(frame: &mut Frame, app: &App) {
                     2 => " Press F2 to edit the note file.",
                     3 => " Item statistics are read-only.",
                     _ => " Press F2 to edit. Del to remove assignment.",
-                }.to_string()
-            }
+                }
+            };
+            Line::from(Span::raw(s))
         } else if matches!(app.screen, AppScreen::ViewMgr) {
             let left = format!(" View: {}", app.view.name);
             let hint = "^\u{2191}Up ^\u{2193}Dwn ";
             let w = area.width as usize;
             let pad = w.saturating_sub(left.chars().count() + hint.chars().count());
-            format!("{}{}{}", left, " ".repeat(pad), hint)
+            Line::from(Span::raw(format!("{}{}{}", left, " ".repeat(pad), hint)))
         } else {
-            format!(" View: {}", app.view.name)
+            Line::from(Span::raw(format!(" View: {}", app.view.name)))
         };
         let title = Paragraph::new(vec![
             title_bar_top(area.width, app.file_path.as_deref(), app.dirty, app.theme.item_selected_field),
-            Line::from(Span::raw(second_line)),
+            second_line,
         ])
         .style(app.theme.bar);
         frame.render_widget(title, chunks[0]);

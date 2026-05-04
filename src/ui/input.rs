@@ -450,6 +450,9 @@ fn handle_view_normal_vi(app: &mut App, ch: char) {
             CursorPos::SectionHead(_) => app.sec_open_confirm_remove(),
             CursorPos::Item { .. }    => app.item_open_confirm_delete(),
         },
+        'n' => app.search_next(),
+        'N' => app.search_prev(),
+        '?' => app.search_open_backward(),
         'u' => app.undo(),
         _   => {}   // all other printable keys are no-ops in vi normal mode
     }
