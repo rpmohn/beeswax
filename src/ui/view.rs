@@ -8,7 +8,7 @@ use ratatui::{
 use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ChoicesKind, ColFormField, ColMode, ColPos,
                  CursorPos, FilePropsField, FilePropsPasswordSub, FilterState, MenuState, Mode,
                  PropsField, SaveState, SecPropsField, SectionFormField, SectionInsert,
-                 SectionMode, SortField, SortState, TimeField, ViewAddField, ViewMode, cat_is_date,
+                 SectionMode, SortField, SortState, TimeField, cat_is_date,
                  cat_note_indicator, col_autocomplete_match, col_display_values, flatten_cats,
                  format_date_value, visible_item_indices};
 use crate::model::{FilterOp, SortNewItems, SortOn, SortOrder, SortSeq};
@@ -1950,118 +1950,6 @@ pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 // ── Password-entry dialog ─────────────────────────────────────────────────────
-
-// ── View Add dialog ───────────────────────────────────────────────────────────
-
-pub fn render_view_add_dialog(frame: &mut Frame, app: &App, area: Rect) {
-    let (name_buf, name_cur, sec_buf, sec_cur, active_field, pick_cur) = match &app.view_mode {
-        ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, active_field, .. } =>
-            (name_buf.as_str(), *name_cursor, sec_buf.as_str(), *sec_cursor,
-             *active_field, None::<usize>),
-        ViewMode::AddPick { name_buf, name_cursor, sec_buf, sec_cursor, picker_cursor } =>
-            (name_buf.as_str(), *name_cursor, sec_buf.as_str(), *sec_cursor,
-             ViewAddField::Section, Some(*picker_cursor)),
-        _ => return,
-    };
-
-    let dlg = centered_rect(62, 19, area);
-    frame.render_widget(Clear, dlg);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title_top(Line::from(" View Add ").alignment(Alignment::Center))
-        .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center))
-        .style(app.theme.dialog_border);
-    frame.render_widget(block.clone(), dlg);
-    let inner = block.inner(dlg);
-
-    let name_label = "  View name: ";
-    let sec_label  = "  Sections:  ";
-    let field_w    = 22usize;
-    let rev        = app.theme.item_selected_field;
-    let dlabel     = app.theme.dialog_label;
-    let dlabel_sel = app.theme.dialog_label_sel;
-
-    let name_active = active_field == ViewAddField::Name;
-    let name_line: Line = if name_active {
-        let (left, hi, right) = super::cursor_split(name_buf, name_cur);
-        let pad = " ".repeat(field_w.saturating_sub(name_buf.chars().count()));
-        Line::from(vec![
-            Span::styled(name_label, dlabel_sel),
-            Span::raw(left),
-            Span::styled(hi, rev),
-            Span::raw(right),
-            Span::raw(pad),
-            Span::raw("  Type:          Standard"),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(name_label, dlabel),
-            Span::raw(format!("{}  Type:          Standard", pad_or_trunc(name_buf, field_w))),
-        ])
-    };
-
-    let sec_active = active_field == ViewAddField::Section;
-    let sec_line: Line = if sec_active {
-        let (left, hi, right) = super::cursor_split(sec_buf, sec_cur);
-        let pad = " ".repeat(field_w.saturating_sub(sec_buf.chars().count()));
-        Line::from(vec![
-            Span::styled(sec_label, dlabel_sel),
-            Span::raw(left),
-            Span::styled(hi, rev),
-            Span::raw(right),
-            Span::raw(pad),
-            Span::raw("  F3 to pick"),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(sec_label, dlabel),
-            Span::raw(format!("{}  F3 to pick", pad_or_trunc(sec_buf, field_w))),
-        ])
-    };
-
-    let mut lines: Vec<Line> = vec![Line::from(""), name_line, sec_line];
-    lines.extend([
-        Line::from(vec![Span::styled("  Item sorting:  ", dlabel),    Span::raw("...")]),
-        Line::from(vec![Span::styled("  Section sorting:  ", dlabel), Span::raw("None")]),
-        Line::from(""),
-        Line::from(vec![Span::styled("  Hide empty sections:  ", dlabel),  Span::raw("No")]),
-        Line::from(vec![Span::styled("  Hide done items:      ", dlabel),  Span::raw("No")]),
-        Line::from(vec![Span::styled("  Hide dependent items: ", dlabel),  Span::raw("No")]),
-        Line::from(vec![Span::styled("  Hide inherited items: ", dlabel),  Span::raw("No")]),
-        Line::from(vec![Span::styled("  Hide column heads:    ", dlabel),  Span::raw("No")]),
-        Line::from(vec![Span::styled("  Section separators:   ", dlabel),  Span::raw("No")]),
-        Line::from(vec![Span::styled("  Number items:         ", dlabel),  Span::raw("No          Filter:")]),
-        Line::from(""),
-        Line::from(vec![Span::styled("  View statistics:  ", dlabel),  Span::raw("...")]),
-        Line::from(""),
-        Line::from(vec![Span::styled("  View protection:  ", dlabel),  Span::raw("Global (No protection)")]),
-    ]);
-    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
-
-    // Picker overlay
-    if let Some(pc) = pick_cur {
-        let cats = flatten_cats(&app.categories);
-        let picker_h = (cats.len().min(10) + 2) as u16;
-        let picker_rect = centered_rect(40, picker_h, area);
-        frame.render_widget(Clear, picker_rect);
-        let pb = Block::default().borders(Borders::ALL)
-            .title(" Choose Category ").style(app.theme.dialog_border);
-        frame.render_widget(pb.clone(), picker_rect);
-        let pi = pb.inner(picker_rect);
-        let visible = pi.height as usize;
-        let start = if pc >= visible { pc - visible + 1 } else { 0 };
-        let pick_lines: Vec<Line<'static>> = cats.iter().enumerate()
-            .skip(start).take(visible)
-            .map(|(i, e)| {
-                let indent = "  ".repeat(e.depth);
-                let label  = format!("{}{}", indent, e.name);
-                let style  = if i == pc { rev } else { app.theme.dialog };
-                Line::from(Span::styled(label, style))
-            })
-            .collect();
-        frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pi);
-    }
-}
 
 // ── Section Properties dialog ─────────────────────────────────────────────────
 

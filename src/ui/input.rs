@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -198,12 +198,6 @@ pub fn handle_event(app: &mut App, event: Event) {
     // Column move mode
     if matches!(app.col_mode, ColMode::Move) {
         handle_col_move(app, code);
-        return;
-    }
-
-    // View Add dialog takes priority
-    if matches!(app.view_mode, ViewMode::Add { .. } | ViewMode::AddPick { .. }) {
-        handle_view_add(app, code, modifiers);
         return;
     }
 
@@ -1146,58 +1140,6 @@ fn handle_assign_profile(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
         KeyCode::F(8)     => app.cat_search_next(),
         KeyCode::Backspace => app.cat_search_backspace(),
         KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
-        _ => {}
-    }
-}
-
-// ── View Add dialog ───────────────────────────────────────────────────────────
-
-fn handle_view_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    // Picker sub-mode
-    if matches!(app.view_mode, ViewMode::AddPick { .. }) {
-        if handle_vi_list(app, code, modifiers,
-            &|a| a.view_add_pick_down(),   &|a| a.view_add_pick_up(),
-            &|a| a.view_add_pick_end(),    &|a| a.view_add_pick_home(),
-            &|a| a.view_add_pick_home(),   &|a| a.view_add_pick_middle(), &|a| a.view_add_pick_end()) { return; }
-        match code {
-            KeyCode::Up       => app.view_add_pick_up(),
-            KeyCode::Down     => app.view_add_pick_down(),
-            KeyCode::PageUp   => app.view_add_pick_pgup(10),
-            KeyCode::PageDown => app.view_add_pick_pgdn(10),
-            KeyCode::Home     => app.view_add_pick_home(),
-            KeyCode::End      => app.view_add_pick_end(),
-            KeyCode::Enter    => app.view_add_pick_confirm(),
-            KeyCode::Esc      => app.view_add_pick_cancel(),
-            _ => {}
-        }
-        return;
-    }
-    // Main dialog
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.view_add_ctrl_u(); return; }
-            KeyCode::Char('k') | KeyCode::Char('K') => { app.view_add_ctrl_k(); return; }
-            KeyCode::Char('y') | KeyCode::Char('Y') => { app.view_add_ctrl_y(); return; }
-            KeyCode::Char('a') | KeyCode::Char('A') => { app.view_add_ctrl_a(); return; }
-            KeyCode::Char('e') | KeyCode::Char('E') => { app.view_add_ctrl_e(); return; }
-            KeyCode::Left                           => { app.view_add_word_left();  return; }
-            KeyCode::Right                          => { app.view_add_word_right(); return; }
-            _ => {}
-        }
-    }
-    match code {
-        KeyCode::Enter                        => app.view_add_confirm(),
-        KeyCode::Esc                          => app.view_add_cancel(),
-        KeyCode::Tab | KeyCode::Down          => app.view_add_tab(),
-        KeyCode::BackTab | KeyCode::Up        => app.view_add_tab(),
-        KeyCode::Left                         => app.view_add_cursor_left(),
-        KeyCode::Right                        => app.view_add_cursor_right(),
-        KeyCode::Home                         => app.view_add_ctrl_a(),
-        KeyCode::End                          => app.view_add_ctrl_e(),
-        KeyCode::Backspace                    => app.view_add_backspace(),
-        KeyCode::F(3)                         => app.view_add_open_pick(),
-        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => app.view_add_char(ch),
         _ => {}
     }
 }

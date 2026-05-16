@@ -32,31 +32,6 @@ pub enum AppScreen {
     ViewMgr,
 }
 
-// ── View-mode state ───────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum ViewAddField { Name, Section }
-
-pub enum ViewMode {
-    Normal,
-    Add {
-        name_buf:     String,
-        name_cursor:  usize,
-        sec_buf:      String,
-        sec_cursor:   usize,
-        sec_cat_idx:  Option<usize>,   // Some = F3-picked index into flatten_cats
-        active_field: ViewAddField,
-    },
-    /// F3 category picker overlaid on the View Add dialog
-    AddPick {
-        name_buf:      String,
-        name_cursor:   usize,
-        sec_buf:       String,
-        sec_cursor:    usize,
-        picker_cursor: usize,
-    },
-}
-
 #[derive(Clone, Copy)]
 pub enum CursorPos {
     SectionHead(usize),
@@ -198,6 +173,7 @@ pub enum ViewMgrMode {
     Rename { buffer: String, cursor: usize },
     ConfirmDelete { yes: bool },
     Props {
+        is_new:               bool,       // true when creating a new view (INS / Add View)
         name_buf:             String,
         name_cur:             usize,
         name_editing:         bool,       // true only after F2/i activates the name field
@@ -562,7 +538,6 @@ pub struct App {
     pub items:       Vec<Item>,
     // View
     pub view:        View,
-    pub view_mode:   ViewMode,
     pub inactive_views:   Vec<View>,
     /// Index of `view` (the active view) in the combined ordered list [inactive[..voi], view, inactive[voi..]].
     pub view_order_idx:   usize,
@@ -1953,7 +1928,6 @@ impl App {
             screen:     AppScreen::View,
             items:      vec![],
             view,
-            view_mode:  ViewMode::Normal,
             inactive_views: vec![],
             view_order_idx: 0,
             cursor:     CursorPos::SectionHead(0),
@@ -2010,7 +1984,6 @@ impl App {
             screen:     AppScreen::View,
             items:      data.items,
             view,
-            view_mode:  ViewMode::Normal,
             inactive_views,
             view_order_idx: idx,
             cursor:     CursorPos::SectionHead(0),
@@ -2183,237 +2156,39 @@ impl App {
     // ── View Add dialog ───────────────────────────────────────────────────────
 
     pub fn view_add_open(&mut self) {
-        self.view_mode = ViewMode::Add {
-            name_buf: String::new(), name_cursor: 0,
-            sec_buf:  String::new(), sec_cursor:  0,
-            sec_cat_idx: None,
-            active_field: ViewAddField::Name,
-        };
-    }
-    pub fn view_add_char(&mut self, ch: char) {
-        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, sec_cat_idx, active_field } = &mut self.view_mode {
-            if *active_field == ViewAddField::Name {
-                let b = char_to_byte(name_buf, *name_cursor);
-                name_buf.insert(b, ch); *name_cursor += 1;
-            } else {
-                *sec_cat_idx = None;
-                let b = char_to_byte(sec_buf, *sec_cursor);
-                sec_buf.insert(b, ch); *sec_cursor += 1;
-            }
-        }
-    }
-    pub fn view_add_backspace(&mut self) {
-        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, sec_cat_idx, active_field } = &mut self.view_mode {
-            if *active_field == ViewAddField::Name {
-                if *name_cursor > 0 {
-                    *name_cursor -= 1;
-                    let b = char_to_byte(name_buf, *name_cursor);
-                    name_buf.remove(b);
-                }
-            } else {
-                if *sec_cursor > 0 {
-                    *sec_cat_idx = None;
-                    *sec_cursor -= 1;
-                    let b = char_to_byte(sec_buf, *sec_cursor);
-                    sec_buf.remove(b);
-                }
-            }
-        }
-    }
-    pub fn view_add_cursor_left(&mut self) {
-        if let ViewMode::Add { name_cursor, sec_cursor, active_field, .. } = &mut self.view_mode {
-            if *active_field == ViewAddField::Name {
-                if *name_cursor > 0 { *name_cursor -= 1; }
-            } else {
-                if *sec_cursor > 0 { *sec_cursor -= 1; }
-            }
-        }
-    }
-    pub fn view_add_cursor_right(&mut self) {
-        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, active_field, .. } = &mut self.view_mode {
-            if *active_field == ViewAddField::Name {
-                if *name_cursor < name_buf.chars().count() { *name_cursor += 1; }
-            } else {
-                if *sec_cursor < sec_buf.chars().count() { *sec_cursor += 1; }
-            }
-        }
-    }
-    pub fn view_add_word_left(&mut self) {
-        let (buf, cur) = match &self.view_mode {
-            ViewMode::Add { active_field: ViewAddField::Name, name_buf, name_cursor, .. } =>
-                (name_buf.clone(), *name_cursor),
-            ViewMode::Add { sec_buf, sec_cursor, .. } =>
-                (sec_buf.clone(), *sec_cursor),
-            _ => return,
-        };
-        let new_cur = buf_word_left(&buf, cur);
-        if let ViewMode::Add { active_field, name_cursor, sec_cursor, .. } = &mut self.view_mode {
-            if *active_field == ViewAddField::Name { *name_cursor = new_cur; } else { *sec_cursor = new_cur; }
-        }
-    }
-
-    pub fn view_add_word_right(&mut self) {
-        let (buf, cur) = match &self.view_mode {
-            ViewMode::Add { active_field: ViewAddField::Name, name_buf, name_cursor, .. } =>
-                (name_buf.clone(), *name_cursor),
-            ViewMode::Add { sec_buf, sec_cursor, .. } =>
-                (sec_buf.clone(), *sec_cursor),
-            _ => return,
-        };
-        let new_cur = buf_word_right(&buf, cur);
-        if let ViewMode::Add { active_field, name_cursor, sec_cursor, .. } = &mut self.view_mode {
-            if *active_field == ViewAddField::Name { *name_cursor = new_cur; } else { *sec_cursor = new_cur; }
-        }
-    }
-
-    pub fn view_add_tab(&mut self) {
-        if let ViewMode::Add { active_field, .. } = &mut self.view_mode {
-            *active_field = match *active_field {
-                ViewAddField::Name    => ViewAddField::Section,
-                ViewAddField::Section => ViewAddField::Name,
-            };
-        }
-    }
-    pub fn view_add_open_pick(&mut self) {
-        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, sec_cat_idx, active_field } = &self.view_mode {
-            if *active_field != ViewAddField::Section { return; }
-            let flat = flatten_cats(&self.categories);
-            let cursor = sec_cat_idx.unwrap_or(0).min(flat.len().saturating_sub(1));
-            let (nb, nc, sb, sc) = (name_buf.clone(), *name_cursor, sec_buf.clone(), *sec_cursor);
-            self.view_mode = ViewMode::AddPick {
-                name_buf: nb, name_cursor: nc,
-                sec_buf: sb, sec_cursor: sc,
-                picker_cursor: cursor,
-            };
-        }
-    }
-    pub fn view_add_pick_up(&mut self) {
-        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
-            if *picker_cursor > 0 { *picker_cursor -= 1; }
-        }
-    }
-    pub fn view_add_pick_down(&mut self) {
-        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
-            let max = flatten_cats(&self.categories).len().saturating_sub(1);
-            if *picker_cursor < max { *picker_cursor += 1; }
-        }
-    }
-    pub fn view_add_pick_pgup(&mut self, page: usize) {
-        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
-            *picker_cursor = picker_cursor.saturating_sub(page);
-        }
-    }
-    pub fn view_add_pick_pgdn(&mut self, page: usize) {
-        let len = flatten_cats(&self.categories).len();
-        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
-            if len > 0 { *picker_cursor = (*picker_cursor + page).min(len - 1); }
-        }
-    }
-    pub fn view_add_pick_home(&mut self) {
-        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
-            *picker_cursor = 0;
-        }
-    }
-    pub fn view_add_pick_middle(&mut self) {
-        let len = flatten_cats(&self.categories).len();
-        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
-            *picker_cursor = len / 2;
-        }
-    }
-    pub fn view_add_pick_end(&mut self) {
-        let len = flatten_cats(&self.categories).len();
-        if let ViewMode::AddPick { picker_cursor, .. } = &mut self.view_mode {
-            if len > 0 { *picker_cursor = len - 1; }
-        }
-    }
-    pub fn view_add_pick_confirm(&mut self) {
-        if let ViewMode::AddPick { name_buf, name_cursor, picker_cursor, .. } = &self.view_mode {
-            let flat = flatten_cats(&self.categories);
-            let idx  = *picker_cursor;
-            let (nb, nc) = (name_buf.clone(), *name_cursor);
-            let sec_name = flat.get(idx).map(|e| e.name.clone()).unwrap_or_default();
-            let sc = sec_name.chars().count();
-            self.view_mode = ViewMode::Add {
-                name_buf: nb, name_cursor: nc,
-                sec_buf: sec_name, sec_cursor: sc,
-                sec_cat_idx: Some(idx), active_field: ViewAddField::Section,
-            };
-        }
-    }
-    pub fn view_add_pick_cancel(&mut self) {
-        if let ViewMode::AddPick { name_buf, name_cursor, sec_buf, sec_cursor, .. } = &self.view_mode {
-            let (nb, nc, sb, sc) = (name_buf.clone(), *name_cursor, sec_buf.clone(), *sec_cursor);
-            self.view_mode = ViewMode::Add {
-                name_buf: nb, name_cursor: nc,
-                sec_buf: sb, sec_cursor: sc,
-                sec_cat_idx: None, active_field: ViewAddField::Section,
-            };
-        }
-    }
-    pub fn view_add_confirm(&mut self) {
-        self.push_undo();
-        let (name, sec_name, sec_cat_idx) = match &self.view_mode {
-            ViewMode::Add { name_buf, sec_buf, sec_cat_idx, .. } =>
-                (name_buf.trim().to_string(), sec_buf.trim().to_string(), *sec_cat_idx),
-            _ => return,
-        };
-        if name.is_empty() || sec_name.is_empty() { return; }
-
-        let cat_id: usize = {
-            let flat = flatten_cats(&self.categories);
-            let found = if let Some(idx) = sec_cat_idx {
-                flat.get(idx).map(|e| e.id)
-            } else {
-                let lower = sec_name.to_lowercase();
-                flat.iter().find(|e| e.name.to_lowercase() == lower).map(|e| e.id)
-            };
-            if let Some(id) = found { id }
-            else {
-                let new_id = self.alloc_id();
-                if let Some(root) = self.categories.first() {
-                    let root_id = root.id;
-                    add_child_to_cat(&mut self.categories, root_id, new_id, &sec_name);
-                }
-                new_id
-            }
-        };
-
-        self.view_mode = ViewMode::Normal;
         let view_id = self.alloc_id();
-        let sec_id  = self.alloc_id();
-        let section = Section {
-            id: sec_id, name: sec_name, cat_id, auto: false,
-            sort_new:         SortNewItems::OnLeavingSection,
-            primary_on:       SortOn::None,   primary_order:   SortOrder::Ascending,  primary_na:   SortNa::Bottom,
-            primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
-            secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
-            secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
-            filter:           vec![],
+        let blank = View {
+            id: view_id, name: String::new(), sections: vec![],
+            columns: vec![], left_count: 0,
+            hide_empty_sections: false, hide_done_items: false,
+            hide_dependent_items: false, hide_inherited_items: false,
+            hide_column_heads: false, section_separators: false, number_items: false,
+            section_sort_method: SectionSortMethod::None, section_sort_order: SortOrder::Ascending,
+            cursor_section: 0, cursor_item: None, cursor_col: 0,
+            sec_subs: vec![], sec_all: vec![],
+            sort_new: SortNewItems::OnDemand,
+            sort_primary_on: SortOn::None,    sort_primary_order: SortOrder::Ascending,
+            sort_primary_na: SortNa::Bottom,  sort_primary_cat_id: None,
+            sort_primary_seq: SortSeq::CategoryHierarchy,
+            sort_secondary_on: SortOn::None,  sort_secondary_order: SortOrder::Ascending,
+            sort_secondary_na: SortNa::Bottom, sort_secondary_cat_id: None,
+            sort_secondary_seq: SortSeq::CategoryHierarchy,
         };
-        let new_view = View { id: view_id, name, sections: vec![section],
-                              columns: vec![], left_count: 0,
-                              hide_empty_sections: false, hide_done_items: false,
-                              hide_dependent_items: false, hide_inherited_items: false,
-                              hide_column_heads: false, section_separators: false,
-                              number_items: false,
-                              section_sort_method: SectionSortMethod::None,
-                              section_sort_order: SortOrder::Ascending,
-                              cursor_section: 0, cursor_item: None, cursor_col: 0,
-                              sec_subs: vec![], sec_all: vec![],
-                              sort_new: SortNewItems::OnDemand,
-                              sort_primary_on: SortOn::None,     sort_primary_order: SortOrder::Ascending,
-                              sort_primary_na: SortNa::Bottom,   sort_primary_cat_id: None,
-                              sort_primary_seq: SortSeq::CategoryHierarchy,
-                              sort_secondary_on: SortOn::None,   sort_secondary_order: SortOrder::Ascending,
-                              sort_secondary_na: SortNa::Bottom, sort_secondary_cat_id: None,
-                              sort_secondary_seq: SortSeq::CategoryHierarchy };
-        let old = std::mem::replace(&mut self.view, new_view);
-        self.inactive_views.push(old);
-        self.cursor = CursorPos::SectionHead(0);
-        self.col_cursor = 0; self.col_mode = ColMode::Normal; self.sec_mode = SectionMode::Normal;
-    }
-    pub fn view_add_cancel(&mut self) {
-        self.view_mode = ViewMode::Normal;
+        self.inactive_views.push(blank);
+        // The new view is always appended last in the ordered list.
+        self.vmgr_state.cursor = self.inactive_views.len();
+        self.vmgr_state.mode = ViewMgrMode::Props {
+            is_new: true,
+            name_buf: String::new(), name_cur: 0, name_editing: true,
+            sec_cursor: 0,
+            sort_state: SortState::Closed,
+            sec_sort_method: SectionSortMethod::None, sec_sort_order: SortOrder::Ascending,
+            sec_sort_picker: None, sec_add_picker: None,
+            hide_empty_sections: false, hide_done_items: false,
+            hide_dependent_items: false, hide_inherited_items: false,
+            hide_column_heads: false, section_separators: false, number_items: false,
+            active_field: ViewPropsField::Name, sec_scroll: 0,
+        };
     }
 
     // ── Note ──────────────────────────────────────────────────────────────────
@@ -7328,6 +7103,7 @@ impl App {
         let sec_sort_order       = v.section_sort_order;
         let name_cur = name_buf.chars().count();
         self.vmgr_state.mode = ViewMgrMode::Props {
+            is_new: false,
             name_buf, name_cur,
             name_editing: false,
             sec_cursor:   0,
@@ -7493,23 +7269,73 @@ impl App {
     }
 
     pub fn vmgr_props_confirm(&mut self) {
-        self.push_undo();
         let idx = self.vmgr_state.cursor;
-        let (name, hes, hdi, hdep, hii, hch, ss, ni, ssm, sso) = match &self.vmgr_state.mode {
+        let (name, hes, hdi, hdep, hii, hch, ss, ni, ssm, sso, is_new) = match &self.vmgr_state.mode {
             ViewMgrMode::Props {
                 name_buf, hide_empty_sections, hide_done_items, hide_dependent_items,
                 hide_inherited_items, hide_column_heads, section_separators, number_items,
-                sec_sort_method, sec_sort_order, ..
+                sec_sort_method, sec_sort_order, is_new, ..
             } => (
                 name_buf.trim().to_string(),
                 *hide_empty_sections, *hide_done_items, *hide_dependent_items,
                 *hide_inherited_items, *hide_column_heads, *section_separators, *number_items,
-                *sec_sort_method, *sec_sort_order,
+                *sec_sort_method, *sec_sort_order, *is_new,
             ),
             _ => return,
         };
-        self.vmgr_state.mode = ViewMgrMode::Normal;
         if name.is_empty() { return; }
+
+        if is_new {
+            let voi = self.view_order_idx;
+            let ii  = Self::vmgr_inact_idx(idx, voi);
+            // Require at least one section before confirming.
+            let has_secs = self.inactive_views.get(ii)
+                .map(|v| !v.sections.is_empty() || !v.sec_subs.is_empty() || !v.sec_all.is_empty())
+                .unwrap_or(false);
+            if !has_secs { return; }
+            // Remove draft temporarily to snapshot the pre-create state.
+            let mut draft = self.inactive_views.remove(ii);
+            self.push_undo(); // captures state without draft
+            // Apply properties to the draft.
+            draft.name                = name;
+            draft.hide_empty_sections  = hes;
+            draft.hide_done_items      = hdi;
+            draft.hide_dependent_items = hdep;
+            draft.hide_inherited_items = hii;
+            draft.hide_column_heads    = hch;
+            draft.section_sort_method  = ssm;
+            draft.section_sort_order   = sso;
+            draft.section_separators   = ss;
+            draft.number_items         = ni;
+            // Apply section sorting if set.
+            match ssm {
+                SectionSortMethod::Alphabetic => {
+                    draft.sections.sort_by(|a, b| {
+                        let c = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+                        if sso == SortOrder::Descending { c.reverse() } else { c }
+                    });
+                }
+                SectionSortMethod::CategoryOrder => {
+                    let flat = flatten_cats(&self.categories);
+                    draft.sections.sort_by(|a, b| {
+                        let ca = flat.iter().position(|f| f.id == a.cat_id).unwrap_or(usize::MAX);
+                        let cb = flat.iter().position(|f| f.id == b.cat_id).unwrap_or(usize::MAX);
+                        let c = ca.cmp(&cb);
+                        if sso == SortOrder::Descending { c.reverse() } else { c }
+                    });
+                }
+                _ => {}
+            }
+            // Re-insert draft and switch to it.
+            self.inactive_views.insert(ii, draft);
+            self.vmgr_state.mode = ViewMgrMode::Normal;
+            self.switch_to_view_at(idx);
+            self.close_view_mgr();
+            return;
+        }
+
+        self.push_undo();
+        self.vmgr_state.mode = ViewMgrMode::Normal;
         let voi = self.view_order_idx;
         let view = if idx == voi { &mut self.view }
                    else { match self.inactive_views.get_mut(Self::vmgr_inact_idx(idx, voi)) { Some(v) => v, None => return } };
@@ -7563,6 +7389,16 @@ impl App {
     }
 
     pub fn vmgr_props_cancel(&mut self) {
+        if matches!(&self.vmgr_state.mode, ViewMgrMode::Props { is_new: true, .. }) {
+            let c   = self.vmgr_state.cursor;
+            let voi = self.view_order_idx;
+            if c != voi {
+                let ii = Self::vmgr_inact_idx(c, voi);
+                if ii < self.inactive_views.len() {
+                    self.inactive_views.remove(ii);
+                }
+            }
+        }
         self.vmgr_state.mode = ViewMgrMode::Normal;
     }
 
@@ -8468,7 +8304,6 @@ impl App {
             SectionMode::Props { active_field: SecPropsField::Head, .. })
         || self.customize_state.as_ref()
                .map_or(false, |s| matches!(&s.sub_mode, CustomizeSubMode::EditHex { .. }))
-        || matches!(&self.view_mode, ViewMode::Add { .. })
         || matches!(&self.save_state, SaveState::FileProps { .. })
         || self.item_search.is_some()
     }
@@ -8982,67 +8817,6 @@ impl App {
             = &self.customize_state { buf.chars().count() } else { return };
         if let Some(CustomizeState { sub_mode: CustomizeSubMode::EditHex { char_cur, .. }, .. })
             = &mut self.customize_state { *char_cur = len; }
-    }
-
-    // ── ViewMode::Add ─────────────────────────────────────────────────────────
-
-    fn view_add_active_buf_cur(&self) -> Option<(&str, usize)> {
-        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, active_field, .. } = &self.view_mode {
-            Some(match active_field {
-                ViewAddField::Name    => (name_buf.as_str(), *name_cursor),
-                ViewAddField::Section => (sec_buf.as_str(), *sec_cursor),
-            })
-        } else { None }
-    }
-
-    fn view_add_set_active_buf_cur(&mut self, new_buf: String, new_cur: usize) {
-        if let ViewMode::Add { name_buf, name_cursor, sec_buf, sec_cursor, active_field, .. } = &mut self.view_mode {
-            match active_field {
-                ViewAddField::Name    => { *name_buf = new_buf; *name_cursor = new_cur; }
-                ViewAddField::Section => { *sec_buf = new_buf; *sec_cursor = new_cur; }
-            }
-        }
-    }
-
-    pub fn view_add_ctrl_u(&mut self) {
-        let Some((buf, cur)) = self.view_add_active_buf_cur() else { return };
-        let (new_buf, killed, new_cur) = kb_kill_to_start(buf, cur);
-        self.kill_buffer = killed;
-        self.view_add_set_active_buf_cur(new_buf, new_cur);
-    }
-
-    pub fn view_add_ctrl_k(&mut self) {
-        let Some((buf, cur)) = self.view_add_active_buf_cur() else { return };
-        let (new_buf, killed, new_cur) = kb_kill_to_end(buf, cur);
-        self.kill_buffer = killed;
-        self.view_add_set_active_buf_cur(new_buf, new_cur);
-    }
-
-    pub fn view_add_ctrl_y(&mut self) {
-        let Some((buf, cur)) = self.view_add_active_buf_cur() else { return };
-        let kill = self.kill_buffer.clone();
-        let (new_buf, new_cur) = kb_yank(buf, cur, &kill);
-        self.view_add_set_active_buf_cur(new_buf, new_cur);
-    }
-
-    pub fn view_add_ctrl_a(&mut self) {
-        let Some((_, _)) = self.view_add_active_buf_cur() else { return };
-        self.view_add_set_cur_only(0);
-    }
-
-    pub fn view_add_ctrl_e(&mut self) {
-        let Some((buf, _)) = self.view_add_active_buf_cur() else { return };
-        let len = buf.chars().count();
-        self.view_add_set_cur_only(len);
-    }
-
-    fn view_add_set_cur_only(&mut self, new_cur: usize) {
-        if let ViewMode::Add { name_cursor, sec_cursor, active_field, .. } = &mut self.view_mode {
-            match active_field {
-                ViewAddField::Name    => *name_cursor = new_cur,
-                ViewAddField::Section => *sec_cursor = new_cur,
-            }
-        }
     }
 
     // ── item_search ───────────────────────────────────────────────────────────

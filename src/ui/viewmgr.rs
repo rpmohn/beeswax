@@ -118,10 +118,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 }
 
-/// Renders the View Properties dialog as a floating overlay over any screen.
+/// Renders the View Properties / Add View dialog as a floating overlay over any screen.
 pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let props = match &app.vmgr_state.mode {
         ViewMgrMode::Props { .. } => match &app.vmgr_state.mode { ViewMgrMode::Props {
+            is_new,
             name_buf, name_cur, name_editing,
             sec_cursor,
             sort_state,
@@ -130,7 +131,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             hide_empty_sections, hide_done_items, hide_dependent_items,
             hide_inherited_items, hide_column_heads, section_separators, number_items,
             active_field, sec_scroll,
-        } => (name_buf, *name_cur, *name_editing, *sec_cursor, sort_state,
+        } => (*is_new, name_buf, *name_cur, *name_editing, *sec_cursor, sort_state,
               *sec_sort_method, *sec_sort_order, sec_sort_picker, sec_add_picker,
               *hide_empty_sections, *hide_done_items,
               *hide_dependent_items, *hide_inherited_items, *hide_column_heads,
@@ -138,11 +139,11 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         _ => return },
         _ => return,
     };
-    let (name_buf, name_cur, name_editing, sec_cursor, sort_state,
+    let (is_new, name_buf, name_cur, name_editing, sec_cursor, sort_state,
          sec_sort_method, sec_sort_order, sec_sort_picker, sec_add_picker,
          hes, hdi, hdep, hii, hch, ss, ni, active_field, sec_scroll) = props;
 
-    // The view being edited
+    // The view being edited (for is_new this is the draft in inactive_views)
     let v_cursor = app.vmgr_state.cursor;
     let voi      = app.view_order_idx;
     let view_ref = if v_cursor == voi { &app.view }
@@ -153,11 +154,12 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
     let dlg = centered_rect(64, 19, area);
     frame.render_widget(Clear, dlg);
+    let title = if is_new { " Add View " } else { " View Properties " };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
         .style(app.theme.dialog_border)
-        .title_top(Line::from(" View Properties ").alignment(Alignment::Center))
+        .title_top(Line::from(title).alignment(Alignment::Center))
         .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center));
     frame.render_widget(block.clone(), dlg);
     let inner = block.inner(dlg);
@@ -225,6 +227,9 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
                         .take(right_avail.saturating_sub(2)).collect();
                     let hi = is_secs_active && idx == sec_cursor;
                     (prefix, name_text, hi)
+                } else if n == 2 && is_secs_active && sec_names.is_empty() {
+                    // No sections yet: show a highlighted blank so the cursor is visible.
+                    (String::new(), " ".to_string(), true)
                 } else {
                     (String::new(), String::new(), false)
                 }
