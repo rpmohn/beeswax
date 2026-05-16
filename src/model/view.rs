@@ -1,4 +1,4 @@
-use super::section::{Section, SortNewItems, SortOn, SortOrder, SortNa, SortSeq};
+use super::section::{Section, SortNewItems, SortOn, SortOrder, SortNa, SortSeq, FilterEntry};
 use super::column::Column;
 
 #[derive(Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -65,4 +65,6 @@ pub struct View {
     #[serde(default)] pub sort_secondary_na:     SortNa,
     #[serde(default)] pub sort_secondary_cat_id: Option<usize>,
     #[serde(default)] pub sort_secondary_seq:    SortSeq,
+    // View-level filter (applies to all sections, after per-section filter)
+    #[serde(default)] pub filter: Vec<FilterEntry>,
 }

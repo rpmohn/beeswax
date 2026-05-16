@@ -1257,6 +1257,16 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
     }
 
+    // Filter picker (F3 on Filter field).
+    let has_filter_picker = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { filter_state: FilterState::Open { .. }, .. }
+    );
+    if has_filter_picker {
+        handle_vmgr_filter_picker(app, code, modifiers);
+        return;
+    }
+
     // Section add picker (F3 on Sections field).
     let has_sec_add_picker = matches!(
         app.vmgr_state.mode,
@@ -1331,6 +1341,10 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         ViewMgrMode::Props { active_field, .. }
         if active_field.is_bool()
     );
+    let is_filter = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field: ViewPropsField::Filter, .. }
+    );
     match code {
         KeyCode::Enter                                               => app.vmgr_props_confirm(),
         KeyCode::Esc                                                 => app.vmgr_props_cancel(),
@@ -1338,11 +1352,14 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('i') if is_name_inactive                       => app.vmgr_props_name_begin_edit(),
         KeyCode::Up   if is_sections                                 => app.vmgr_props_sec_up(),
         KeyCode::Down if is_sections                                 => app.vmgr_props_sec_down(),
+        KeyCode::Up   if is_filter                                   => app.vmgr_filter_scroll_up(),
+        KeyCode::Down if is_filter                                   => app.vmgr_filter_scroll_down(),
         KeyCode::Tab | KeyCode::Down                                 => app.vmgr_props_field_next(),
         KeyCode::BackTab | KeyCode::Up                               => app.vmgr_props_field_prev(),
         KeyCode::F(3) if is_sections                                 => app.vmgr_sec_pick_open(),
         KeyCode::F(3) if is_item_sorting                             => app.vmgr_open_item_sort(),
         KeyCode::F(3) if is_sec_sorting || is_sec_order              => app.vmgr_sec_sort_open_picker(),
+        KeyCode::F(3) if is_filter                                   => app.vmgr_open_filter_picker(),
         KeyCode::Char(' ') if is_sec_sorting                         => app.vmgr_sec_sort_cycle(),
         KeyCode::Char(' ') if is_sec_order                           => app.vmgr_sec_order_cycle(),
         KeyCode::Char(' ') if is_bool                                => app.vmgr_props_toggle(),
@@ -1355,6 +1372,25 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Backspace if is_name                                => app.vmgr_props_name_backspace(),
         KeyCode::Char(ch)  if is_name && !modifiers.contains(KeyModifiers::CONTROL)
                            && !modifiers.contains(KeyModifiers::ALT) => app.vmgr_props_name_char(ch),
+        _ => {}
+    }
+}
+
+fn handle_vmgr_filter_picker(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if handle_vi_list(app, code, modifiers,
+        &|a| a.vmgr_filter_picker_down(),   &|a| a.vmgr_filter_picker_up(),
+        &|a| a.vmgr_filter_picker_end(),    &|a| a.vmgr_filter_picker_home(),
+        &|a| a.vmgr_filter_picker_home(),   &|a| a.vmgr_filter_picker_middle(), &|a| a.vmgr_filter_picker_end()) { return; }
+    match code {
+        KeyCode::Up       => app.vmgr_filter_picker_up(),
+        KeyCode::Down     => app.vmgr_filter_picker_down(),
+        KeyCode::PageUp   => app.vmgr_filter_picker_pgup(10),
+        KeyCode::PageDown => app.vmgr_filter_picker_pgdn(10),
+        KeyCode::Home     => app.vmgr_filter_picker_home(),
+        KeyCode::End      => app.vmgr_filter_picker_end(),
+        KeyCode::Char(' ') => app.vmgr_filter_picker_toggle(),
+        KeyCode::Enter    => app.vmgr_filter_picker_confirm(),
+        KeyCode::Esc      => app.vmgr_filter_picker_cancel(),
         _ => {}
     }
 }

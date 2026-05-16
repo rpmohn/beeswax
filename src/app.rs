@@ -115,6 +115,7 @@ pub enum ViewPropsField {
     HideColumnHeads,
     SectionSeparators,
     NumberItems,
+    Filter,
     ViewStatistics,
     ViewProtection,
 }
@@ -133,7 +134,8 @@ impl ViewPropsField {
             Self::HideInheritedItems => Self::HideColumnHeads,
             Self::HideColumnHeads    => Self::SectionSeparators,
             Self::SectionSeparators  => Self::NumberItems,
-            Self::NumberItems        => Self::ViewStatistics,
+            Self::NumberItems        => Self::Filter,
+            Self::Filter             => Self::ViewStatistics,
             Self::ViewStatistics     => Self::ViewProtection,
             Self::ViewProtection     => Self::Name,
         }
@@ -152,7 +154,8 @@ impl ViewPropsField {
             Self::HideColumnHeads    => Self::HideInheritedItems,
             Self::SectionSeparators  => Self::HideColumnHeads,
             Self::NumberItems        => Self::SectionSeparators,
-            Self::ViewStatistics     => Self::NumberItems,
+            Self::Filter             => Self::NumberItems,
+            Self::ViewStatistics     => Self::Filter,
             Self::ViewProtection     => Self::ViewStatistics,
         }
     }
@@ -183,6 +186,8 @@ pub enum ViewMgrMode {
         sec_sort_order:       SortOrder,
         sec_sort_picker:      Option<(SecSortTarget, usize)>, // (target, cursor)
         sec_add_picker:       Option<usize>,                  // F3 on Sections: cat picker cursor
+        filter_state:         FilterState,
+        filter_scroll:        usize,
         hide_empty_sections:  bool,
         hide_done_items:      bool,
         hide_dependent_items: bool,
@@ -729,6 +734,7 @@ pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &
         .map(|(i, _)| i)
         .collect();
     apply_section_filter(&mut indices, items, sec, &parent_map);
+    apply_view_filter(&mut indices, items, view, &parent_map);
     indices
 }
 
@@ -778,6 +784,7 @@ fn section_item_indices_sorted(items: &[Item], view: &View, sec_idx: usize, cats
         .map(|(i, _)| i)
         .collect();
     apply_section_filter(&mut indices, items, sec, &parent_map);
+    apply_view_filter(&mut indices, items, view, &parent_map);
 
     let (_, p_on, p_order, p_na, p_cat_id, p_seq, s_on, s_order, s_na, s_cat_id, s_seq)
         = effective_sort(sec, view);
@@ -843,6 +850,29 @@ fn apply_section_filter(
     }
     indices.retain(|&gi| {
         !sec.filter.iter()
+            .filter(|f| f.op == FilterOp::Exclude)
+            .any(|f| items[gi].values.keys().any(|&k| is_under_map(k, f.cat_id, parent_map)))
+    });
+}
+
+/// Apply a view's include/exclude filter rules to a list of global indices.
+fn apply_view_filter(
+    indices:    &mut Vec<usize>,
+    items:      &[Item],
+    view:       &View,
+    parent_map: &HashMap<usize, Option<usize>>,
+) {
+    if view.filter.is_empty() { return; }
+    let has_includes = view.filter.iter().any(|f| f.op == FilterOp::Include);
+    if has_includes {
+        indices.retain(|&gi| {
+            view.filter.iter()
+                .filter(|f| f.op == FilterOp::Include)
+                .any(|f| items[gi].values.keys().any(|&k| is_under_map(k, f.cat_id, parent_map)))
+        });
+    }
+    indices.retain(|&gi| {
+        !view.filter.iter()
             .filter(|f| f.op == FilterOp::Exclude)
             .any(|f| items[gi].values.keys().any(|&k| is_under_map(k, f.cat_id, parent_map)))
     });
@@ -1892,6 +1922,7 @@ impl App {
             sort_secondary_on: SortOn::None,     sort_secondary_order: SortOrder::Ascending,
             sort_secondary_na: SortNa::Bottom,   sort_secondary_cat_id: None,
             sort_secondary_seq: SortSeq::CategoryHierarchy,
+            filter: vec![],
         };
 
         fn date(id: usize, name: &str) -> Category {
@@ -2173,6 +2204,7 @@ impl App {
             sort_secondary_on: SortOn::None,  sort_secondary_order: SortOrder::Ascending,
             sort_secondary_na: SortNa::Bottom, sort_secondary_cat_id: None,
             sort_secondary_seq: SortSeq::CategoryHierarchy,
+            filter: vec![],
         };
         self.inactive_views.push(blank);
         // The new view is always appended last in the ordered list.
@@ -2184,6 +2216,7 @@ impl App {
             sort_state: SortState::Closed,
             sec_sort_method: SectionSortMethod::None, sec_sort_order: SortOrder::Ascending,
             sec_sort_picker: None, sec_add_picker: None,
+            filter_state: FilterState::Closed, filter_scroll: 0,
             hide_empty_sections: false, hide_done_items: false,
             hide_dependent_items: false, hide_inherited_items: false,
             hide_column_heads: false, section_separators: false, number_items: false,
@@ -5172,6 +5205,145 @@ impl App {
         }
     }
 
+    // ── ViewMgr filter picker ─────────────────────────────────────────────────
+
+    pub fn vmgr_open_filter_picker(&mut self) {
+        if !matches!(&self.vmgr_state.mode, ViewMgrMode::Props { active_field: ViewPropsField::Filter, .. }) {
+            return;
+        }
+        let v_cursor = self.vmgr_state.cursor;
+        let voi      = self.view_order_idx;
+        let entries: HashMap<usize, FilterOp> = {
+            let view_ref = if v_cursor == voi { &self.view }
+                           else {
+                               let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
+                               &self.inactive_views[ii]
+                           };
+            view_ref.filter.iter().map(|e| (e.cat_id, e.op)).collect()
+        };
+        if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
+            *filter_state = FilterState::Open { cursor: 0, entries };
+        }
+    }
+
+    pub fn vmgr_filter_picker_up(&mut self) {
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+            if *cursor > 0 { *cursor -= 1; }
+        }
+    }
+
+    pub fn vmgr_filter_picker_down(&mut self) {
+        let count = flatten_cats(&self.categories).len();
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+            if *cursor + 1 < count { *cursor += 1; }
+        }
+    }
+
+    pub fn vmgr_filter_picker_pgup(&mut self, n: usize) {
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+            *cursor = cursor.saturating_sub(n);
+        }
+    }
+
+    pub fn vmgr_filter_picker_pgdn(&mut self, n: usize) {
+        let count = flatten_cats(&self.categories).len();
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+            *cursor = (*cursor + n).min(count.saturating_sub(1));
+        }
+    }
+
+    pub fn vmgr_filter_picker_home(&mut self) {
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+            *cursor = 0;
+        }
+    }
+
+    pub fn vmgr_filter_picker_middle(&mut self) {
+        let count = flatten_cats(&self.categories).len();
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+            *cursor = count / 2;
+        }
+    }
+
+    pub fn vmgr_filter_picker_end(&mut self) {
+        let count = flatten_cats(&self.categories).len();
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+            *cursor = count.saturating_sub(1);
+        }
+    }
+
+    pub fn vmgr_filter_picker_toggle(&mut self) {
+        let cat_id = {
+            let flat = flatten_cats(&self.categories);
+            match &self.vmgr_state.mode {
+                ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } => {
+                    flat.get(*cursor).map(|c| c.id)
+                }
+                _ => None,
+            }
+        };
+        let Some(cat_id) = cat_id else { return; };
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { entries, .. }, .. } = &mut self.vmgr_state.mode {
+            match entries.get(&cat_id).copied() {
+                None                    => { entries.insert(cat_id, FilterOp::Include); }
+                Some(FilterOp::Include) => { entries.insert(cat_id, FilterOp::Exclude); }
+                Some(FilterOp::Exclude) => { entries.remove(&cat_id); }
+            }
+        }
+    }
+
+    pub fn vmgr_filter_picker_confirm(&mut self) {
+        let is_new = matches!(&self.vmgr_state.mode, ViewMgrMode::Props { is_new: true, .. });
+        let flat = flatten_cats(&self.categories);
+        let entries = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { filter_state: FilterState::Open { entries, .. }, .. } => entries.clone(),
+            _ => return,
+        };
+        let new_filter: Vec<FilterEntry> = flat.iter()
+            .filter_map(|c| entries.get(&c.id).map(|&op| FilterEntry { cat_id: c.id, op }))
+            .collect();
+        if !is_new { self.push_undo(); }
+        let v_cursor = self.vmgr_state.cursor;
+        let voi      = self.view_order_idx;
+        if v_cursor == voi {
+            self.view.filter = new_filter;
+        } else {
+            let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
+            if ii < self.inactive_views.len() {
+                self.inactive_views[ii].filter = new_filter;
+            }
+        }
+        if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
+            *filter_state = FilterState::Closed;
+        }
+    }
+
+    pub fn vmgr_filter_picker_cancel(&mut self) {
+        if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
+            *filter_state = FilterState::Closed;
+        }
+    }
+
+    pub fn vmgr_filter_scroll_up(&mut self) {
+        if let ViewMgrMode::Props { filter_scroll, .. } = &mut self.vmgr_state.mode {
+            if *filter_scroll > 0 { *filter_scroll -= 1; }
+        }
+    }
+
+    pub fn vmgr_filter_scroll_down(&mut self) {
+        let v_cursor = self.vmgr_state.cursor;
+        let voi      = self.view_order_idx;
+        let count = if v_cursor == voi {
+            self.view.filter.len()
+        } else {
+            let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
+            self.inactive_views.get(ii).map(|v| v.filter.len()).unwrap_or(0)
+        };
+        if let ViewMgrMode::Props { filter_scroll, .. } = &mut self.vmgr_state.mode {
+            if count > 2 && *filter_scroll + 2 < count { *filter_scroll += 1; }
+        }
+    }
+
     // ── Sort dialog ───────────────────────────────────────────────────────────
 
     pub fn sec_open_sort_dialog(&mut self) {
@@ -7110,6 +7282,7 @@ impl App {
             sort_state:   SortState::Closed,
             sec_sort_method, sec_sort_order, sec_sort_picker: None,
             sec_add_picker: None,
+            filter_state: FilterState::Closed, filter_scroll: 0,
             hide_empty_sections, hide_done_items, hide_dependent_items,
             hide_inherited_items, hide_column_heads, section_separators, number_items,
             active_field: ViewPropsField::Name,
@@ -7149,10 +7322,12 @@ impl App {
                 ViewPropsField::HideInheritedItems => ViewPropsField::Sections,
                 // Sections (right col): nothing further right → first left field below Sections area
                 ViewPropsField::Sections           => ViewPropsField::HideColumnHeads,
-                // Rows 9-15: no right field → next left field below, wrapping at bottom
-                ViewPropsField::HideColumnHeads    => ViewPropsField::SectionSeparators,
-                ViewPropsField::SectionSeparators  => ViewPropsField::NumberItems,
-                ViewPropsField::NumberItems        => ViewPropsField::ViewStatistics,
+                // Rows 9-11: right column shows Filter display — jump to Filter
+                ViewPropsField::HideColumnHeads    => ViewPropsField::Filter,
+                ViewPropsField::SectionSeparators  => ViewPropsField::Filter,
+                ViewPropsField::NumberItems        => ViewPropsField::Filter,
+                // Filter (right col): jump to next left field below
+                ViewPropsField::Filter             => ViewPropsField::ViewStatistics,
                 ViewPropsField::ViewStatistics     => ViewPropsField::ViewProtection,
                 ViewPropsField::ViewProtection     => ViewPropsField::Name,
             };

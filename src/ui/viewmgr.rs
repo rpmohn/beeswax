@@ -4,8 +4,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
-use crate::app::{App, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator};
-use crate::model::CategoryKind;
+use crate::app::{App, FilterState, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator};
+use crate::model::{CategoryKind, FilterOp};
 use crate::app::SortState;
 use super::cursor_split;
 
@@ -128,11 +128,13 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             sort_state,
             sec_sort_method, sec_sort_order, sec_sort_picker,
             sec_add_picker,
+            filter_state, filter_scroll,
             hide_empty_sections, hide_done_items, hide_dependent_items,
             hide_inherited_items, hide_column_heads, section_separators, number_items,
             active_field, sec_scroll,
         } => (*is_new, name_buf, *name_cur, *name_editing, *sec_cursor, sort_state,
               *sec_sort_method, *sec_sort_order, sec_sort_picker, sec_add_picker,
+              filter_state, *filter_scroll,
               *hide_empty_sections, *hide_done_items,
               *hide_dependent_items, *hide_inherited_items, *hide_column_heads,
               *section_separators, *number_items, *active_field, *sec_scroll),
@@ -141,6 +143,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     };
     let (is_new, name_buf, name_cur, name_editing, sec_cursor, sort_state,
          sec_sort_method, sec_sort_order, sec_sort_picker, sec_add_picker,
+         filter_state, filter_scroll,
          hes, hdi, hdep, hii, hch, ss, ni, active_field, sec_scroll) = props;
 
     // The view being edited (for is_new this is the draft in inactive_views)
@@ -204,13 +207,28 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     // Sections list on right side (visible starting from sec_scroll).
     let sec_names: Vec<&str> = view_ref.sections.iter().map(|s| s.name.as_str()).collect();
     let right_avail = iw.saturating_sub(right_x);
-    let is_secs_active = active_field == ViewPropsField::Sections;
+    let is_secs_active   = active_field == ViewPropsField::Sections;
+    let is_filter_active = active_field == ViewPropsField::Filter;
     let can_scroll_up   = sec_scroll > 0;
     let can_scroll_down = sec_scroll + 6 < sec_names.len();
 
+    // Precompute filter entries for right-column display.
+    let view_filter_entries: Vec<String> = {
+        let all_cats = flatten_cats(&app.categories);
+        view_ref.filter.iter().map(|f| {
+            let name = all_cats.iter().find(|c| c.id == f.cat_id)
+                .map(|c| c.name.as_str()).unwrap_or("?");
+            if f.op == FilterOp::Exclude { format!("-{}", name) } else { name.to_string() }
+        }).collect()
+    };
+    let filter_entry_w = right_avail.saturating_sub(2);
+    let filter_total   = view_filter_entries.len();
+    let filter_start   = filter_scroll.min(if filter_total > 2 { filter_total - 2 } else { 0 });
+
     // Returns (prefix, text, highlight) for each right-column slot.
     // prefix is unstyled (arrow indicator + space for section rows, empty otherwise).
-    // slot 0 → blank, slot 1 → "Sections:" header, slots 2-7 → up to 6 section names.
+    // slot 0 → blank, slot 1 → "Sections:" header, slots 2-7 → up to 6 section names,
+    // slot 8 → "Filter:" label, slots 9-10 → filter entry lines.
     let right_slot = |slot: usize| -> (String, String, bool) {
         match slot {
             0 => (String::new(), String::new(), false),
@@ -233,6 +251,30 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
                 } else {
                     (String::new(), String::new(), false)
                 }
+            }
+            8 => {
+                // Filter: label line
+                ("".to_string(), "Filter:".chars().take(right_avail).collect(), false)
+            }
+            9 => {
+                // Filter entry line 1
+                let row_raw = view_filter_entries.get(filter_start).map(|s| s.as_str()).unwrap_or("");
+                let row_str: String = row_raw.chars().take(filter_entry_w).collect();
+                let padded = if is_filter_active {
+                    format!("{:<w$}", row_str, w = filter_entry_w)
+                } else { row_str };
+                let arrow = if filter_start > 0 { "\u{25B2}" } else { " " };
+                (format!("{} ", arrow), padded, is_filter_active)
+            }
+            10 => {
+                // Filter entry line 2
+                let row_raw = view_filter_entries.get(filter_start + 1).map(|s| s.as_str()).unwrap_or("");
+                let row_str: String = row_raw.chars().take(filter_entry_w).collect();
+                let padded = if is_filter_active {
+                    format!("{:<w$}", row_str, w = filter_entry_w)
+                } else { row_str };
+                let arrow = if filter_start + 2 < filter_total { "\u{25BC}" } else { " " };
+                (format!("{} ", arrow), padded, is_filter_active)
             }
             _ => (String::new(), String::new(), false),
         }
@@ -364,11 +406,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     for (row_offset, (label, val, field)) in bool_fields.iter().enumerate() {
         let slot = 4 + row_offset;
         let (right_prefix, right_text, right_hi) = right_slot(slot);
-        let right_str = if *field == ViewPropsField::NumberItems && right_text.is_empty() {
-            "Filter:".to_string()
-        } else {
-            right_text
-        };
+        let right_str = right_text;
         if active_field == *field {
             let val_str = yn(*val);
             let val_w   = left_w.saturating_sub(label.chars().count());
@@ -480,6 +518,54 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
         frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pick_inner);
+    }
+
+    // ── Filter picker overlay (F3 on Filter field) ───────────────────────────
+    if let FilterState::Open { cursor, entries } = filter_state {
+        let cursor   = *cursor;
+        let all_cats = flatten_cats(&app.categories);
+        let max_vis  = 20usize;
+        let visible  = all_cats.len().min(max_vis);
+        let start    = if cursor >= visible { cursor - visible + 1 } else { 0 };
+
+        let box_h = (visible + 2) as u16;
+        let box_w = 62u16;
+        let dlg_rect = centered_rect(box_w, box_h, area);
+        frame.render_widget(Clear, dlg_rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title_top(Line::from(" Filter ").alignment(Alignment::Center))
+            .title_bottom(Line::from(" Press ENTER to accept ").alignment(Alignment::Center))
+            .style(app.theme.dialog_border);
+        frame.render_widget(block.clone(), dlg_rect);
+        let inner = block.inner(dlg_rect);
+
+        let inner_w = inner.width as usize;
+        let mut cat_lines: Vec<Line> = Vec::new();
+        for (i, cat) in all_cats.iter().enumerate().skip(start).take(visible) {
+            let marker = match entries.get(&cat.id).copied() {
+                None                    => ' ',
+                Some(FilterOp::Include) => '+',
+                Some(FilterOp::Exclude) => '-',
+            };
+            let note_ind = cat_note_indicator(&app.categories, cat.id);
+            let kind_ind = match cat.kind {
+                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
+                CategoryKind::Date      => "*",
+                CategoryKind::Numeric   => "#",
+                CategoryKind::Unindexed => "\u{25A1}",
+            };
+            let indent  = "  ".repeat(cat.depth);
+            let name_w  = inner_w.saturating_sub(6 + indent.len());
+            let name: String = cat.name.chars().take(name_w).collect();
+            let row_text = format!(" {} \u{2502}{}{} {}", marker, indent, kind_ind, name);
+            if i == cursor {
+                cat_lines.push(Line::from(Span::styled(row_text, rev)));
+            } else {
+                cat_lines.push(Line::from(row_text));
+            }
+        }
+        frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
     }
 
     // ── Section Select picker (F3 on Sections field) ──────────────────────────

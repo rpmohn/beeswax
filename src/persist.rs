@@ -81,7 +81,8 @@ fn view_v1_to_view(v: ViewV1) -> View {
            sort_primary_seq: SortSeq::CategoryHierarchy,
            sort_secondary_on: SortOn::None,     sort_secondary_order: SortOrder::Ascending,
            sort_secondary_na: SortNa::Bottom,   sort_secondary_cat_id: None,
-           sort_secondary_seq: SortSeq::CategoryHierarchy }
+           sort_secondary_seq: SortSeq::CategoryHierarchy,
+           filter: vec![] }
 }
 
 fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
@@ -179,6 +180,7 @@ fn clone_view(view: &View) -> View {
         sort_secondary_na:     view.sort_secondary_na,
         sort_secondary_cat_id: view.sort_secondary_cat_id,
         sort_secondary_seq:    view.sort_secondary_seq,
+        filter:                view.filter.clone(),
     }
 }
 
