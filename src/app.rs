@@ -48,8 +48,8 @@ pub enum Mode {
     ConfirmDiscardItem { yes: bool },
     /// Item Properties modal (F6 on an item in the main column).
     /// cursor: 0=Item text, 1=Note, 2=Note file, 3=Item statistics, 4+=assigned list
-    /// edit_buf: Some((buffer, cur)) when in-place text editing is active (cursor==0 only)
-    ItemProps { gi: usize, cursor: usize, edit_buf: Option<(String, usize)> },
+    /// edit_buf: Some((buffer, cur, scroll)) when in-place text editing is active (cursor==0 only)
+    ItemProps { gi: usize, cursor: usize, edit_buf: Option<(String, usize, usize)> },
 }
 
 // ── CatMgr state ──────────────────────────────────────────────────────────────
@@ -166,6 +166,44 @@ impl ViewPropsField {
             Self::NumberItems
         )
     }
+    pub fn next_left(self) -> Self {
+        match self {
+            Self::Name               => Self::ItemSorting,
+            Self::ItemSorting        => Self::SectionSorting,
+            Self::SectionSorting     => Self::SectionSortOrder,
+            Self::SectionSortOrder   => Self::HideEmptySections,
+            Self::HideEmptySections  => Self::HideDoneItems,
+            Self::HideDoneItems      => Self::HideDependentItems,
+            Self::HideDependentItems => Self::HideInheritedItems,
+            Self::HideInheritedItems => Self::HideColumnHeads,
+            Self::HideColumnHeads    => Self::SectionSeparators,
+            Self::SectionSeparators  => Self::NumberItems,
+            Self::NumberItems        => Self::ViewStatistics,
+            Self::ViewStatistics     => Self::ViewProtection,
+            Self::ViewProtection     => Self::Name,
+            Self::Sections           => Self::HideColumnHeads,
+            Self::Filter             => Self::ViewStatistics,
+        }
+    }
+    pub fn prev_left(self) -> Self {
+        match self {
+            Self::Name               => Self::ViewProtection,
+            Self::ItemSorting        => Self::Name,
+            Self::SectionSorting     => Self::ItemSorting,
+            Self::SectionSortOrder   => Self::SectionSorting,
+            Self::HideEmptySections  => Self::SectionSortOrder,
+            Self::HideDoneItems      => Self::HideEmptySections,
+            Self::HideDependentItems => Self::HideDoneItems,
+            Self::HideInheritedItems => Self::HideDependentItems,
+            Self::HideColumnHeads    => Self::HideInheritedItems,
+            Self::SectionSeparators  => Self::HideColumnHeads,
+            Self::NumberItems        => Self::SectionSeparators,
+            Self::ViewStatistics     => Self::NumberItems,
+            Self::ViewProtection     => Self::ViewStatistics,
+            Self::Sections           => Self::Name,
+            Self::Filter             => Self::NumberItems,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -179,8 +217,11 @@ pub enum ViewMgrMode {
         is_new:               bool,       // true when creating a new view (INS / Add View)
         name_buf:             String,
         name_cur:             usize,
+        name_scroll:          usize,
         name_editing:         bool,       // true only after F2/i activates the name field
         sec_cursor:           usize,      // cursor within the sections list
+        sec_return_field:     Option<ViewPropsField>,  // remembered when RIGHT jumps to Sections
+        filter_return_field:  Option<ViewPropsField>,  // remembered when RIGHT jumps to Filter
         sort_state:           SortState,  // for the Item Sorting sub-dialog
         sec_sort_method:      SectionSortMethod,
         sec_sort_order:       SortOrder,
@@ -188,6 +229,7 @@ pub enum ViewMgrMode {
         sec_add_picker:       Option<usize>,                  // F3 on Sections: cat picker cursor
         filter_state:         FilterState,
         filter_scroll:        usize,
+        filter_cursor:        usize,
         hide_empty_sections:  bool,
         hide_done_items:      bool,
         hide_dependent_items: bool,
@@ -254,14 +296,16 @@ pub enum ColMode {
         confirm_delete: bool,   // true when "Discard this category?" dialog is shown
     },
     Props {
-        head_buf:     String,
-        head_cur:     usize,
-        width_buf:    String,
-        width_cur:    usize,
-        format:       ColFormat,
-        date_fmt:     Option<DateFmt>,
-        active_field: PropsField,
-        is_date:      bool,
+        head_buf:      String,
+        head_cur:      usize,
+        head_scroll:   usize,
+        width_buf:     String,
+        width_cur:     usize,
+        width_scroll:  usize,
+        format:        ColFormat,
+        date_fmt:      Option<DateFmt>,
+        active_field:  PropsField,
+        is_date:       bool,
     },
     /// F3 Calendar date picker for date-type columns.
     Calendar {
@@ -377,6 +421,7 @@ pub enum SectionMode {
         sec_idx:       usize,
         head_buf:      String,
         head_cur:      usize,
+        head_scroll:   usize,
         active_field:  SecPropsField,
         sort_state:    SortState,
         filter_state:  FilterState,
@@ -2211,12 +2256,12 @@ impl App {
         self.vmgr_state.cursor = self.inactive_views.len();
         self.vmgr_state.mode = ViewMgrMode::Props {
             is_new: true,
-            name_buf: String::new(), name_cur: 0, name_editing: true,
-            sec_cursor: 0,
+            name_buf: String::new(), name_cur: 0, name_scroll: 0, name_editing: true,
+            sec_cursor: 0, sec_return_field: None, filter_return_field: None,
             sort_state: SortState::Closed,
             sec_sort_method: SectionSortMethod::None, sec_sort_order: SortOrder::Ascending,
             sec_sort_picker: None, sec_add_picker: None,
-            filter_state: FilterState::Closed, filter_scroll: 0,
+            filter_state: FilterState::Closed, filter_scroll: 0, filter_cursor: 0,
             hide_empty_sections: false, hide_done_items: false,
             hide_dependent_items: false, hide_inherited_items: false,
             hide_column_heads: false, section_separators: false, number_items: false,
@@ -3346,13 +3391,13 @@ impl App {
             let text = self.items.get(*gi)
                 .map(|it| it.text.clone()).unwrap_or_default();
             let len = text.chars().count();
-            *edit_buf = Some((text, len)); // cursor at end
+            *edit_buf = Some((text, len, len.saturating_sub(40))); // cursor at end
         }
     }
 
     pub fn item_props_text_confirm(&mut self) {
         let (gi, buf) = match &self.mode {
-            Mode::ItemProps { gi, edit_buf: Some((buf, _)), .. } => (*gi, buf.clone()),
+            Mode::ItemProps { gi, edit_buf: Some((buf, _, _)), .. } => (*gi, buf.clone()),
             _ => return,
         };
         let trimmed = buf.clone();
@@ -3367,25 +3412,27 @@ impl App {
     }
 
     pub fn item_props_text_input_char(&mut self, ch: char) {
-        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+        if let Mode::ItemProps { edit_buf: Some((buf, cur, scroll)), .. } = &mut self.mode {
             let byte_pos: usize = buf.char_indices().nth(*cur).map(|(i,_)| i).unwrap_or(buf.len());
             buf.insert(byte_pos, ch);
             *cur += 1;
+            *scroll = (*cur).saturating_sub(40);
         }
     }
 
     pub fn item_props_text_backspace(&mut self) {
-        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+        if let Mode::ItemProps { edit_buf: Some((buf, cur, scroll)), .. } = &mut self.mode {
             if *cur > 0 {
                 *cur -= 1;
                 let byte_pos = buf.char_indices().nth(*cur).map(|(i,_)| i).unwrap_or(buf.len());
                 buf.remove(byte_pos);
+                *scroll = (*scroll).min(*cur);
             }
         }
     }
 
     pub fn item_props_text_delete(&mut self) {
-        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+        if let Mode::ItemProps { edit_buf: Some((buf, cur, _)), .. } = &mut self.mode {
             let len = buf.chars().count();
             if *cur < len {
                 let byte_pos = buf.char_indices().nth(*cur).map(|(i,_)| i).unwrap_or(buf.len());
@@ -3395,33 +3442,45 @@ impl App {
     }
 
     pub fn item_props_text_cursor_left(&mut self) {
-        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode {
-            if *cur > 0 { *cur -= 1; }
+        if let Mode::ItemProps { edit_buf: Some((_, cur, scroll)), .. } = &mut self.mode {
+            if *cur > 0 {
+                *cur -= 1;
+                *scroll = (*scroll).min(*cur);
+            }
         }
     }
 
     pub fn item_props_text_cursor_right(&mut self) {
-        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
-            if *cur < buf.chars().count() { *cur += 1; }
+        if let Mode::ItemProps { edit_buf: Some((buf, cur, scroll)), .. } = &mut self.mode {
+            if *cur < buf.chars().count() {
+                *cur += 1;
+                *scroll = (*cur).saturating_sub(40);
+            }
         }
     }
 
     pub fn item_props_text_word_left(&mut self) {
         let (buf, cur) = match &self.mode {
-            Mode::ItemProps { edit_buf: Some((b, c)), .. } => (b.clone(), *c),
+            Mode::ItemProps { edit_buf: Some((b, c, _)), .. } => (b.clone(), *c),
             _ => return,
         };
         let new_cur = buf_word_left(&buf, cur);
-        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode { *cur = new_cur; }
+        if let Mode::ItemProps { edit_buf: Some((_, cur, scroll)), .. } = &mut self.mode {
+            *cur = new_cur;
+            *scroll = (*scroll).min(new_cur);
+        }
     }
 
     pub fn item_props_text_word_right(&mut self) {
         let (buf, cur) = match &self.mode {
-            Mode::ItemProps { edit_buf: Some((b, c)), .. } => (b.clone(), *c),
+            Mode::ItemProps { edit_buf: Some((b, c, _)), .. } => (b.clone(), *c),
             _ => return,
         };
         let new_cur = buf_word_right(&buf, cur);
-        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode { *cur = new_cur; }
+        if let Mode::ItemProps { edit_buf: Some((_, cur, scroll)), .. } = &mut self.mode {
+            *cur = new_cur;
+            *scroll = new_cur.saturating_sub(40);
+        }
     }
 
     /// Build sorted assigned-category list: (cat_id, name, kind, stored_value).
@@ -4094,7 +4153,8 @@ impl App {
         let date_fmt  = col.date_fmt.clone();
         let format    = col.format;
         self.col_mode = ColMode::Props {
-            head_buf, head_cur, width_buf, width_cur,
+            head_buf, head_cur, head_scroll: head_cur.saturating_sub(8),
+            width_buf, width_cur, width_scroll: width_cur.saturating_sub(34),
             format, date_fmt, active_field: PropsField::Head, is_date,
         };
     }
@@ -4161,19 +4221,21 @@ impl App {
     }
 
     pub fn col_props_input_char(&mut self, ch: char) {
-        if let ColMode::Props { ref active_field, ref mut head_buf, ref mut head_cur,
-                                ref mut width_buf, ref mut width_cur, .. } = self.col_mode {
+        if let ColMode::Props { ref active_field, ref mut head_buf, ref mut head_cur, ref mut head_scroll,
+                                ref mut width_buf, ref mut width_cur, ref mut width_scroll, .. } = self.col_mode {
             match active_field {
                 PropsField::Head => {
                     let byte = char_to_byte(head_buf, *head_cur);
                     head_buf.insert(byte, ch);
                     *head_cur += 1;
+                    *head_scroll = (*head_cur).saturating_sub(8);
                 }
                 PropsField::Width => {
                     if ch.is_ascii_digit() {
                         let byte = char_to_byte(width_buf, *width_cur);
                         width_buf.insert(byte, ch);
                         *width_cur += 1;
+                        *width_scroll = (*width_cur).saturating_sub(34);
                     }
                 }
                 _ => {}
@@ -4182,14 +4244,15 @@ impl App {
     }
 
     pub fn col_props_backspace(&mut self) {
-        if let ColMode::Props { ref active_field, ref mut head_buf, ref mut head_cur,
-                                ref mut width_buf, ref mut width_cur, .. } = self.col_mode {
+        if let ColMode::Props { ref active_field, ref mut head_buf, ref mut head_cur, ref mut head_scroll,
+                                ref mut width_buf, ref mut width_cur, ref mut width_scroll, .. } = self.col_mode {
             match active_field {
                 PropsField::Head => {
                     if *head_cur > 0 {
                         *head_cur -= 1;
                         let byte = char_to_byte(head_buf, *head_cur);
                         head_buf.remove(byte);
+                        *head_scroll = (*head_scroll).min(*head_cur);
                     }
                 }
                 PropsField::Width => {
@@ -4197,6 +4260,7 @@ impl App {
                         *width_cur -= 1;
                         let byte = char_to_byte(width_buf, *width_cur);
                         width_buf.remove(byte);
+                        *width_scroll = (*width_scroll).min(*width_cur);
                     }
                 }
                 _ => {}
@@ -4205,11 +4269,12 @@ impl App {
     }
 
     pub fn col_props_left(&mut self) {
-        if let ColMode::Props { ref active_field, ref mut head_cur, ref mut width_cur,
+        if let ColMode::Props { ref active_field, ref mut head_cur, ref mut head_scroll,
+                                ref mut width_cur, ref mut width_scroll,
                                 ref mut format, ref mut date_fmt, .. } = self.col_mode {
             match active_field {
-                PropsField::Head   => { if *head_cur > 0 { *head_cur -= 1; } }
-                PropsField::Width  => { if *width_cur > 0 { *width_cur -= 1; } }
+                PropsField::Head   => { if *head_cur > 0 { *head_cur -= 1; *head_scroll = (*head_scroll).min(*head_cur); } }
+                PropsField::Width  => { if *width_cur > 0 { *width_cur -= 1; *width_scroll = (*width_scroll).min(*width_cur); } }
                 PropsField::Format => { *format = col_format_prev(*format); }
                 PropsField::DateDisplay => {
                     if let Some(fmt) = date_fmt {
@@ -4258,17 +4323,17 @@ impl App {
     }
 
     pub fn col_props_right(&mut self) {
-        if let ColMode::Props { ref active_field, ref mut head_cur, ref head_buf,
-                                ref mut width_cur, ref width_buf,
+        if let ColMode::Props { ref active_field, ref mut head_cur, ref mut head_scroll, ref head_buf,
+                                ref mut width_cur, ref mut width_scroll, ref width_buf,
                                 ref mut format, ref mut date_fmt, .. } = self.col_mode {
             match active_field {
                 PropsField::Head  => {
                     let len = head_buf.chars().count();
-                    if *head_cur < len { *head_cur += 1; }
+                    if *head_cur < len { *head_cur += 1; *head_scroll = (*head_cur).saturating_sub(8); }
                 }
                 PropsField::Width => {
                     let len = width_buf.chars().count();
-                    if *width_cur < len { *width_cur += 1; }
+                    if *width_cur < len { *width_cur += 1; *width_scroll = (*width_cur).saturating_sub(34); }
                 }
                 PropsField::Format => { *format = col_format_next(*format); }
                 PropsField::DateDisplay => {
@@ -4328,10 +4393,10 @@ impl App {
             _ => return,
         };
         let new_cur = buf_word_left(&buf, cur);
-        if let ColMode::Props { active_field, head_cur, width_cur, .. } = &mut self.col_mode {
+        if let ColMode::Props { active_field, head_cur, head_scroll, width_cur, width_scroll, .. } = &mut self.col_mode {
             match (active_field, field) {
-                (PropsField::Head,  PropsField::Head)  => *head_cur  = new_cur,
-                (PropsField::Width, PropsField::Width) => *width_cur = new_cur,
+                (PropsField::Head,  PropsField::Head)  => { *head_cur  = new_cur; *head_scroll  = (*head_scroll).min(new_cur); }
+                (PropsField::Width, PropsField::Width) => { *width_cur = new_cur; *width_scroll = (*width_scroll).min(new_cur); }
                 _ => {}
             }
         }
@@ -4348,10 +4413,10 @@ impl App {
             _ => return,
         };
         let new_cur = buf_word_right(&buf, cur);
-        if let ColMode::Props { active_field, head_cur, width_cur, .. } = &mut self.col_mode {
+        if let ColMode::Props { active_field, head_cur, head_scroll, width_cur, width_scroll, .. } = &mut self.col_mode {
             match (active_field, field) {
-                (PropsField::Head,  PropsField::Head)  => *head_cur  = new_cur,
-                (PropsField::Width, PropsField::Width) => *width_cur = new_cur,
+                (PropsField::Head,  PropsField::Head)  => { *head_cur  = new_cur; *head_scroll  = new_cur.saturating_sub(8); }
+                (PropsField::Width, PropsField::Width) => { *width_cur = new_cur; *width_scroll = new_cur.saturating_sub(34); }
                 _ => {}
             }
         }
@@ -4983,8 +5048,9 @@ impl App {
         let head_cur = name.chars().count();
         self.sec_mode = SectionMode::Props {
             sec_idx,
-            head_buf:     name,
+            head_buf:      name,
             head_cur,
+            head_scroll:   head_cur.saturating_sub(21),
             active_field:  SecPropsField::Head,
             sort_state:    SortState::Closed,
             filter_state:  FilterState::Closed,
@@ -5022,40 +5088,48 @@ impl App {
     }
 
     pub fn sec_props_head_char(&mut self, ch: char) {
-        if let SectionMode::Props { head_buf, head_cur, active_field: SecPropsField::Head, .. }
+        if let SectionMode::Props { head_buf, head_cur, head_scroll, active_field: SecPropsField::Head, .. }
             = &mut self.sec_mode
         {
             let byte = char_to_byte(head_buf, *head_cur);
             head_buf.insert(byte, ch);
             *head_cur += 1;
+            *head_scroll = (*head_cur).saturating_sub(21);
         }
     }
 
     pub fn sec_props_head_backspace(&mut self) {
-        if let SectionMode::Props { head_buf, head_cur, active_field: SecPropsField::Head, .. }
+        if let SectionMode::Props { head_buf, head_cur, head_scroll, active_field: SecPropsField::Head, .. }
             = &mut self.sec_mode
         {
             if *head_cur > 0 {
                 *head_cur -= 1;
                 let byte = char_to_byte(head_buf, *head_cur);
                 head_buf.remove(byte);
+                *head_scroll = (*head_scroll).min(*head_cur);
             }
         }
     }
 
     pub fn sec_props_head_left(&mut self) {
-        if let SectionMode::Props { head_cur, active_field: SecPropsField::Head, .. }
+        if let SectionMode::Props { head_cur, head_scroll, active_field: SecPropsField::Head, .. }
             = &mut self.sec_mode
         {
-            if *head_cur > 0 { *head_cur -= 1; }
+            if *head_cur > 0 {
+                *head_cur -= 1;
+                *head_scroll = (*head_scroll).min(*head_cur);
+            }
         }
     }
 
     pub fn sec_props_head_right(&mut self) {
-        if let SectionMode::Props { head_buf, head_cur, active_field: SecPropsField::Head, .. }
+        if let SectionMode::Props { head_buf, head_cur, head_scroll, active_field: SecPropsField::Head, .. }
             = &mut self.sec_mode
         {
-            if *head_cur < head_buf.chars().count() { *head_cur += 1; }
+            if *head_cur < head_buf.chars().count() {
+                *head_cur += 1;
+                *head_scroll = (*head_cur).saturating_sub(21);
+            }
         }
     }
 
@@ -5066,7 +5140,10 @@ impl App {
             _ => return,
         };
         let new_cur = buf_word_left(&buf, cur);
-        if let SectionMode::Props { head_cur, .. } = &mut self.sec_mode { *head_cur = new_cur; }
+        if let SectionMode::Props { head_cur, head_scroll, .. } = &mut self.sec_mode {
+            *head_cur = new_cur;
+            *head_scroll = (*head_scroll).min(new_cur);
+        }
     }
 
     pub fn sec_props_head_word_right(&mut self) {
@@ -5076,7 +5153,10 @@ impl App {
             _ => return,
         };
         let new_cur = buf_word_right(&buf, cur);
-        if let SectionMode::Props { head_cur, .. } = &mut self.sec_mode { *head_cur = new_cur; }
+        if let SectionMode::Props { head_cur, head_scroll, .. } = &mut self.sec_mode {
+            *head_cur = new_cur;
+            *head_scroll = new_cur.saturating_sub(21);
+        }
     }
 
     pub fn sec_props_confirm(&mut self) {
@@ -5325,8 +5405,11 @@ impl App {
     }
 
     pub fn vmgr_filter_scroll_up(&mut self) {
-        if let ViewMgrMode::Props { filter_scroll, .. } = &mut self.vmgr_state.mode {
-            if *filter_scroll > 0 { *filter_scroll -= 1; }
+        if let ViewMgrMode::Props { filter_cursor, filter_scroll, .. } = &mut self.vmgr_state.mode {
+            if *filter_cursor > 0 {
+                *filter_cursor -= 1;
+                if *filter_cursor < *filter_scroll { *filter_scroll = *filter_cursor; }
+            }
         }
     }
 
@@ -5339,8 +5422,93 @@ impl App {
             let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
             self.inactive_views.get(ii).map(|v| v.filter.len()).unwrap_or(0)
         };
-        if let ViewMgrMode::Props { filter_scroll, .. } = &mut self.vmgr_state.mode {
-            if count > 2 && *filter_scroll + 2 < count { *filter_scroll += 1; }
+        if let ViewMgrMode::Props { filter_cursor, filter_scroll, .. } = &mut self.vmgr_state.mode {
+            if *filter_cursor + 1 < count {
+                *filter_cursor += 1;
+                if *filter_cursor >= *filter_scroll + 2 { *filter_scroll = *filter_cursor - 1; }
+            }
+        }
+    }
+
+    // ── Sections/Filter edge navigation ───────────────────────────────────────
+
+    /// UP in Sections: move cursor up, or exit to ViewProtection if already at top.
+    pub fn vmgr_sec_up_nav(&mut self) {
+        let at_top = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { sec_cursor, .. } => *sec_cursor == 0,
+            _ => return,
+        };
+        if at_top {
+            if let ViewMgrMode::Props { active_field, name_editing, sec_return_field, .. } = &mut self.vmgr_state.mode {
+                *sec_return_field = None;
+                *active_field = ViewPropsField::ViewProtection;
+                *name_editing = false;
+            }
+        } else {
+            self.vmgr_props_sec_up();
+        }
+    }
+
+    /// DOWN in Sections: move cursor down, or exit to Filter if already at last item.
+    pub fn vmgr_sec_down_nav(&mut self) {
+        let v_idx = self.vmgr_state.cursor;
+        let voi   = self.view_order_idx;
+        let sec_count = if v_idx == voi { self.view.sections.len() }
+                        else { self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)).map(|v| v.sections.len()).unwrap_or(0) };
+        let at_bottom = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { sec_cursor, .. } => sec_count == 0 || *sec_cursor + 1 >= sec_count,
+            _ => return,
+        };
+        if at_bottom {
+            if let ViewMgrMode::Props { active_field, name_editing, sec_return_field, .. } = &mut self.vmgr_state.mode {
+                *sec_return_field = None;
+                *active_field = ViewPropsField::Filter;
+                *name_editing = false;
+            }
+        } else {
+            self.vmgr_props_sec_down();
+        }
+    }
+
+    /// UP in Filter: move cursor up, or exit to Sections if already at top.
+    pub fn vmgr_filter_up_nav(&mut self) {
+        let at_top = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { filter_cursor, .. } => *filter_cursor == 0,
+            _ => return,
+        };
+        if at_top {
+            if let ViewMgrMode::Props { active_field, name_editing, filter_return_field, .. } = &mut self.vmgr_state.mode {
+                *filter_return_field = None;
+                *active_field = ViewPropsField::Sections;
+                *name_editing = false;
+            }
+        } else {
+            self.vmgr_filter_scroll_up();
+        }
+    }
+
+    /// DOWN in Filter: move cursor down, or exit to ViewStatistics if already at last item.
+    pub fn vmgr_filter_down_nav(&mut self) {
+        let v_cursor = self.vmgr_state.cursor;
+        let voi      = self.view_order_idx;
+        let count = if v_cursor == voi {
+            self.view.filter.len()
+        } else {
+            let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
+            self.inactive_views.get(ii).map(|v| v.filter.len()).unwrap_or(0)
+        };
+        let at_bottom = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { filter_cursor, .. } => count == 0 || *filter_cursor + 1 >= count,
+            _ => return,
+        };
+        if at_bottom {
+            if let ViewMgrMode::Props { active_field, name_editing, filter_return_field, .. } = &mut self.vmgr_state.mode {
+                *filter_return_field = None;
+                *active_field = ViewPropsField::ViewStatistics;
+                *name_editing = false;
+            }
+        } else {
+            self.vmgr_filter_scroll_down();
         }
     }
 
@@ -7276,13 +7444,13 @@ impl App {
         let name_cur = name_buf.chars().count();
         self.vmgr_state.mode = ViewMgrMode::Props {
             is_new: false,
-            name_buf, name_cur,
+            name_buf, name_cur, name_scroll: 0,
             name_editing: false,
-            sec_cursor:   0,
+            sec_cursor:   0, sec_return_field: None, filter_return_field: None,
             sort_state:   SortState::Closed,
             sec_sort_method, sec_sort_order, sec_sort_picker: None,
             sec_add_picker: None,
-            filter_state: FilterState::Closed, filter_scroll: 0,
+            filter_state: FilterState::Closed, filter_scroll: 0, filter_cursor: 0,
             hide_empty_sections, hide_done_items, hide_dependent_items,
             hide_inherited_items, hide_column_heads, section_separators, number_items,
             active_field: ViewPropsField::Name,
@@ -7297,49 +7465,66 @@ impl App {
     }
 
     pub fn vmgr_props_name_begin_edit(&mut self) {
-        if let ViewMgrMode::Props { active_field: ViewPropsField::Name, name_editing, name_buf, name_cur, .. }
+        if let ViewMgrMode::Props { active_field: ViewPropsField::Name, name_editing, name_buf, name_cur, name_scroll, .. }
             = &mut self.vmgr_state.mode
         {
             *name_editing = true;
-            *name_cur = name_buf.chars().count();
+            let len = name_buf.chars().count();
+            *name_cur = len;
+            *name_scroll = len.saturating_sub(19);
         }
     }
 
     pub fn vmgr_props_field_right(&mut self) {
-        if let ViewMgrMode::Props { active_field, name_editing, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_return_field, filter_return_field, .. } = &mut self.vmgr_state.mode {
             *name_editing = false;
-            *active_field = match *active_field {
-                // Row 1 — "Sections:" header is not a navigable field → next left below
-                ViewPropsField::Name               => ViewPropsField::ItemSorting,
-                // Row 2 — same; Sections area hasn't started yet → next left below
-                ViewPropsField::ItemSorting        => ViewPropsField::SectionSorting,
-                // Rows 3-8 — right column contains the Sections field
+            match *active_field {
+                // All left-column fields from Name down to HideColumnHeads jump to Sections
+                ViewPropsField::Name               |
+                ViewPropsField::ItemSorting        |
                 ViewPropsField::SectionSorting     |
                 ViewPropsField::SectionSortOrder   |
                 ViewPropsField::HideEmptySections  |
                 ViewPropsField::HideDoneItems      |
                 ViewPropsField::HideDependentItems |
-                ViewPropsField::HideInheritedItems => ViewPropsField::Sections,
-                // Sections (right col): nothing further right → first left field below Sections area
-                ViewPropsField::Sections           => ViewPropsField::HideColumnHeads,
-                // Rows 9-11: right column shows Filter display — jump to Filter
-                ViewPropsField::HideColumnHeads    => ViewPropsField::Filter,
-                ViewPropsField::SectionSeparators  => ViewPropsField::Filter,
-                ViewPropsField::NumberItems        => ViewPropsField::Filter,
+                ViewPropsField::HideInheritedItems |
+                ViewPropsField::HideColumnHeads    => {
+                    *sec_return_field = Some(*active_field);
+                    *active_field = ViewPropsField::Sections;
+                }
+                // Sections (right col): nothing further right → exit to left below, clear memory
+                ViewPropsField::Sections => {
+                    *sec_return_field = None;
+                    *active_field = ViewPropsField::HideColumnHeads;
+                }
+                // SectionSeparators/NumberItems pair: right cycles down, filter reachable from HideColumnHeads
+                ViewPropsField::SectionSeparators  => { *active_field = ViewPropsField::NumberItems; }
+                ViewPropsField::NumberItems => {
+                    *filter_return_field = Some(ViewPropsField::NumberItems);
+                    *active_field = ViewPropsField::Filter;
+                }
                 // Filter (right col): jump to next left field below
-                ViewPropsField::Filter             => ViewPropsField::ViewStatistics,
-                ViewPropsField::ViewStatistics     => ViewPropsField::ViewProtection,
-                ViewPropsField::ViewProtection     => ViewPropsField::Name,
-            };
+                ViewPropsField::Filter         => { *active_field = ViewPropsField::ViewStatistics; }
+                ViewPropsField::ViewStatistics => {
+                    *filter_return_field = Some(ViewPropsField::ViewStatistics);
+                    *active_field = ViewPropsField::Filter;
+                }
+                ViewPropsField::ViewProtection => { *active_field = ViewPropsField::Name; }
+            }
         }
     }
 
     pub fn vmgr_props_field_left(&mut self) {
-        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, sec_return_field, filter_return_field, .. } = &mut self.vmgr_state.mode {
             *name_editing = false;
             if *active_field == ViewPropsField::Sections {
-                // Right column → jump back to left column (Name is the left neighbour in tab order)
-                *active_field = ViewPropsField::Name;
+                // Return to the field we came from (set by RIGHT), or fall back to Name
+                *active_field = sec_return_field.take().unwrap_or(ViewPropsField::Name);
+            } else if *active_field == ViewPropsField::Filter {
+                // Return to the field we came from (set by RIGHT), or fall back via prev()
+                *active_field = filter_return_field.take().unwrap_or(ViewPropsField::NumberItems);
+            } else if *active_field == ViewPropsField::NumberItems {
+                *active_field = ViewPropsField::SectionSeparators;
             } else {
                 // Already on left column → go to previous field
                 let mut prev = active_field.prev();
@@ -7352,8 +7537,10 @@ impl App {
     }
 
     pub fn vmgr_props_field_next(&mut self) {
-        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, sec_return_field, filter_return_field, .. } = &mut self.vmgr_state.mode {
             *name_editing = false;
+            if *active_field == ViewPropsField::Sections { *sec_return_field = None; }
+            if *active_field == ViewPropsField::Filter   { *filter_return_field = None; }
             let mut next = active_field.next();
             if next == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
                 next = next.next();
@@ -7363,11 +7550,35 @@ impl App {
     }
 
     pub fn vmgr_props_field_prev(&mut self) {
-        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, sec_return_field, filter_return_field, .. } = &mut self.vmgr_state.mode {
             *name_editing = false;
+            if *active_field == ViewPropsField::Sections { *sec_return_field = None; }
+            if *active_field == ViewPropsField::Filter   { *filter_return_field = None; }
             let mut prev = active_field.prev();
             if prev == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
                 prev = prev.prev();
+            }
+            *active_field = prev;
+        }
+    }
+
+    pub fn vmgr_props_field_next_left(&mut self) {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+            *name_editing = false;
+            let mut next = active_field.next_left();
+            if next == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
+                next = next.next_left();
+            }
+            *active_field = next;
+        }
+    }
+
+    pub fn vmgr_props_field_prev_left(&mut self) {
+        if let ViewMgrMode::Props { active_field, name_editing, sec_sort_method, .. } = &mut self.vmgr_state.mode {
+            *name_editing = false;
+            let mut prev = active_field.prev_left();
+            if prev == ViewPropsField::SectionSortOrder && *sec_sort_method == SectionSortMethod::None {
+                prev = prev.prev_left();
             }
             *active_field = prev;
         }
@@ -7392,36 +7603,44 @@ impl App {
     }
 
     pub fn vmgr_props_name_char(&mut self, ch: char) {
-        if let ViewMgrMode::Props { name_buf, name_cur, active_field: ViewPropsField::Name, .. }
+        if let ViewMgrMode::Props { name_buf, name_cur, name_scroll, active_field: ViewPropsField::Name, .. }
             = &mut self.vmgr_state.mode
         {
             let byte = char_to_byte(name_buf, *name_cur);
             name_buf.insert(byte, ch);
             *name_cur += 1;
+            *name_scroll = (*name_cur).saturating_sub(19);
         }
     }
 
     pub fn vmgr_props_name_backspace(&mut self) {
-        if let ViewMgrMode::Props { name_buf, name_cur, active_field: ViewPropsField::Name, .. }
+        if let ViewMgrMode::Props { name_buf, name_cur, name_scroll, active_field: ViewPropsField::Name, .. }
             = &mut self.vmgr_state.mode
         {
             if *name_cur > 0 {
                 *name_cur -= 1;
                 let byte = char_to_byte(name_buf, *name_cur);
                 name_buf.remove(byte);
+                *name_scroll = (*name_scroll).min(*name_cur);
             }
         }
     }
 
     pub fn vmgr_props_name_left(&mut self) {
-        if let ViewMgrMode::Props { name_cur, .. } = &mut self.vmgr_state.mode {
-            if *name_cur > 0 { *name_cur -= 1; }
+        if let ViewMgrMode::Props { name_cur, name_scroll, .. } = &mut self.vmgr_state.mode {
+            if *name_cur > 0 {
+                *name_cur -= 1;
+                *name_scroll = (*name_scroll).min(*name_cur);
+            }
         }
     }
 
     pub fn vmgr_props_name_right(&mut self) {
-        if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut self.vmgr_state.mode {
-            if *name_cur < name_buf.chars().count() { *name_cur += 1; }
+        if let ViewMgrMode::Props { name_buf, name_cur, name_scroll, .. } = &mut self.vmgr_state.mode {
+            if *name_cur < name_buf.chars().count() {
+                *name_cur += 1;
+                *name_scroll = (*name_cur).saturating_sub(19);
+            }
         }
     }
 
@@ -7431,7 +7650,10 @@ impl App {
             _ => return,
         };
         let new_cur = buf_word_left(&buf, cur);
-        if let ViewMgrMode::Props { name_cur, .. } = &mut self.vmgr_state.mode { *name_cur = new_cur; }
+        if let ViewMgrMode::Props { name_cur, name_scroll, .. } = &mut self.vmgr_state.mode {
+            *name_cur = new_cur;
+            *name_scroll = (*name_scroll).min(new_cur);
+        }
     }
 
     pub fn vmgr_props_name_word_right(&mut self) {
@@ -7440,7 +7662,10 @@ impl App {
             _ => return,
         };
         let new_cur = buf_word_right(&buf, cur);
-        if let ViewMgrMode::Props { name_cur, .. } = &mut self.vmgr_state.mode { *name_cur = new_cur; }
+        if let ViewMgrMode::Props { name_cur, name_scroll, .. } = &mut self.vmgr_state.mode {
+            *name_cur = new_cur;
+            *name_scroll = new_cur.saturating_sub(19);
+        }
     }
 
     pub fn vmgr_props_confirm(&mut self) {
@@ -8533,44 +8758,48 @@ impl App {
     // ── Mode::ItemProps text editing ──────────────────────────────────────────
 
     pub fn item_props_text_ctrl_u(&mut self) {
-        let (new_buf, killed, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &self.mode {
+        let (new_buf, killed, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur, _)), .. } = &self.mode {
             kb_kill_to_start(buf, *cur)
         } else { return };
         self.kill_buffer = killed;
-        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
-            *buf = new_buf; *cur = new_cur;
+        if let Mode::ItemProps { edit_buf: Some((buf, cur, scroll)), .. } = &mut self.mode {
+            *buf = new_buf; *cur = new_cur; *scroll = 0;
         }
     }
 
     pub fn item_props_text_ctrl_k(&mut self) {
-        let (new_buf, killed, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &self.mode {
+        let (new_buf, killed, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur, _)), .. } = &self.mode {
             kb_kill_to_end(buf, *cur)
         } else { return };
         self.kill_buffer = killed;
-        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
+        if let Mode::ItemProps { edit_buf: Some((buf, cur, _)), .. } = &mut self.mode {
             *buf = new_buf; *cur = new_cur;
         }
     }
 
     pub fn item_props_text_ctrl_y(&mut self) {
         let kill = self.kill_buffer.clone();
-        let (new_buf, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &self.mode {
+        let (new_buf, new_cur) = if let Mode::ItemProps { edit_buf: Some((buf, cur, _)), .. } = &self.mode {
             kb_yank(buf, *cur, &kill)
         } else { return };
-        if let Mode::ItemProps { edit_buf: Some((buf, cur)), .. } = &mut self.mode {
-            *buf = new_buf; *cur = new_cur;
+        if let Mode::ItemProps { edit_buf: Some((buf, cur, scroll)), .. } = &mut self.mode {
+            *buf = new_buf; *cur = new_cur; *scroll = new_cur.saturating_sub(40);
         }
     }
 
     pub fn item_props_text_ctrl_a(&mut self) {
-        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode { *cur = 0; }
+        if let Mode::ItemProps { edit_buf: Some((_, cur, scroll)), .. } = &mut self.mode {
+            *cur = 0; *scroll = 0;
+        }
     }
 
     pub fn item_props_text_ctrl_e(&mut self) {
-        let len = if let Mode::ItemProps { edit_buf: Some((buf, _)), .. } = &self.mode {
+        let len = if let Mode::ItemProps { edit_buf: Some((buf, _, _)), .. } = &self.mode {
             buf.chars().count()
         } else { return };
-        if let Mode::ItemProps { edit_buf: Some((_, cur)), .. } = &mut self.mode { *cur = len; }
+        if let Mode::ItemProps { edit_buf: Some((_, cur, scroll)), .. } = &mut self.mode {
+            *cur = len; *scroll = len.saturating_sub(40);
+        }
     }
 
     // ── CatMode::Edit / CatMode::Create ──────────────────────────────────────
@@ -8766,8 +8995,8 @@ impl App {
         let (new_buf, killed, new_cur) = if let ViewMgrMode::Props { name_buf, name_cur, name_editing: true, .. }
             = &self.vmgr_state.mode { kb_kill_to_start(name_buf, *name_cur) } else { return };
         self.kill_buffer = killed;
-        if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut self.vmgr_state.mode {
-            *name_buf = new_buf; *name_cur = new_cur;
+        if let ViewMgrMode::Props { name_buf, name_cur, name_scroll, .. } = &mut self.vmgr_state.mode {
+            *name_buf = new_buf; *name_cur = new_cur; *name_scroll = 0;
         }
     }
 
@@ -8784,14 +9013,14 @@ impl App {
         let kill = self.kill_buffer.clone();
         let (new_buf, new_cur) = if let ViewMgrMode::Props { name_buf, name_cur, name_editing: true, .. }
             = &self.vmgr_state.mode { kb_yank(name_buf, *name_cur, &kill) } else { return };
-        if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut self.vmgr_state.mode {
-            *name_buf = new_buf; *name_cur = new_cur;
+        if let ViewMgrMode::Props { name_buf, name_cur, name_scroll, .. } = &mut self.vmgr_state.mode {
+            *name_buf = new_buf; *name_cur = new_cur; *name_scroll = new_cur.saturating_sub(19);
         }
     }
 
     pub fn vmgr_props_name_ctrl_a(&mut self) {
-        if let ViewMgrMode::Props { name_cur, name_editing: true, .. } = &mut self.vmgr_state.mode {
-            *name_cur = 0;
+        if let ViewMgrMode::Props { name_cur, name_scroll, name_editing: true, .. } = &mut self.vmgr_state.mode {
+            *name_cur = 0; *name_scroll = 0;
         }
     }
 
@@ -8799,7 +9028,9 @@ impl App {
         let len = if let ViewMgrMode::Props { name_buf, name_editing: true, .. } = &self.vmgr_state.mode {
             name_buf.chars().count()
         } else { return };
-        if let ViewMgrMode::Props { name_cur, .. } = &mut self.vmgr_state.mode { *name_cur = len; }
+        if let ViewMgrMode::Props { name_cur, name_scroll, .. } = &mut self.vmgr_state.mode {
+            *name_cur = len; *name_scroll = len.saturating_sub(19);
+        }
     }
 
     // ── ColMode::Form (width field) ───────────────────────────────────────────
@@ -8871,6 +9102,7 @@ impl App {
         let (new_buf, killed, new_cur) = kb_kill_to_start(buf, cur);
         self.kill_buffer = killed;
         self.col_props_set_active_buf_cur(new_buf, new_cur);
+        self.col_props_set_active_scroll(0);
     }
 
     pub fn col_props_ctrl_k(&mut self) {
@@ -8884,18 +9116,25 @@ impl App {
         let Some((buf, cur)) = self.col_props_active_buf_cur() else { return };
         let kill = self.kill_buffer.clone();
         let (new_buf, new_cur) = kb_yank(buf, cur, &kill);
+        let is_head = matches!(&self.col_mode, ColMode::Props { active_field: PropsField::Head, .. });
+        let new_scroll = new_cur.saturating_sub(if is_head { 8 } else { 34 });
         self.col_props_set_active_buf_cur(new_buf, new_cur);
+        self.col_props_set_active_scroll(new_scroll);
     }
 
     pub fn col_props_ctrl_a(&mut self) {
         let Some((_, _)) = self.col_props_active_buf_cur() else { return };
         self.col_props_set_cur_only(0);
+        self.col_props_set_active_scroll(0);
     }
 
     pub fn col_props_ctrl_e(&mut self) {
         let Some((buf, _)) = self.col_props_active_buf_cur() else { return };
         let len = buf.chars().count();
+        let is_head = matches!(&self.col_mode, ColMode::Props { active_field: PropsField::Head, .. });
+        let new_scroll = len.saturating_sub(if is_head { 8 } else { 34 });
         self.col_props_set_cur_only(len);
+        self.col_props_set_active_scroll(new_scroll);
     }
 
     fn col_props_set_cur_only(&mut self, new_cur: usize) {
@@ -8908,6 +9147,16 @@ impl App {
         }
     }
 
+    fn col_props_set_active_scroll(&mut self, new_scroll: usize) {
+        if let ColMode::Props { head_scroll, width_scroll, active_field, .. } = &mut self.col_mode {
+            match active_field {
+                PropsField::Head  => *head_scroll = new_scroll,
+                PropsField::Width => *width_scroll = new_scroll,
+                _ => {}
+            }
+        }
+    }
+
     // ── SectionMode::Props head field ─────────────────────────────────────────
 
     pub fn sec_props_head_ctrl_u(&mut self) {
@@ -8915,8 +9164,8 @@ impl App {
             active_field: SecPropsField::Head, .. } = &self.sec_mode
         { kb_kill_to_start(head_buf, *head_cur) } else { return };
         self.kill_buffer = killed;
-        if let SectionMode::Props { head_buf, head_cur, .. } = &mut self.sec_mode {
-            *head_buf = new_buf; *head_cur = new_cur;
+        if let SectionMode::Props { head_buf, head_cur, head_scroll, .. } = &mut self.sec_mode {
+            *head_buf = new_buf; *head_cur = new_cur; *head_scroll = 0;
         }
     }
 
@@ -8935,14 +9184,14 @@ impl App {
         let (new_buf, new_cur) = if let SectionMode::Props { head_buf, head_cur,
             active_field: SecPropsField::Head, .. } = &self.sec_mode
         { kb_yank(head_buf, *head_cur, &kill) } else { return };
-        if let SectionMode::Props { head_buf, head_cur, .. } = &mut self.sec_mode {
-            *head_buf = new_buf; *head_cur = new_cur;
+        if let SectionMode::Props { head_buf, head_cur, head_scroll, .. } = &mut self.sec_mode {
+            *head_buf = new_buf; *head_cur = new_cur; *head_scroll = new_cur.saturating_sub(21);
         }
     }
 
     pub fn sec_props_head_ctrl_a(&mut self) {
-        if let SectionMode::Props { head_cur, active_field: SecPropsField::Head, .. } = &mut self.sec_mode {
-            *head_cur = 0;
+        if let SectionMode::Props { head_cur, head_scroll, active_field: SecPropsField::Head, .. } = &mut self.sec_mode {
+            *head_cur = 0; *head_scroll = 0;
         }
     }
 
@@ -8950,7 +9199,9 @@ impl App {
         let len = if let SectionMode::Props { head_buf, active_field: SecPropsField::Head, .. } = &self.sec_mode {
             head_buf.chars().count()
         } else { return };
-        if let SectionMode::Props { head_cur, .. } = &mut self.sec_mode { *head_cur = len; }
+        if let SectionMode::Props { head_cur, head_scroll, .. } = &mut self.sec_mode {
+            *head_cur = len; *head_scroll = len.saturating_sub(21);
+        }
     }
 
     // ── CustomizeSubMode::EditHex ─────────────────────────────────────────────

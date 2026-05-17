@@ -815,7 +815,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Column Properties modal ───────────────────────────────────────────────
-    if let ColMode::Props { head_buf, head_cur, width_buf, width_cur,
+    if let ColMode::Props { head_buf, head_cur, head_scroll, width_buf, width_cur, width_scroll,
                             format, date_fmt, active_field, is_date } = &app.col_mode {
         let modal_h = if *is_date { 18u16 } else { 10u16 };
         let modal_rect = centered_rect(66, modal_h, area);
@@ -845,18 +845,19 @@ pub fn render(frame: &mut Frame, app: &App) {
             let head_active = *active_field == PropsField::Head;
             let label = Span::styled(" Column head:  ", if head_active { dlabel_sel } else { dlabel });
             let cat_type = if *is_date { "Date" } else { "Standard" };
-            let type_span = Span::raw(format!("    Category type: {}", cat_type));
+            let type_str  = format!("    Category type: {}", cat_type);
+            let type_span = Span::raw(type_str.clone());
+            let head_field_w = (inner.width as usize)
+                .saturating_sub(" Column head:  ".len() + type_str.len());
             if head_active {
-                let (left, hi, right) = cursor_split(head_buf, *head_cur);
-                Line::from(vec![
-                    label,
-                    Span::raw(left),
-                    Span::styled(hi, rev),
-                    Span::raw(right),
-                    type_span,
-                ])
+                let mut spans = vec![label];
+                spans.extend(super::text_field_spans(head_buf, *head_cur, *head_scroll, head_field_w, Style::default(), rev));
+                spans.push(type_span);
+                Line::from(spans)
             } else {
-                Line::from(vec![label, Span::raw(head_buf.clone()), type_span])
+                let displayed: String = head_buf.chars().take(head_field_w).collect();
+                let pad = head_field_w.saturating_sub(displayed.chars().count());
+                Line::from(vec![label, Span::raw(format!("{}{}", displayed, " ".repeat(pad))), type_span])
             }
         };
 
@@ -864,14 +865,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         let width_line = {
             let width_active = *active_field == PropsField::Width;
             let label = Span::styled(" Width:        ", if width_active { dlabel_sel } else { dlabel });
+            let width_field_w = (inner.width as usize).saturating_sub(" Width:        ".len());
             if width_active {
-                let (left, hi, right) = cursor_split(width_buf, *width_cur);
-                Line::from(vec![
-                    label,
-                    Span::raw(left),
-                    Span::styled(hi, rev),
-                    Span::raw(right),
-                ])
+                let mut spans = vec![label];
+                spans.extend(super::text_field_spans(width_buf, *width_cur, *width_scroll, width_field_w, Style::default(), rev));
+                Line::from(spans)
             } else {
                 Line::from(vec![label, Span::raw(width_buf.clone())])
             }
@@ -1277,21 +1275,12 @@ pub fn render(frame: &mut Frame, app: &App) {
         };
 
         // Build Item text row — shows editing cursor when edit_buf is active.
-        let item_text_line = if let Some((buf, cur)) = &edit_buf {
+        let item_text_line = if let Some((buf, cur, scroll)) = &edit_buf {
             let label = "  Item text:   ";
-            let label_len = label.chars().count();
-            let val_w = iw.saturating_sub(label_len);
-            let (left, hi, right) = crate::ui::cursor_split(buf, *cur);
-            let left: String  = left.chars().take(val_w).collect();
-            let hi: String    = hi.chars().next().map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
-            let take_right = val_w.saturating_sub(left.chars().count() + 1);
-            let right: String = right.chars().take(take_right).collect();
-            Line::from(vec![
-                Span::raw(label.to_string()),
-                Span::raw(left),
-                Span::styled(hi, rev),
-                Span::raw(right),
-            ])
+            let val_w = iw.saturating_sub(label.chars().count());
+            let mut spans = vec![Span::raw(label.to_string())];
+            spans.extend(super::text_field_spans(buf, *cur, *scroll, val_w, Style::default(), rev));
+            Line::from(spans)
         } else {
             fval("  Item text:   ", &item.text, cursor == 0)
         };
@@ -1954,9 +1943,9 @@ pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
 // ── Section Properties dialog ─────────────────────────────────────────────────
 
 pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
-    let (sec_idx, head_buf, head_cur, active_field, sort_state, filter_state, filter_scroll) = match &app.sec_mode {
-        SectionMode::Props { sec_idx, head_buf, head_cur, active_field, sort_state, filter_state, filter_scroll } =>
-            (*sec_idx, head_buf.as_str(), *head_cur, *active_field, sort_state, filter_state, *filter_scroll),
+    let (sec_idx, head_buf, head_cur, head_scroll, active_field, sort_state, filter_state, filter_scroll) = match &app.sec_mode {
+        SectionMode::Props { sec_idx, head_buf, head_cur, head_scroll, active_field, sort_state, filter_state, filter_scroll } =>
+            (*sec_idx, head_buf.as_str(), *head_cur, *head_scroll, *active_field, sort_state, filter_state, *filter_scroll),
         _ => return,
     };
 
@@ -1984,15 +1973,9 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let head_label = "Section head:  ";
     let field_w    = left_w.saturating_sub(head_label.len()).min(22);
     let head_field: Line = if active_field == SecPropsField::Head {
-        let (left, hi, right) = super::cursor_split(head_buf, head_cur);
-        let pad = field_w.saturating_sub(head_buf.chars().count());
-        Line::from(vec![
-            Span::raw(head_label),
-            Span::styled(left, rev),
-            Span::styled(hi, rev),
-            Span::styled(right, rev),
-            Span::styled(" ".repeat(pad), rev),
-        ])
+        let mut spans = vec![Span::styled(head_label, dlabel_sel)];
+        spans.extend(super::text_field_spans(head_buf, head_cur, head_scroll, field_w, Style::default(), rev));
+        Line::from(spans)
     } else {
         let displayed: String = head_buf.chars().take(field_w).collect();
         let pad = field_w.saturating_sub(displayed.chars().count());
@@ -2062,16 +2045,9 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     {
         let head_active = active_field == SecPropsField::Head;
         let left_part: Vec<Span> = if head_active {
-            let (left, hi, right) = super::cursor_split(head_buf, head_cur);
-            let used = head_label.len() + head_buf.chars().count();
-            let pad = left_w.saturating_sub(used);
-            vec![
-                Span::styled(head_label, dlabel_sel),
-                Span::styled(left, rev),
-                Span::styled(hi, rev),
-                Span::styled(right, rev),
-                Span::styled(" ".repeat(pad), rev),
-            ]
+            let mut spans = vec![Span::styled(head_label, dlabel_sel)];
+            spans.extend(super::text_field_spans(head_buf, head_cur, head_scroll, field_w, Style::default(), rev));
+            spans
         } else {
             let displayed: String = head_buf.chars().take(field_w).collect();
             let val_pad = left_w.saturating_sub(head_label.len() + displayed.chars().count());
