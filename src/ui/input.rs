@@ -1257,6 +1257,16 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
     }
 
+    // View statistics popup: any key closes it.
+    let has_stats_popup = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { view_stats_open: true, .. }
+    );
+    if has_stats_popup {
+        app.vmgr_stats_close();
+        return;
+    }
+
     // Filter picker (F3 on Filter field).
     let has_filter_picker = matches!(
         app.vmgr_state.mode,
@@ -1345,6 +1355,10 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         app.vmgr_state.mode,
         ViewMgrMode::Props { active_field: ViewPropsField::Filter, .. }
     );
+    let is_view_stats = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { active_field: ViewPropsField::ViewStatistics, .. }
+    );
     match code {
         KeyCode::Enter                                               => app.vmgr_props_confirm(),
         KeyCode::Esc                                                 => app.vmgr_props_cancel(),
@@ -1359,9 +1373,10 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::BackTab                                             => app.vmgr_props_field_prev(),
         KeyCode::Up                                                  => app.vmgr_props_field_prev_left(),
         KeyCode::F(3) if is_sections                                 => app.vmgr_sec_pick_open(),
-        KeyCode::F(3) if is_item_sorting                             => app.vmgr_open_item_sort(),
+        KeyCode::F(3) | KeyCode::Char(' ') if is_item_sorting        => app.vmgr_open_item_sort(),
         KeyCode::F(3) if is_sec_sorting || is_sec_order              => app.vmgr_sec_sort_open_picker(),
         KeyCode::F(3) if is_filter                                   => app.vmgr_open_filter_picker(),
+        KeyCode::F(3) | KeyCode::Char(' ') if is_view_stats          => app.vmgr_stats_open(),
         KeyCode::Char(' ') if is_sec_sorting                         => app.vmgr_sec_sort_cycle(),
         KeyCode::Char(' ') if is_sec_order                           => app.vmgr_sec_order_cycle(),
         KeyCode::Char(' ') if is_bool                                => app.vmgr_props_toggle(),

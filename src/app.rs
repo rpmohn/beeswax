@@ -239,6 +239,7 @@ pub enum ViewMgrMode {
         number_items:         bool,
         active_field:         ViewPropsField,
         sec_scroll:           usize,
+        view_stats_open:      bool,
     },
 }
 
@@ -2266,6 +2267,7 @@ impl App {
             hide_dependent_items: false, hide_inherited_items: false,
             hide_column_heads: false, section_separators: false, number_items: false,
             active_field: ViewPropsField::Name, sec_scroll: 0,
+            view_stats_open: false,
         };
     }
 
@@ -7455,6 +7457,7 @@ impl App {
             hide_inherited_items, hide_column_heads, section_separators, number_items,
             active_field: ViewPropsField::Name,
             sec_scroll:   0,
+            view_stats_open: false,
         };
     }
 
@@ -7800,6 +7803,20 @@ impl App {
             }
         }
         self.vmgr_state.mode = ViewMgrMode::Normal;
+    }
+
+    pub fn vmgr_stats_open(&mut self) {
+        if let ViewMgrMode::Props { active_field: ViewPropsField::ViewStatistics, view_stats_open, .. }
+            = &mut self.vmgr_state.mode
+        {
+            *view_stats_open = true;
+        }
+    }
+
+    pub fn vmgr_stats_close(&mut self) {
+        if let ViewMgrMode::Props { view_stats_open, .. } = &mut self.vmgr_state.mode {
+            *view_stats_open = false;
+        }
     }
 
     pub fn vmgr_props_sec_up(&mut self) {

@@ -132,20 +132,20 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             filter_state, filter_scroll, filter_cursor,
             hide_empty_sections, hide_done_items, hide_dependent_items,
             hide_inherited_items, hide_column_heads, section_separators, number_items,
-            active_field, sec_scroll, name_scroll, ..
+            active_field, sec_scroll, name_scroll, view_stats_open, ..
         } => (*is_new, name_buf, *name_cur, *name_scroll, *name_editing, *sec_cursor, sort_state,
               *sec_sort_method, *sec_sort_order, sec_sort_picker, sec_add_picker,
               filter_state, *filter_scroll, *filter_cursor,
               *hide_empty_sections, *hide_done_items,
               *hide_dependent_items, *hide_inherited_items, *hide_column_heads,
-              *section_separators, *number_items, *active_field, *sec_scroll),
+              *section_separators, *number_items, *active_field, *sec_scroll, *view_stats_open),
         _ => return },
         _ => return,
     };
     let (is_new, name_buf, name_cur, name_scroll, name_editing, sec_cursor, sort_state,
          sec_sort_method, sec_sort_order, sec_sort_picker, sec_add_picker,
          filter_state, filter_scroll, filter_cursor,
-         hes, hdi, hdep, hii, hch, ss, ni, active_field, sec_scroll) = props;
+         hes, hdi, hdep, hii, hch, ss, ni, active_field, sec_scroll, view_stats_open) = props;
 
     // The view being edited (for is_new this is the draft in inactive_views)
     let v_cursor = app.vmgr_state.cursor;
@@ -458,31 +458,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     rows.push(row_with_right(format!("{:<w$}", "", w = left_w), 11));
 
     // Row 13: View statistics | filter entry 2
-    {
-        let label = " View statistics:   ";
-        let val   = format!("{} items", item_count);
-        let val_w = left_w.saturating_sub(label.chars().count());
-        let (right_prefix, right_text, right_hi, text_style) = right_slot(12);
-        let right_spans: Vec<Span<'static>> = if right_hi {
-            vec![Span::raw(right_prefix), Span::styled(right_text, rev)]
-        } else if right_text.is_empty() {
-            vec![Span::raw(right_prefix)]
-        } else {
-            vec![Span::raw(right_prefix), Span::styled(right_text, text_style)]
-        };
-        if active_field == ViewPropsField::ViewStatistics {
-            let mut spans = vec![Span::styled(label, dlabel_sel), Span::styled(format!("{:<w$}", val, w = val_w), rev)];
-            spans.extend(right_spans);
-            rows.push(Line::from(spans));
-        } else {
-            let mut spans = vec![
-                Span::styled(label, dlabel),
-                Span::raw(format!("{:<w$}", val, w = val_w)),
-            ];
-            spans.extend(right_spans);
-            rows.push(Line::from(spans));
-        }
-    }
+    rows.push(sort_line(" View statistics:   ", "...", ViewPropsField::ViewStatistics, 12));
 
     // Row 14: blank
     rows.push(Line::from(""));
@@ -509,6 +485,35 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     rows.push(Line::from(""));
 
     frame.render_widget(Paragraph::new(rows).style(app.theme.dialog), content);
+
+    // ── View Statistics popup (F3 on View statistics field) ───────────────────
+    if view_stats_open {
+        let sec_count  = view_ref.sections.len();
+        let popup_w    = 36u16;
+        let popup_h    = 6u16;
+        let popup_rect = centered_rect(popup_w, popup_h, area);
+        frame.render_widget(Clear, popup_rect);
+        let popup_block = Block::default()
+            .borders(Borders::ALL)
+            .title_top(Line::from(" View Statistics ").alignment(Alignment::Center))
+            .title_bottom(Line::from(" Press any key to continue ").alignment(Alignment::Center))
+            .style(app.theme.dialog_border);
+        frame.render_widget(popup_block.clone(), popup_rect);
+        let popup_inner = popup_block.inner(popup_rect);
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Sections in view:   ", app.theme.dialog_label),
+                Span::raw(sec_count.to_string()),
+            ]),
+            Line::from(vec![
+                Span::styled("  Items in view:      ", app.theme.dialog_label),
+                Span::raw(item_count.to_string()),
+            ]),
+            Line::from(""),
+        ];
+        frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), popup_inner);
+    }
 
     // ── Section sort picker popup ─────────────────────────────────────────────
     if let Some((target, cursor)) = sec_sort_picker {
