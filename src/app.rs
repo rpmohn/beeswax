@@ -226,7 +226,7 @@ pub enum ViewMgrMode {
         sec_sort_method:      SectionSortMethod,
         sec_sort_order:       SortOrder,
         sec_sort_picker:      Option<(SecSortTarget, usize)>, // (target, cursor)
-        sec_add_picker:       Option<usize>,                  // F3 on Sections: cat picker cursor
+        sec_add_picker:       Option<(usize, usize)>,          // F3 on Sections: (cursor, scroll)
         filter_state:         FilterState,
         filter_scroll:        usize,
         filter_cursor:        usize,
@@ -287,6 +287,7 @@ pub enum ColMode {
         position:      ColPos,
         active_field:  ColFormField,
         picker_cursor: usize,
+        picker_scroll: usize,
         kind:          ChoicesKind,
     },
     Move,
@@ -294,6 +295,7 @@ pub enum ColMode {
     QuickAdd {
         position:       ColPos,
         picker_cursor:  usize,
+        picker_scroll:  usize,
         confirm_delete: bool,   // true when "Discard this category?" dialog is shown
     },
     Props {
@@ -336,6 +338,7 @@ pub enum ColMode {
     SubPick {
         col_idx:       usize,   // 0-based into view.columns
         picker_cursor: usize,   // index into col_sub_cat_list()
+        picker_scroll: usize,
     },
 }
 
@@ -347,6 +350,7 @@ pub enum AssignMode {
     Profile {
         gi:     usize,
         cursor: usize,   // index into flatten_cats
+        scroll: usize,
         on_sub: bool,    // true when cursor rests on a Date value sub-row
     },
 }
@@ -368,6 +372,7 @@ pub enum FilterState {
     Closed,
     Open {
         cursor:  usize,
+        scroll:  usize,
         entries: HashMap<usize, FilterOp>,  // cat_id → Include/Exclude
     },
 }
@@ -381,6 +386,7 @@ pub enum SortField {
 
 pub struct SortPicker {
     pub cursor: usize,
+    pub scroll: usize,
     pub target: SortField,
 }
 
@@ -416,17 +422,19 @@ pub enum SectionMode {
         insert:        SectionInsert,
         active_field:  SectionFormField,
         picker_cursor: usize,
+        picker_scroll: usize,
     },
     ConfirmRemove { yes: bool },
     Props {
-        sec_idx:       usize,
-        head_buf:      String,
-        head_cur:      usize,
-        head_scroll:   usize,
-        active_field:  SecPropsField,
-        sort_state:    SortState,
-        filter_state:  FilterState,
-        filter_scroll: usize,
+        sec_idx:        usize,
+        head_buf:       String,
+        head_cur:       usize,
+        head_scroll:    usize,
+        active_field:   SecPropsField,
+        sort_state:     SortState,
+        filter_state:   FilterState,
+        filter_scroll:  usize,
+        filter_cursor:  usize,
     },
 }
 
@@ -658,6 +666,15 @@ pub struct App {
     pub customize_state: Option<CustomizeState>,
     // Kill buffer (Ctrl+U / Ctrl+K → Ctrl+Y yank; readline-style)
     pub kill_buffer: String,
+}
+
+// ── Lazy-scroll helpers ───────────────────────────────────────────────────────
+
+/// Compute the lazy-scroll start row.
+/// `stored` is the stored scroll field; `cursor` is the current cursor; `visible` is the window size.
+/// This is the renderer formula: clamp stored so cursor stays visible.
+pub fn stored_scroll_start(stored: usize, cursor: usize, visible: usize) -> usize {
+    stored.min(cursor).max(cursor.saturating_sub(visible.saturating_sub(1)))
 }
 
 // ── Byte-offset helper ────────────────────────────────────────────────────────
@@ -3742,50 +3759,68 @@ impl App {
         if !matches!(self.mode, Mode::Normal) { return; }
         let flat = flatten_cats(&self.categories);
         if flat.is_empty() { return; }
-        self.col_mode = ColMode::QuickAdd { position, picker_cursor: 0, confirm_delete: false };
+        self.col_mode = ColMode::QuickAdd { position, picker_cursor: 0, picker_scroll: 0, confirm_delete: false };
     }
 
     pub fn col_quick_add_up(&mut self) {
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
-            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if *picker_cursor > 0 {
+                *picker_cursor -= 1;
+                if *picker_cursor < *picker_scroll { *picker_scroll = *picker_cursor; }
+            }
         }
     }
 
     pub fn col_quick_add_down(&mut self) {
+        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
-            if *picker_cursor + 1 < len { *picker_cursor += 1; }
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if *picker_cursor + 1 < len {
+                *picker_cursor += 1;
+                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+            }
         }
     }
 
     pub fn col_quick_add_pgup(&mut self, page: usize) {
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = picker_cursor.saturating_sub(page);
+            *picker_scroll = picker_scroll.saturating_sub(page);
         }
     }
 
     pub fn col_quick_add_pgdn(&mut self, page: usize) {
         let len = flatten_cats(&self.categories).len();
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
-            if len > 0 { *picker_cursor = (*picker_cursor + page).min(len - 1); }
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if len > 0 {
+                *picker_cursor = (*picker_cursor + page).min(len - 1);
+                *picker_scroll = (*picker_scroll).min(*picker_cursor);
+            }
         }
     }
 
     pub fn col_quick_add_home(&mut self) {
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = 0;
+            *picker_scroll = 0;
         }
     }
     pub fn col_quick_add_middle(&mut self) {
+        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = len / 2;
+            *picker_scroll = picker_cursor.saturating_sub(VIS / 2);
         }
     }
     pub fn col_quick_add_end(&mut self) {
+        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
-            if len > 0 { *picker_cursor = len - 1; }
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if len > 0 {
+                *picker_cursor = len - 1;
+                *picker_scroll = picker_cursor.saturating_sub(VIS - 1);
+            }
         }
     }
 
@@ -4030,30 +4065,38 @@ impl App {
             };
             self.col_mode = ColMode::Choices {
                 is_add, head_cat_idx, width_buf, width_cur, position, active_field,
-                picker_cursor, kind,
+                picker_cursor, picker_scroll: picker_cursor.saturating_sub(11), kind,
             };
         }
     }
 
     pub fn col_choices_up(&mut self) {
-        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
-            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if *picker_cursor > 0 {
+                *picker_cursor -= 1;
+                if *picker_cursor < *picker_scroll { *picker_scroll = *picker_cursor; }
+            }
         }
     }
 
     pub fn col_choices_down(&mut self) {
+        const VIS: usize = 12;
         let list_len = match &self.col_mode {
             ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
             ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
             _ => return,
         };
-        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
-            if *picker_cursor + 1 < list_len { *picker_cursor += 1; }
+        if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if *picker_cursor + 1 < list_len {
+                *picker_cursor += 1;
+                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+            }
         }
     }
     pub fn col_choices_pgup(&mut self, page: usize) {
-        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = picker_cursor.saturating_sub(page);
+            *picker_scroll = picker_scroll.saturating_sub(page);
         }
     }
     pub fn col_choices_pgdn(&mut self, page: usize) {
@@ -4062,40 +4105,50 @@ impl App {
             ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
             _ => return,
         };
-        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
-            if list_len > 0 { *picker_cursor = (*picker_cursor + page).min(list_len - 1); }
+        if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if list_len > 0 {
+                *picker_cursor = (*picker_cursor + page).min(list_len - 1);
+                *picker_scroll = (*picker_scroll).min(*picker_cursor);
+            }
         }
     }
     pub fn col_choices_home(&mut self) {
-        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = 0;
+            *picker_scroll = 0;
         }
     }
     pub fn col_choices_middle(&mut self) {
+        const VIS: usize = 12;
         let list_len = match &self.col_mode {
             ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
             ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
             _ => return,
         };
-        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = list_len / 2;
+            *picker_scroll = picker_cursor.saturating_sub(VIS / 2);
         }
     }
     pub fn col_choices_end(&mut self) {
+        const VIS: usize = 12;
         let list_len = match &self.col_mode {
             ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
             ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
             _ => return,
         };
-        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
-            if list_len > 0 { *picker_cursor = list_len - 1; }
+        if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if list_len > 0 {
+                *picker_cursor = list_len - 1;
+                *picker_scroll = picker_cursor.saturating_sub(VIS - 1);
+            }
         }
     }
 
     pub fn col_choices_confirm(&mut self) {
         let old = std::mem::replace(&mut self.col_mode, ColMode::Normal);
         if let ColMode::Choices { is_add, head_cat_idx, picker_cursor, width_buf, width_cur,
-                                  position, active_field, kind } = old {
+                                  position, active_field, kind, .. } = old {
             let (new_head, new_pos) = match kind {
                 ChoicesKind::Category => (Some(picker_cursor), position),
                 ChoicesKind::Position => {
@@ -4459,7 +4512,7 @@ impl App {
         if self.col_cursor != 0 { return; }
         if let CursorPos::Item { section, item } = self.cursor {
             if let Some(gi) = self.global_item_idx(section, item) {
-                self.assign_mode = AssignMode::Profile { gi, cursor: 0, on_sub: false };
+                self.assign_mode = AssignMode::Profile { gi, cursor: 0, scroll: 0, on_sub: false };
             }
         }
     }
@@ -4472,7 +4525,7 @@ impl App {
     pub fn assign_cursor_up(&mut self) {
         let cats = flatten_cats(&self.categories);
         let (gi, cur, sub) = match &self.assign_mode {
-            AssignMode::Profile { gi, cursor, on_sub } => (*gi, *cursor, *on_sub),
+            AssignMode::Profile { gi, cursor, on_sub, .. } => (*gi, *cursor, *on_sub),
             AssignMode::Normal => return,
         };
         let empty = std::collections::HashMap::new();
@@ -4489,17 +4542,19 @@ impl App {
         } else {
             (cur, false)
         };
-        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
             *cursor = new_cur;
             *on_sub = new_sub;
+            if !new_sub && new_cur < *scroll { *scroll = new_cur; }
         }
     }
 
     pub fn assign_cursor_down(&mut self) {
+        const VIS: usize = 16;
         let cats = flatten_cats(&self.categories);
         let len = cats.len();
         let (gi, cur, sub) = match &self.assign_mode {
-            AssignMode::Profile { gi, cursor, on_sub } => (*gi, *cursor, *on_sub),
+            AssignMode::Profile { gi, cursor, on_sub, .. } => (*gi, *cursor, *on_sub),
             AssignMode::Normal => return,
         };
         let empty = std::collections::HashMap::new();
@@ -4513,44 +4568,54 @@ impl App {
             ).unwrap_or(false);
             if cur_has_sub { (cur, true) } else { ((cur + 1).min(len.saturating_sub(1)), false) }
         };
-        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
             *cursor = new_cur;
             *on_sub = new_sub;
+            if !new_sub && new_cur >= *scroll + VIS { *scroll = new_cur + 1 - VIS; }
         }
     }
 
     pub fn assign_cursor_pgup(&mut self, page: usize) {
-        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
             *cursor = cursor.saturating_sub(page);
+            *scroll = scroll.saturating_sub(page);
             *on_sub = false;
         }
     }
 
     pub fn assign_cursor_pgdn(&mut self, page: usize) {
         let len = flatten_cats(&self.categories).len();
-        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
             if len > 0 { *cursor = (*cursor + page).min(len - 1); }
+            *scroll = (*scroll).min(*cursor);
             *on_sub = false;
         }
     }
 
     pub fn assign_cursor_home(&mut self) {
-        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
             *cursor = 0;
+            *scroll = 0;
             *on_sub = false;
         }
     }
     pub fn assign_cursor_middle(&mut self) {
+        const VIS: usize = 16;
         let len = flatten_cats(&self.categories).len();
-        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
             *cursor = len / 2;
+            *scroll = cursor.saturating_sub(VIS / 2);
             *on_sub = false;
         }
     }
     pub fn assign_cursor_end(&mut self) {
+        const VIS: usize = 16;
         let len = flatten_cats(&self.categories).len();
-        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
-            if len > 0 { *cursor = len - 1; }
+        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
+            if len > 0 {
+                *cursor = len - 1;
+                *scroll = cursor.saturating_sub(VIS - 1);
+            }
             *on_sub = false;
         }
     }
@@ -4560,7 +4625,7 @@ impl App {
     /// Date categories: assigned when a value string is present.
     pub fn assign_toggle(&mut self) {
         let (gi, cur) = match &self.assign_mode {
-            AssignMode::Profile { gi, cursor, on_sub } => {
+            AssignMode::Profile { gi, cursor, on_sub, .. } => {
                 if *on_sub { return; }  // sub-rows are not directly toggleable
                 (*gi, *cursor)
             }
@@ -4970,54 +5035,73 @@ impl App {
                     insert:        *insert,
                     active_field:  SectionFormField::Category,
                     picker_cursor: cursor,
+                    picker_scroll: cursor.saturating_sub(11),
                 };
             }
         }
     }
 
     pub fn sec_choices_up(&mut self) {
-        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
-            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
+            if *picker_cursor > 0 {
+                *picker_cursor -= 1;
+                if *picker_cursor < *picker_scroll { *picker_scroll = *picker_cursor; }
+            }
         }
     }
 
     pub fn sec_choices_down(&mut self) {
+        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
-        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
-            if *picker_cursor + 1 < len { *picker_cursor += 1; }
+        if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
+            if *picker_cursor + 1 < len {
+                *picker_cursor += 1;
+                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+            }
         }
     }
     pub fn sec_choices_pgup(&mut self, page: usize) {
-        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+        if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             *picker_cursor = picker_cursor.saturating_sub(page);
+            *picker_scroll = picker_scroll.saturating_sub(page);
         }
     }
     pub fn sec_choices_pgdn(&mut self, page: usize) {
         let len = flatten_cats(&self.categories).len();
-        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
-            if len > 0 { *picker_cursor = (*picker_cursor + page).min(len - 1); }
+        if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
+            if len > 0 {
+                *picker_cursor = (*picker_cursor + page).min(len - 1);
+                *picker_scroll = (*picker_scroll).min(*picker_cursor);
+            }
         }
     }
     pub fn sec_choices_home(&mut self) {
-        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+        if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             *picker_cursor = 0;
+            *picker_scroll = 0;
         }
     }
     pub fn sec_choices_middle(&mut self) {
+        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
-        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+        if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             *picker_cursor = len / 2;
+            *picker_scroll = picker_cursor.saturating_sub(VIS / 2);
         }
     }
     pub fn sec_choices_end(&mut self) {
+        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
-        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
-            if len > 0 { *picker_cursor = len - 1; }
+        if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
+            if len > 0 {
+                *picker_cursor = len - 1;
+                *picker_scroll = picker_cursor.saturating_sub(VIS - 1);
+            }
         }
     }
 
     pub fn sec_choices_confirm(&mut self) {
-        if let SectionMode::Choices { cat_idx: _, insert, active_field, picker_cursor } = &self.sec_mode {
+        if let SectionMode::Choices { cat_idx: _, insert, active_field, picker_cursor, .. } = &self.sec_mode {
             let insert       = *insert;
             let active_field = *active_field;
             let picked       = *picker_cursor;
@@ -5057,6 +5141,7 @@ impl App {
             sort_state:    SortState::Closed,
             filter_state:  FilterState::Closed,
             filter_scroll: 0,
+            filter_cursor: 0,
         };
     }
 
@@ -5071,20 +5156,24 @@ impl App {
     }
 
     pub fn sec_filter_list_up(&mut self) {
-        if let SectionMode::Props { filter_scroll, .. } = &mut self.sec_mode {
-            if *filter_scroll > 0 { *filter_scroll -= 1; }
+        if let SectionMode::Props { filter_cursor, filter_scroll, .. } = &mut self.sec_mode {
+            if *filter_cursor > 0 {
+                *filter_cursor -= 1;
+                if *filter_cursor < *filter_scroll { *filter_scroll = *filter_cursor; }
+            }
         }
     }
 
     pub fn sec_filter_list_down(&mut self) {
-        let (sec_idx, filter_scroll) = match &self.sec_mode {
-            SectionMode::Props { sec_idx, filter_scroll, .. } => (*sec_idx, *filter_scroll),
+        let sec_idx = match &self.sec_mode {
+            SectionMode::Props { sec_idx, .. } => *sec_idx,
             _ => return,
         };
         let count = self.view.sections.get(sec_idx).map(|s| s.filter.len()).unwrap_or(0);
-        if count > 2 && filter_scroll + 2 < count {
-            if let SectionMode::Props { filter_scroll: fs, .. } = &mut self.sec_mode {
-                *fs += 1;
+        if let SectionMode::Props { filter_cursor, filter_scroll, .. } = &mut self.sec_mode {
+            if *filter_cursor + 1 < count {
+                *filter_cursor += 1;
+                if *filter_cursor >= *filter_scroll + 2 { *filter_scroll = *filter_cursor - 1; }
             }
         }
     }
@@ -5189,51 +5278,65 @@ impl App {
             HashMap::new()
         };
         if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
-            *filter_state = FilterState::Open { cursor: 0, entries };
+            *filter_state = FilterState::Open { cursor: 0, scroll: 0, entries };
         }
     }
 
     pub fn sec_filter_picker_up(&mut self) {
-        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
-            if *cursor > 0 { *cursor -= 1; }
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
+            if *cursor > 0 {
+                *cursor -= 1;
+                if *cursor < *scroll { *scroll = *cursor; }
+            }
         }
     }
 
     pub fn sec_filter_picker_down(&mut self) {
+        const VIS: usize = 20;
         let count = flatten_cats(&self.categories).len();
-        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
-            if *cursor + 1 < count { *cursor += 1; }
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
+            if *cursor + 1 < count {
+                *cursor += 1;
+                if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+            }
         }
     }
 
     pub fn sec_filter_picker_pgup(&mut self, n: usize) {
-        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             *cursor = cursor.saturating_sub(n);
+            *scroll = scroll.saturating_sub(n);
         }
     }
 
     pub fn sec_filter_picker_pgdn(&mut self, n: usize) {
         let count = flatten_cats(&self.categories).len();
-        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             *cursor = (*cursor + n).min(count.saturating_sub(1));
+            *scroll = (*scroll).min(*cursor);
         }
     }
 
     pub fn sec_filter_picker_home(&mut self) {
-        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             *cursor = 0;
+            *scroll = 0;
         }
     }
     pub fn sec_filter_picker_middle(&mut self) {
+        const VIS: usize = 20;
         let count = flatten_cats(&self.categories).len();
-        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             *cursor = count / 2;
+            *scroll = cursor.saturating_sub(VIS / 2);
         }
     }
     pub fn sec_filter_picker_end(&mut self) {
+        const VIS: usize = 20;
         let count = flatten_cats(&self.categories).len();
-        if let SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.sec_mode {
+        if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             *cursor = count.saturating_sub(1);
+            *scroll = cursor.saturating_sub(VIS - 1);
         }
     }
 
@@ -5304,53 +5407,67 @@ impl App {
             view_ref.filter.iter().map(|e| (e.cat_id, e.op)).collect()
         };
         if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
-            *filter_state = FilterState::Open { cursor: 0, entries };
+            *filter_state = FilterState::Open { cursor: 0, scroll: 0, entries };
         }
     }
 
     pub fn vmgr_filter_picker_up(&mut self) {
-        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
-            if *cursor > 0 { *cursor -= 1; }
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
+            if *cursor > 0 {
+                *cursor -= 1;
+                if *cursor < *scroll { *scroll = *cursor; }
+            }
         }
     }
 
     pub fn vmgr_filter_picker_down(&mut self) {
+        const VIS: usize = 20;
         let count = flatten_cats(&self.categories).len();
-        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
-            if *cursor + 1 < count { *cursor += 1; }
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
+            if *cursor + 1 < count {
+                *cursor += 1;
+                if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+            }
         }
     }
 
     pub fn vmgr_filter_picker_pgup(&mut self, n: usize) {
-        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             *cursor = cursor.saturating_sub(n);
+            *scroll = scroll.saturating_sub(n);
         }
     }
 
     pub fn vmgr_filter_picker_pgdn(&mut self, n: usize) {
         let count = flatten_cats(&self.categories).len();
-        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             *cursor = (*cursor + n).min(count.saturating_sub(1));
+            *scroll = (*scroll).min(*cursor);
         }
     }
 
     pub fn vmgr_filter_picker_home(&mut self) {
-        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             *cursor = 0;
+            *scroll = 0;
         }
     }
 
     pub fn vmgr_filter_picker_middle(&mut self) {
+        const VIS: usize = 20;
         let count = flatten_cats(&self.categories).len();
-        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             *cursor = count / 2;
+            *scroll = cursor.saturating_sub(VIS / 2);
         }
     }
 
     pub fn vmgr_filter_picker_end(&mut self) {
+        const VIS: usize = 20;
         let count = flatten_cats(&self.categories).len();
-        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             *cursor = count.saturating_sub(1);
+            *scroll = cursor.saturating_sub(VIS - 1);
         }
     }
 
@@ -5623,7 +5740,7 @@ impl App {
             }
         };
         if let SectionMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.sec_mode {
-            *picker = Some(SortPicker { cursor: current_idx, target });
+            *picker = Some(SortPicker { cursor: current_idx, scroll: 0, target });
         }
     }
 
@@ -5646,18 +5763,25 @@ impl App {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
             if let Some(p) = picker {
-                if p.cursor > 0 { p.cursor -= 1; }
+                if p.cursor > 0 {
+                    p.cursor -= 1;
+                    if p.cursor < p.scroll { p.scroll = p.cursor; }
+                }
             }
         }
     }
 
     pub fn sec_sort_picker_down(&mut self) {
+        const VIS: usize = 10;
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
             if let Some(p) = picker {
-                if p.cursor + 1 < max { p.cursor += 1; }
+                if p.cursor + 1 < max {
+                    p.cursor += 1;
+                    if p.cursor >= p.scroll + VIS { p.scroll = p.cursor + 1 - VIS; }
+                }
             }
         }
     }
@@ -5665,7 +5789,10 @@ impl App {
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
-            if let Some(p) = picker { p.cursor = p.cursor.saturating_sub(page); }
+            if let Some(p) = picker {
+                p.cursor = p.cursor.saturating_sub(page);
+                p.scroll = p.scroll.saturating_sub(page);
+            }
         }
     }
     pub fn sec_sort_picker_pgdn(&mut self, page: usize) {
@@ -5674,7 +5801,10 @@ impl App {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
             if let Some(p) = picker {
-                if max > 0 { p.cursor = (p.cursor + page).min(max - 1); }
+                if max > 0 {
+                    p.cursor = (p.cursor + page).min(max - 1);
+                    p.scroll = p.scroll.min(p.cursor);
+                }
             }
         }
     }
@@ -5682,24 +5812,32 @@ impl App {
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
-            if let Some(p) = picker { p.cursor = 0; }
+            if let Some(p) = picker { p.cursor = 0; p.scroll = 0; }
         }
     }
     pub fn sec_sort_picker_middle(&mut self) {
-        let max = self.sec_sort_picker_len();
-        if let SectionMode::Props {
-            sort_state: SortState::Dialog { ref mut picker, .. }, ..
-        } = self.sec_mode {
-            if let Some(p) = picker { p.cursor = max / 2; }
-        }
-    }
-    pub fn sec_sort_picker_end(&mut self) {
+        const VIS: usize = 10;
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
             if let Some(p) = picker {
-                if max > 0 { p.cursor = max - 1; }
+                p.cursor = max / 2;
+                p.scroll = p.cursor.saturating_sub(VIS / 2);
+            }
+        }
+    }
+    pub fn sec_sort_picker_end(&mut self) {
+        const VIS: usize = 10;
+        let max = self.sec_sort_picker_len();
+        if let SectionMode::Props {
+            sort_state: SortState::Dialog { ref mut picker, .. }, ..
+        } = self.sec_mode {
+            if let Some(p) = picker {
+                if max > 0 {
+                    p.cursor = max - 1;
+                    p.scroll = p.cursor.saturating_sub(VIS - 1);
+                }
             }
         }
     }
@@ -6468,27 +6606,35 @@ impl App {
             let vals = &self.items[gi].values;
             subs.iter().position(|(id, _, _)| vals.contains_key(id))
         }).unwrap_or(0);
-        self.col_mode = ColMode::SubPick { col_idx, picker_cursor: start };
+        self.col_mode = ColMode::SubPick { col_idx, picker_cursor: start, picker_scroll: start.saturating_sub(15) };
     }
 
     pub fn col_sub_pick_up(&mut self) {
-        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
-            if *picker_cursor > 0 { *picker_cursor -= 1; }
+        if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if *picker_cursor > 0 {
+                *picker_cursor -= 1;
+                if *picker_cursor < *picker_scroll { *picker_scroll = *picker_cursor; }
+            }
         }
     }
 
     pub fn col_sub_pick_down(&mut self) {
+        const VIS: usize = 16;
         let len = match &self.col_mode {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
         };
-        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
-            if *picker_cursor + 1 < len { *picker_cursor += 1; }
+        if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if *picker_cursor + 1 < len {
+                *picker_cursor += 1;
+                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+            }
         }
     }
     pub fn col_sub_pick_pgup(&mut self, page: usize) {
-        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = picker_cursor.saturating_sub(page);
+            *picker_scroll = picker_scroll.saturating_sub(page);
         }
     }
     pub fn col_sub_pick_pgdn(&mut self, page: usize) {
@@ -6496,38 +6642,48 @@ impl App {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
         };
-        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
-            if len > 0 { *picker_cursor = (*picker_cursor + page).min(len - 1); }
+        if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if len > 0 {
+                *picker_cursor = (*picker_cursor + page).min(len - 1);
+                *picker_scroll = (*picker_scroll).min(*picker_cursor);
+            }
         }
     }
     pub fn col_sub_pick_home(&mut self) {
-        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = 0;
+            *picker_scroll = 0;
         }
     }
     pub fn col_sub_pick_middle(&mut self) {
+        const VIS: usize = 16;
         let len = match &self.col_mode {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
         };
-        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
+        if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = len / 2;
+            *picker_scroll = picker_cursor.saturating_sub(VIS / 2);
         }
     }
     pub fn col_sub_pick_end(&mut self) {
+        const VIS: usize = 16;
         let len = match &self.col_mode {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
         };
-        if let ColMode::SubPick { picker_cursor, .. } = &mut self.col_mode {
-            if len > 0 { *picker_cursor = len - 1; }
+        if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if len > 0 {
+                *picker_cursor = len - 1;
+                *picker_scroll = picker_cursor.saturating_sub(VIS - 1);
+            }
         }
     }
 
     /// Sync `cat_state.cursor` to the flat-cats index of the category at `picker_cursor`.
     fn col_sub_pick_sync_cursor(&mut self) -> bool {
         let (col_idx, picker_cursor) = match &self.col_mode {
-            ColMode::SubPick { col_idx, picker_cursor } => (*col_idx, *picker_cursor),
+            ColMode::SubPick { col_idx, picker_cursor, .. } => (*col_idx, *picker_cursor),
             _ => return false,
         };
         let subs = self.col_sub_cat_list(col_idx);
@@ -6564,7 +6720,7 @@ impl App {
     pub fn col_sub_pick_toggle(&mut self) {
         self.push_undo();
         let (col_idx, picker_cursor) = match &self.col_mode {
-            ColMode::SubPick { col_idx, picker_cursor } => (*col_idx, *picker_cursor),
+            ColMode::SubPick { col_idx, picker_cursor, .. } => (*col_idx, *picker_cursor),
             _ => return,
         };
         let subs = self.col_sub_cat_list(col_idx);
@@ -7889,75 +8045,91 @@ impl App {
         if let ViewMgrMode::Props { active_field: ViewPropsField::Sections, sec_add_picker, .. }
             = &mut self.vmgr_state.mode
         {
-            *sec_add_picker = Some(0);
+            *sec_add_picker = Some((0, 0));
         }
     }
 
     pub fn vmgr_sec_pick_up(&mut self) {
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
-            if *cursor > 0 { *cursor -= 1; }
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
+            if *cursor > 0 {
+                *cursor -= 1;
+                if *cursor < *scroll { *scroll = *cursor; }
+            }
         }
     }
 
     pub fn vmgr_sec_pick_down(&mut self) {
+        const VIS: usize = 16;
         let max = flatten_cats(&self.categories).len().saturating_sub(1);
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
-            if *cursor < max { *cursor += 1; }
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
+            if *cursor < max {
+                *cursor += 1;
+                if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+            }
         }
     }
 
     pub fn vmgr_sec_pick_pgup(&mut self, page: usize) {
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             *cursor = cursor.saturating_sub(page);
+            *scroll = scroll.saturating_sub(page);
         }
     }
 
     pub fn vmgr_sec_pick_pgdn(&mut self, page: usize) {
         let max = flatten_cats(&self.categories).len().saturating_sub(1);
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             *cursor = (*cursor + page).min(max);
+            *scroll = (*scroll).min(*cursor);
         }
     }
 
     pub fn vmgr_sec_pick_home(&mut self) {
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             *cursor = 0;
+            *scroll = 0;
         }
     }
 
     pub fn vmgr_sec_pick_end(&mut self) {
+        const VIS: usize = 16;
         let max = flatten_cats(&self.categories).len().saturating_sub(1);
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             *cursor = max;
+            *scroll = max.saturating_sub(VIS - 1);
         }
     }
 
     pub fn vmgr_sec_pick_screen_top(&mut self) {
+        const VIS: usize = 16;
         let n = flatten_cats(&self.categories).len();
         if n == 0 { return; }
-        let visible = n.min(16);
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
-            let start = if *cursor >= visible { *cursor - visible + 1 } else { 0 };
+        let visible = n.min(VIS);
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
+            let start = stored_scroll_start(*scroll, *cursor, visible);
             *cursor = start;
+            *scroll = start;
         }
     }
 
     pub fn vmgr_sec_pick_screen_mid(&mut self) {
+        const VIS: usize = 16;
         let n = flatten_cats(&self.categories).len();
         if n == 0 { return; }
-        let visible = n.min(16);
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
-            let start = if *cursor >= visible { *cursor - visible + 1 } else { 0 };
+        let visible = n.min(VIS);
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
+            let start = stored_scroll_start(*scroll, *cursor, visible);
             *cursor = (start + visible / 2).min(n - 1);
         }
     }
 
     pub fn vmgr_sec_pick_screen_bot(&mut self) {
+        const VIS: usize = 16;
         let n = flatten_cats(&self.categories).len();
         if n == 0 { return; }
-        let visible = n.min(16);
-        if let ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } = &mut self.vmgr_state.mode {
-            let start = if *cursor >= visible { *cursor - visible + 1 } else { 0 };
+        let visible = n.min(VIS);
+        if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
+            let start = stored_scroll_start(*scroll, *cursor, visible);
             *cursor = (start + visible - 1).min(n - 1);
         }
     }
@@ -7974,7 +8146,7 @@ impl App {
     /// toggled directly.
     pub fn vmgr_sec_pick_toggle(&mut self) {
         let idx = match &self.vmgr_state.mode {
-            ViewMgrMode::Props { sec_add_picker: Some(cursor), .. } => *cursor,
+            ViewMgrMode::Props { sec_add_picker: Some((cursor, _)), .. } => *cursor,
             _ => return,
         };
         let flat = flatten_cats(&self.categories);
@@ -8261,7 +8433,7 @@ impl App {
             }
         };
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
-            *picker = Some(SortPicker { cursor: current_idx, target });
+            *picker = Some(SortPicker { cursor: current_idx, scroll: 0, target });
         }
     }
 
@@ -8281,41 +8453,70 @@ impl App {
 
     pub fn vmgr_sort_picker_up(&mut self) {
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
-            if let Some(p) = picker { if p.cursor > 0 { p.cursor -= 1; } }
+            if let Some(p) = picker {
+                if p.cursor > 0 {
+                    p.cursor -= 1;
+                    if p.cursor < p.scroll { p.scroll = p.cursor; }
+                }
+            }
         }
     }
     pub fn vmgr_sort_picker_down(&mut self) {
+        const VIS: usize = 10;
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
-            if let Some(p) = picker { if p.cursor + 1 < max { p.cursor += 1; } }
+            if let Some(p) = picker {
+                if p.cursor + 1 < max {
+                    p.cursor += 1;
+                    if p.cursor >= p.scroll + VIS { p.scroll = p.cursor + 1 - VIS; }
+                }
+            }
         }
     }
     pub fn vmgr_sort_picker_pgup(&mut self, n: usize) {
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
-            if let Some(p) = picker { p.cursor = p.cursor.saturating_sub(n); }
+            if let Some(p) = picker {
+                p.cursor = p.cursor.saturating_sub(n);
+                p.scroll = p.scroll.saturating_sub(n);
+            }
         }
     }
     pub fn vmgr_sort_picker_pgdn(&mut self, n: usize) {
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
-            if let Some(p) = picker { if max > 0 { p.cursor = (p.cursor + n).min(max - 1); } }
+            if let Some(p) = picker {
+                if max > 0 {
+                    p.cursor = (p.cursor + n).min(max - 1);
+                    p.scroll = p.scroll.min(p.cursor);
+                }
+            }
         }
     }
     pub fn vmgr_sort_picker_home(&mut self) {
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
-            if let Some(p) = picker { p.cursor = 0; }
+            if let Some(p) = picker { p.cursor = 0; p.scroll = 0; }
         }
     }
     pub fn vmgr_sort_picker_middle(&mut self) {
+        const VIS: usize = 10;
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
-            if let Some(p) = picker { p.cursor = max / 2; }
+            if let Some(p) = picker {
+                p.cursor = max / 2;
+                p.scroll = p.cursor.saturating_sub(VIS / 2);
+            }
         }
     }
     pub fn vmgr_sort_picker_end(&mut self) {
+        const VIS: usize = 10;
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
-            if let Some(p) = picker { if max > 0 { p.cursor = max - 1; } }
+            if let Some(p) = picker {
+                if max > 0 {
+                    p.cursor = max - 1;
+                    p.scroll = p.cursor.saturating_sub(VIS - 1);
+                }
+            }
         }
     }
 

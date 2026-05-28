@@ -552,12 +552,13 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // ── Filter picker overlay (F3 on Filter field) ───────────────────────────
-    if let FilterState::Open { cursor, entries } = filter_state {
-        let cursor   = *cursor;
+    if let FilterState::Open { cursor, scroll, entries } = filter_state {
+        let cursor        = *cursor;
+        let stored_scroll = *scroll;
         let all_cats = flatten_cats(&app.categories);
         let max_vis  = 20usize;
         let visible  = all_cats.len().min(max_vis);
-        let start    = if cursor >= visible { cursor - visible + 1 } else { 0 };
+        let start    = stored_scroll.min(cursor).max(cursor.saturating_sub(visible - 1));
 
         let box_h = (visible + 2) as u16;
         let box_w = 62u16;
@@ -600,7 +601,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // ── Section Select picker (F3 on Sections field) ──────────────────────────
-    if let Some(picker_cur) = sec_add_picker {
+    if let Some((picker_cur, picker_scroll)) = sec_add_picker {
         let cats = flatten_cats(&app.categories);
         // Collect cat_ids already used as sections in this view
         let used_ids: std::collections::HashSet<usize> =
@@ -624,7 +625,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let view_line = Line::from(Span::styled(view_label, app.theme.dialog_label));
 
         let visible = (pick_inner.height as usize).saturating_sub(1); // -1 for header line
-        let start = if *picker_cur >= visible { picker_cur - visible + 1 } else { 0 };
+        let start = (*picker_scroll).min(*picker_cur).max(picker_cur.saturating_sub(visible - 1));
         let rev = app.theme.item_selected_field;
 
         let mut pick_lines: Vec<Line<'static>> = vec![view_line];

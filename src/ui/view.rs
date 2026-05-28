@@ -639,8 +639,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Choices picker overlay ────────────────────────────────────────────
-    if let ColMode::Choices { picker_cursor, kind, .. } = &app.col_mode {
+    if let ColMode::Choices { picker_cursor, picker_scroll, kind, .. } = &app.col_mode {
         let rev = app.theme.item_selected_field;
+        let stored_scroll = *picker_scroll;
 
         let lines: Vec<Line> = match kind {
             ChoicesKind::Category => {
@@ -683,9 +684,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(block.clone(), picker_rect);
         let inner = block.inner(picker_rect);
 
-        // Scroll so picker_cursor is visible
+        // Scroll so picker_cursor is visible (lazy scroll)
         let visible = inner.height as usize;
-        let offset  = if *picker_cursor >= visible { picker_cursor - visible + 1 } else { 0 };
+        let offset  = stored_scroll.min(*picker_cursor).max(picker_cursor.saturating_sub(visible - 1));
 
         let visible_lines: Vec<Line> = lines.into_iter()
             .skip(offset)
@@ -696,11 +697,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Quick-add category picker (Alt-R / Alt-L) ────────────────────────────
-    if let ColMode::QuickAdd { position, picker_cursor, confirm_delete } = &app.col_mode {
+    if let ColMode::QuickAdd { position, picker_cursor, picker_scroll, confirm_delete } = &app.col_mode {
         let rev  = app.theme.item_selected_field;
         let dim  = Style::default().add_modifier(Modifier::DIM);
         let flat = flatten_cats(&app.categories);
         let pc   = *picker_cursor;
+        let stored_scroll = *picker_scroll;
 
         // Header line: search or instruction
         let header_text = if let Some(buf) = &app.cat_search {
@@ -774,9 +776,10 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Scrollable list area is inner minus the header row
         let list_h  = inner.height.saturating_sub(1) as usize;
-        // If a create row follows cursor, keep it visible too
+        // If a create row follows cursor, need to keep it visible too; use as the bottom anchor.
         let bottom  = if in_create { pc + 1 } else { pc };
-        let offset  = if bottom >= list_h { bottom - list_h + 1 } else { 0 };
+        // Lazy scroll: start from stored_scroll, clamped so bottom (and cursor) stay visible.
+        let offset  = stored_scroll.min(pc).max(bottom.saturating_sub(list_h - 1));
 
         let mut all_lines = vec![Line::from(Span::raw(header_text))];
         all_lines.extend(cat_lines.into_iter().skip(offset).take(list_h));
@@ -1092,9 +1095,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Sub-category picker (F3 on standard column) ───────────────────────────
-    if let ColMode::SubPick { col_idx, picker_cursor } = &app.col_mode {
+    if let ColMode::SubPick { col_idx, picker_cursor, picker_scroll } = &app.col_mode {
         let col_idx       = *col_idx;
         let picker_cursor = *picker_cursor;
+        let stored_scroll = *picker_scroll;
 
         // Build the list: column head first, then all descendants.
         let all_cats  = flatten_cats(&app.categories);
@@ -1132,7 +1136,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Scroll window: same 16-row limit as Assignment Profile.
         let visible = flat_subs.len().min(16);
-        let start   = if picker_cursor >= visible { picker_cursor - visible + 1 } else { 0 };
+        let start   = stored_scroll.min(picker_cursor).max(picker_cursor.saturating_sub(visible - 1));
 
         let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
         let box_h    = (visible + 3 + if in_create { 1 } else { 0 }) as u16;
@@ -1474,8 +1478,8 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Assignment Profile modal ──────────────────────────────────────────────
-    if let AssignMode::Profile { gi, cursor: prof_cursor, on_sub } = &app.assign_mode {
-        let (gi, prof_cur, prof_on_sub) = (*gi, *prof_cursor, *on_sub);
+    if let AssignMode::Profile { gi, cursor: prof_cursor, scroll: prof_scroll, on_sub } = &app.assign_mode {
+        let (gi, prof_cur, stored_scroll, prof_on_sub) = (*gi, *prof_cursor, *prof_scroll, *on_sub);
         let cats    = flatten_cats(&app.categories);
         let rev     = app.theme.item_selected_field;
         let bold    = Style::default().add_modifier(Modifier::BOLD);
@@ -1489,7 +1493,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Scroll window: show up to 16 categories at a time.
         let visible = cats.len().min(16);
-        let start   = if prof_cur >= visible { prof_cur - visible + 1 } else { 0 };
+        let start   = stored_scroll.min(prof_cur).max(prof_cur.saturating_sub(visible - 1));
 
         // Count Date sub-rows in the visible window to size the box correctly.
         let date_sub_count = cats.iter().skip(start).take(visible)
@@ -1579,9 +1583,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     // ── Section Add modal ─────────────────────────────────────────────────────
     let sec_add_state = match &app.sec_mode {
         SectionMode::Add { cat_idx, insert, active_field } =>
-            Some((*cat_idx, *insert, *active_field, None::<usize>)),
-        SectionMode::Choices { cat_idx, insert, active_field, picker_cursor } =>
-            Some((*cat_idx, *insert, *active_field, Some(*picker_cursor))),
+            Some((*cat_idx, *insert, *active_field, None::<(usize, usize)>)),
+        SectionMode::Choices { cat_idx, insert, active_field, picker_cursor, picker_scroll } =>
+            Some((*cat_idx, *insert, *active_field, Some((*picker_cursor, *picker_scroll)))),
         SectionMode::Normal | SectionMode::AutoRemoveError | SectionMode::ConfirmRemove { .. } | SectionMode::Props { .. } => None,
     };
     if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
@@ -1654,7 +1658,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(lines.clone()).style(app.theme.dialog), inner);
 
         // Choices picker overlay
-        if let Some(picker_cur) = picker_cursor {
+        if let Some((picker_cur, scroll_stored)) = picker_cursor {
             let picker_h = (cats.len().min(10) + 2) as u16;
             let picker_rect = centered_rect(40, picker_h, area);
             frame.render_widget(Clear, picker_rect);
@@ -1663,7 +1667,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             frame.render_widget(pb.clone(), picker_rect);
             let pi = pb.inner(picker_rect);
             let visible = pi.height as usize;
-            let start = if picker_cur >= visible { picker_cur - visible + 1 } else { 0 };
+            let start = scroll_stored.min(picker_cur).max(picker_cur.saturating_sub(visible - 1));
             let pick_lines: Vec<Line<'static>> = cats.iter().enumerate()
                 .skip(start).take(visible)
                 .map(|(i, e)| {
@@ -1943,9 +1947,9 @@ pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
 // ── Section Properties dialog ─────────────────────────────────────────────────
 
 pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
-    let (sec_idx, head_buf, head_cur, head_scroll, active_field, sort_state, filter_state, filter_scroll) = match &app.sec_mode {
-        SectionMode::Props { sec_idx, head_buf, head_cur, head_scroll, active_field, sort_state, filter_state, filter_scroll } =>
-            (*sec_idx, head_buf.as_str(), *head_cur, *head_scroll, *active_field, sort_state, filter_state, *filter_scroll),
+    let (sec_idx, head_buf, head_cur, head_scroll, active_field, sort_state, filter_state, filter_scroll, filter_cursor) = match &app.sec_mode {
+        SectionMode::Props { sec_idx, head_buf, head_cur, head_scroll, active_field, sort_state, filter_state, filter_scroll, filter_cursor } =>
+            (*sec_idx, head_buf.as_str(), *head_cur, *head_scroll, *active_field, sort_state, filter_state, *filter_scroll, *filter_cursor),
         _ => return,
     };
 
@@ -2157,10 +2161,12 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
 
     let is_active = active_field == SecPropsField::Filter;
 
-    // Label line — never highlighted.
-    final_lines.push(Line::from(Span::styled("Filter:", dlabel)));
+    // Label line — highlighted when active.
+    let filter_lbl_style = if is_active { dlabel_sel } else { dlabel };
+    final_lines.push(Line::from(Span::styled("Filter:", filter_lbl_style)));
     // Entry line 1.
-    final_lines.push(Line::from(if is_active {
+    let hi1 = is_active && filter_cursor == start;
+    final_lines.push(Line::from(if hi1 {
         vec![
             Span::raw(format!("{} ", arrow1)),
             Span::styled(format!("{}{}", row1_str, " ".repeat(pad1)), rev),
@@ -2169,7 +2175,8 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
         vec![Span::raw(format!("{} {}", arrow1, row1_str))]
     }));
     // Entry line 2.
-    final_lines.push(Line::from(if is_active {
+    let hi2 = is_active && filter_cursor == start + 1;
+    final_lines.push(Line::from(if hi2 {
         vec![
             Span::raw(format!("{} ", arrow2)),
             Span::styled(format!("{}{}", row2_str, " ".repeat(pad2)), rev),
@@ -2182,12 +2189,13 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let _ = lines; // unused above
 
     // ── Filter picker overlay ─────────────────────────────────────────────────
-    if let FilterState::Open { cursor, entries } = filter_state {
+    if let FilterState::Open { cursor, scroll, entries } = filter_state {
         let cursor = *cursor;
+        let stored_scroll = *scroll;
         let all_cats = flatten_cats(&app.categories);
         let max_vis  = 20usize;
         let visible  = all_cats.len().min(max_vis);
-        let start    = if cursor >= visible { cursor - visible + 1 } else { 0 };
+        let start    = stored_scroll.min(cursor).max(cursor.saturating_sub(visible - 1));
 
         let box_h = (visible + 2) as u16;
         let box_w = 62u16;
@@ -2395,7 +2403,7 @@ pub fn render_sort_dialog(
                 frame.render_widget(pick_block.clone(), pick_rect);
                 let pick_inner = pick_block.inner(pick_rect);
                 let vis = pick_inner.height as usize;
-                let start = if p.cursor >= vis { p.cursor - vis + 1 } else { 0 };
+                let start = p.scroll.min(p.cursor).max(p.cursor.saturating_sub(vis - 1));
                 let pick_lines: Vec<Line> = flat_cats.iter().enumerate()
                     .skip(start).take(vis)
                     .map(|(i, e)| {
