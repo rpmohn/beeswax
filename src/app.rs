@@ -349,9 +349,8 @@ pub enum AssignMode {
     /// Assignment Profile open; `gi` is the global index into `view.items`.
     Profile {
         gi:     usize,
-        cursor: usize,   // index into flatten_cats
-        scroll: usize,
-        on_sub: bool,    // true when cursor rests on a Date value sub-row
+        cursor: usize,   // visual row index (categories + date sub-rows interleaved)
+        scroll: usize,   // visual row index of the top of the window
     },
 }
 
@@ -3790,11 +3789,12 @@ impl App {
     }
 
     pub fn col_quick_add_pgdn(&mut self, page: usize) {
+        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
         if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if len > 0 {
                 *picker_cursor = (*picker_cursor + page).min(len - 1);
-                *picker_scroll = (*picker_scroll).min(*picker_cursor);
+                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
             }
         }
     }
@@ -4105,10 +4105,11 @@ impl App {
             ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
             _ => return,
         };
+        const VIS: usize = 12;
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if list_len > 0 {
                 *picker_cursor = (*picker_cursor + page).min(list_len - 1);
-                *picker_scroll = (*picker_scroll).min(*picker_cursor);
+                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
             }
         }
     }
@@ -4508,11 +4509,27 @@ impl App {
 
     /// Open the Assignment Profile for the currently highlighted item.
     /// No-op if cursor is not on an Item in the main column.
+    /// Build the ordered list of visual rows for the assignment profile.
+    /// Each entry is (cat_idx_in_flatten_cats, is_date_sub_row).
+    pub fn assign_visual_rows(categories: &[crate::model::Category], items: &[Item], gi: usize) -> Vec<(usize, bool)> {
+        let cats = flatten_cats(categories);
+        let empty = std::collections::HashMap::new();
+        let item_vals = items.get(gi).map(|it| &it.values).unwrap_or(&empty);
+        let mut rows = Vec::with_capacity(cats.len());
+        for (i, e) in cats.iter().enumerate() {
+            rows.push((i, false));
+            if e.kind == CategoryKind::Date && item_vals.get(&e.id).map_or(false, |v| !v.is_empty()) {
+                rows.push((i, true));
+            }
+        }
+        rows
+    }
+
     pub fn assign_open(&mut self) {
         if self.col_cursor != 0 { return; }
         if let CursorPos::Item { section, item } = self.cursor {
             if let Some(gi) = self.global_item_idx(section, item) {
-                self.assign_mode = AssignMode::Profile { gi, cursor: 0, scroll: 0, on_sub: false };
+                self.assign_mode = AssignMode::Profile { gi, cursor: 0, scroll: 0 };
             }
         }
     }
@@ -4523,100 +4540,81 @@ impl App {
     }
 
     pub fn assign_cursor_up(&mut self) {
-        let cats = flatten_cats(&self.categories);
-        let (gi, cur, sub) = match &self.assign_mode {
-            AssignMode::Profile { gi, cursor, on_sub, .. } => (*gi, *cursor, *on_sub),
-            AssignMode::Normal => return,
-        };
-        let empty = std::collections::HashMap::new();
-        let item_vals = self.items.get(gi).map(|it| &it.values).unwrap_or(&empty);
-        let (new_cur, new_sub) = if sub {
-            (cur, false)   // sub-row → its parent cat
-        } else if cur > 0 {
-            let prev = cur - 1;
-            let prev_has_sub = cats.get(prev).map(|e|
-                e.kind == CategoryKind::Date
-                && item_vals.get(&e.id).map_or(false, |v| !v.is_empty())
-            ).unwrap_or(false);
-            (prev, prev_has_sub)
-        } else {
-            (cur, false)
-        };
-        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
-            *cursor = new_cur;
-            *on_sub = new_sub;
-            if !new_sub && new_cur < *scroll { *scroll = new_cur; }
+        if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
+            if *cursor > 0 {
+                *cursor -= 1;
+                if *cursor < *scroll { *scroll = *cursor; }
+            }
         }
     }
 
     pub fn assign_cursor_down(&mut self) {
         const VIS: usize = 16;
-        let cats = flatten_cats(&self.categories);
-        let len = cats.len();
-        let (gi, cur, sub) = match &self.assign_mode {
-            AssignMode::Profile { gi, cursor, on_sub, .. } => (*gi, *cursor, *on_sub),
+        let gi = match &self.assign_mode {
+            AssignMode::Profile { gi, .. } => *gi,
             AssignMode::Normal => return,
         };
-        let empty = std::collections::HashMap::new();
-        let item_vals = self.items.get(gi).map(|it| &it.values).unwrap_or(&empty);
-        let (new_cur, new_sub) = if sub {
-            ((cur + 1).min(len.saturating_sub(1)), false)
-        } else {
-            let cur_has_sub = cats.get(cur).map(|e|
-                e.kind == CategoryKind::Date
-                && item_vals.get(&e.id).map_or(false, |v| !v.is_empty())
-            ).unwrap_or(false);
-            if cur_has_sub { (cur, true) } else { ((cur + 1).min(len.saturating_sub(1)), false) }
-        };
-        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
-            *cursor = new_cur;
-            *on_sub = new_sub;
-            if !new_sub && new_cur >= *scroll + VIS { *scroll = new_cur + 1 - VIS; }
+        let len = Self::assign_visual_rows(&self.categories, &self.items, gi).len();
+        if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
+            if *cursor + 1 < len {
+                *cursor += 1;
+                if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+            }
         }
     }
 
     pub fn assign_cursor_pgup(&mut self, page: usize) {
-        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
             *cursor = cursor.saturating_sub(page);
             *scroll = scroll.saturating_sub(page);
-            *on_sub = false;
         }
     }
 
     pub fn assign_cursor_pgdn(&mut self, page: usize) {
-        let len = flatten_cats(&self.categories).len();
-        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
+        const VIS: usize = 16;
+        let gi = match &self.assign_mode {
+            AssignMode::Profile { gi, .. } => *gi,
+            AssignMode::Normal => return,
+        };
+        let len = Self::assign_visual_rows(&self.categories, &self.items, gi).len();
+        if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
             if len > 0 { *cursor = (*cursor + page).min(len - 1); }
-            *scroll = (*scroll).min(*cursor);
-            *on_sub = false;
+            if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
         }
     }
 
     pub fn assign_cursor_home(&mut self) {
-        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
+        if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
             *cursor = 0;
             *scroll = 0;
-            *on_sub = false;
         }
     }
+
     pub fn assign_cursor_middle(&mut self) {
         const VIS: usize = 16;
-        let len = flatten_cats(&self.categories).len();
-        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
+        let gi = match &self.assign_mode {
+            AssignMode::Profile { gi, .. } => *gi,
+            AssignMode::Normal => return,
+        };
+        let len = Self::assign_visual_rows(&self.categories, &self.items, gi).len();
+        if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
             *cursor = len / 2;
             *scroll = cursor.saturating_sub(VIS / 2);
-            *on_sub = false;
         }
     }
+
     pub fn assign_cursor_end(&mut self) {
         const VIS: usize = 16;
-        let len = flatten_cats(&self.categories).len();
-        if let AssignMode::Profile { cursor, scroll, on_sub, .. } = &mut self.assign_mode {
+        let gi = match &self.assign_mode {
+            AssignMode::Profile { gi, .. } => *gi,
+            AssignMode::Normal => return,
+        };
+        let len = Self::assign_visual_rows(&self.categories, &self.items, gi).len();
+        if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
             if len > 0 {
                 *cursor = len - 1;
                 *scroll = cursor.saturating_sub(VIS - 1);
             }
-            *on_sub = false;
         }
     }
 
@@ -4624,15 +4622,15 @@ impl App {
     /// Standard categories: presence in item.values (empty string) = assigned.
     /// Date categories: assigned when a value string is present.
     pub fn assign_toggle(&mut self) {
-        let (gi, cur) = match &self.assign_mode {
-            AssignMode::Profile { gi, cursor, on_sub, .. } => {
-                if *on_sub { return; }  // sub-rows are not directly toggleable
-                (*gi, *cursor)
-            }
+        let (gi, vis_cur) = match &self.assign_mode {
+            AssignMode::Profile { gi, cursor, .. } => (*gi, *cursor),
             AssignMode::Normal => return,
         };
+        let rows = Self::assign_visual_rows(&self.categories, &self.items, gi);
+        let Some(&(cat_idx, is_sub)) = rows.get(vis_cur) else { return };
+        if is_sub { return; }  // sub-rows are not directly toggleable
         let cats = flatten_cats(&self.categories);
-        let Some(entry) = cats.get(cur) else { return };
+        let Some(entry) = cats.get(cat_idx) else { return };
         let cat_id = entry.id;
         if gi >= self.items.len() { return; }
         let item = &mut self.items[gi];
@@ -4807,16 +4805,28 @@ impl App {
     }
 
     /// Active cat-list cursor regardless of which window is visible.
+    /// Returns the category index (not the visual row index).
     fn active_cat_cursor(&self) -> usize {
-        if let AssignMode::Profile { cursor, .. } = &self.assign_mode { return *cursor; }
+        if let AssignMode::Profile { gi, cursor, .. } = &self.assign_mode {
+            let rows = Self::assign_visual_rows(&self.categories, &self.items, *gi);
+            return rows.get(*cursor).map(|&(cat_idx, _)| cat_idx).unwrap_or(0);
+        }
         if let ColMode::QuickAdd { picker_cursor, .. } = &self.col_mode { return *picker_cursor; }
         self.cat_state.cursor
     }
 
-    /// Set the active cat-list cursor.
+    /// Set the active cat-list cursor (takes a category index; maps to visual row).
     fn set_active_cat_cursor(&mut self, idx: usize) {
-        if let AssignMode::Profile { cursor, on_sub, .. } = &mut self.assign_mode {
-            *cursor = idx; *on_sub = false; return;
+        if let AssignMode::Profile { gi, .. } = &self.assign_mode {
+            let gi = *gi;
+            let rows = Self::assign_visual_rows(&self.categories, &self.items, gi);
+            let vis = rows.iter().position(|&(cat_idx, is_sub)| cat_idx == idx && !is_sub);
+            if let Some(vis) = vis {
+                if let AssignMode::Profile { cursor, .. } = &mut self.assign_mode {
+                    *cursor = vis;
+                }
+            }
+            return;
         }
         if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
             *picker_cursor = idx; return;
@@ -5067,11 +5077,12 @@ impl App {
         }
     }
     pub fn sec_choices_pgdn(&mut self, page: usize) {
+        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             if len > 0 {
                 *picker_cursor = (*picker_cursor + page).min(len - 1);
-                *picker_scroll = (*picker_scroll).min(*picker_cursor);
+                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
             }
         }
     }
@@ -5310,10 +5321,11 @@ impl App {
     }
 
     pub fn sec_filter_picker_pgdn(&mut self, n: usize) {
+        const VIS: usize = 20;
         let count = flatten_cats(&self.categories).len();
         if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             *cursor = (*cursor + n).min(count.saturating_sub(1));
-            *scroll = (*scroll).min(*cursor);
+            if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
         }
     }
 
@@ -5439,10 +5451,11 @@ impl App {
     }
 
     pub fn vmgr_filter_picker_pgdn(&mut self, n: usize) {
+        const VIS: usize = 20;
         let count = flatten_cats(&self.categories).len();
         if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             *cursor = (*cursor + n).min(count.saturating_sub(1));
-            *scroll = (*scroll).min(*cursor);
+            if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
         }
     }
 
@@ -5796,6 +5809,7 @@ impl App {
         }
     }
     pub fn sec_sort_picker_pgdn(&mut self, page: usize) {
+        const VIS: usize = 10;
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
@@ -5803,7 +5817,7 @@ impl App {
             if let Some(p) = picker {
                 if max > 0 {
                     p.cursor = (p.cursor + page).min(max - 1);
-                    p.scroll = p.scroll.min(p.cursor);
+                    if p.cursor >= p.scroll + VIS { p.scroll = p.cursor + 1 - VIS; }
                 }
             }
         }
@@ -6642,10 +6656,11 @@ impl App {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
         };
+        const VIS: usize = 16;
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if len > 0 {
                 *picker_cursor = (*picker_cursor + page).min(len - 1);
-                *picker_scroll = (*picker_scroll).min(*picker_cursor);
+                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
             }
         }
     }
@@ -8077,10 +8092,11 @@ impl App {
     }
 
     pub fn vmgr_sec_pick_pgdn(&mut self, page: usize) {
+        const VIS: usize = 12;
         let max = flatten_cats(&self.categories).len().saturating_sub(1);
         if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             *cursor = (*cursor + page).min(max);
-            *scroll = (*scroll).min(*cursor);
+            if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
         }
     }
 
@@ -8482,12 +8498,13 @@ impl App {
         }
     }
     pub fn vmgr_sort_picker_pgdn(&mut self, n: usize) {
+        const VIS: usize = 10;
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
             if let Some(p) = picker {
                 if max > 0 {
                     p.cursor = (p.cursor + n).min(max - 1);
-                    p.scroll = p.scroll.min(p.cursor);
+                    if p.cursor >= p.scroll + VIS { p.scroll = p.cursor + 1 - VIS; }
                 }
             }
         }

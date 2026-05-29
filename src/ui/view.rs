@@ -1478,8 +1478,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Assignment Profile modal ──────────────────────────────────────────────
-    if let AssignMode::Profile { gi, cursor: prof_cursor, scroll: prof_scroll, on_sub } = &app.assign_mode {
-        let (gi, prof_cur, stored_scroll, prof_on_sub) = (*gi, *prof_cursor, *prof_scroll, *on_sub);
+    if let AssignMode::Profile { gi, cursor: prof_cursor, scroll: prof_scroll } = &app.assign_mode {
+        const VIS: usize = 16;
+        let (gi, prof_cur, stored_scroll) = (*gi, *prof_cursor, *prof_scroll);
         let cats    = flatten_cats(&app.categories);
         let rev     = app.theme.item_selected_field;
         let bold    = Style::default().add_modifier(Modifier::BOLD);
@@ -1491,17 +1492,14 @@ pub fn render(frame: &mut Frame, app: &App) {
         let item_vals   = item.map(|it| &it.values).unwrap_or(&empty_vals);
         let cond_cats   = item.map(|it| &it.cond_cats).unwrap_or(&empty_conds);
 
-        // Scroll window: show up to 16 categories at a time.
-        let visible = cats.len().min(16);
-        let start   = stored_scroll.min(prof_cur).max(prof_cur.saturating_sub(visible - 1));
+        // Build visual rows: one per category, plus a date-sub row for each Date category
+        // that has an assigned value. Scroll and cursor are visual-row indices.
+        let rows = App::assign_visual_rows(&app.categories, &app.items, gi);
+        let total_rows = rows.len();
+        let start = stored_scroll.min(prof_cur).max(prof_cur.saturating_sub(VIS.saturating_sub(1)));
 
-        // Count Date sub-rows in the visible window to size the box correctly.
-        let date_sub_count = cats.iter().skip(start).take(visible)
-            .filter(|e| e.kind == CategoryKind::Date
-                && item_vals.get(&e.id).map_or(false, |v| !v.is_empty()))
-            .count();
-
-        let box_h  = (visible + date_sub_count + 4) as u16;  // 2 border + 1 header + 1 help
+        // Box height is fixed: VIS visual rows + 2 borders + 1 title + 1 help.
+        let box_h  = (VIS + 4) as u16;
         let box_w  = 50u16;
         let dlg_rect = centered_rect(box_w, box_h, area);
         frame.render_widget(Clear, dlg_rect);
@@ -1520,58 +1518,51 @@ pub fn render(frame: &mut Frame, app: &App) {
         let title_line = Line::from(Span::styled(title_text, bold));
 
         let mut cat_lines: Vec<Line<'static>> = vec![title_line];
-        for (i, e) in cats.iter().enumerate().skip(start).take(visible) {
-            let assigned = item_vals.contains_key(&e.id);
-            let is_cond  = cond_cats.contains(&e.id);
-            let marker   = match (assigned, is_cond) {
-                (true,  true)  => "*c",
-                (true,  false) => "* ",
-                (false, _)     => "  ",
-            };
-            let note_ind  = cat_note_indicator(&app.categories, e.id);
-            let type_ind  = match e.kind {
-                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
-                CategoryKind::Date      => "*",
-                CategoryKind::Numeric   => "#",
-                CategoryKind::Unindexed => "\u{25A1}",  // □
-            };
-            let indent = "  ".repeat(e.depth);
-            let highlighted = i == prof_cur && !prof_on_sub;
-            let cat_line = Line::from(vec![
-                Span::raw(format!(" {}\u{2502} {}{} ", marker, indent, type_ind)),
-                if highlighted {
-                    Span::styled(e.name.clone(), rev)
+        for (vis_idx, &(cat_idx, is_sub)) in rows.iter().enumerate().skip(start).take(VIS) {
+            let e = &cats[cat_idx];
+            let highlighted = vis_idx == prof_cur;
+            if is_sub {
+                let val = item_vals.get(&e.id).map(|v| v.as_str()).unwrap_or("");
+                let indent = "  ".repeat(e.depth);
+                let val_span = if highlighted {
+                    Span::styled(val.to_string(), rev)
                 } else {
-                    Span::raw(e.name.clone())
-                },
-            ]);
-            cat_lines.push(cat_line);
-
-            // For Date categories with a value, show the datetime as a sub-row.
-            if e.kind == CategoryKind::Date {
-                if let Some(val) = item_vals.get(&e.id) {
-                    if !val.is_empty() {
-                        let sub_hi = i == prof_cur && prof_on_sub;
-                        let val_span = if sub_hi {
-                            Span::styled(val.clone(), rev)
-                        } else {
-                            Span::styled(val.clone(), dim)
-                        };
-                        cat_lines.push(Line::from(vec![
-                            Span::raw(format!("   \u{2502}    {}", indent)),
-                            val_span,
-                        ]));
-                    }
-                }
+                    Span::styled(val.to_string(), dim)
+                };
+                cat_lines.push(Line::from(vec![
+                    Span::raw(format!("   \u{2502}    {}", indent)),
+                    val_span,
+                ]));
+            } else {
+                let assigned = item_vals.contains_key(&e.id);
+                let is_cond  = cond_cats.contains(&e.id);
+                let marker   = match (assigned, is_cond) {
+                    (true,  true)  => "*c",
+                    (true,  false) => "* ",
+                    (false, _)     => "  ",
+                };
+                let note_ind  = cat_note_indicator(&app.categories, e.id);
+                let type_ind  = match e.kind {
+                    CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
+                    CategoryKind::Date      => "*",
+                    CategoryKind::Numeric   => "#",
+                    CategoryKind::Unindexed => "\u{25A1}",
+                };
+                let indent = "  ".repeat(e.depth);
+                cat_lines.push(Line::from(vec![
+                    Span::raw(format!(" {}\u{2502} {}{} ", marker, indent, type_ind)),
+                    if highlighted {
+                        Span::styled(e.name.clone(), rev)
+                    } else {
+                        Span::raw(e.name.clone())
+                    },
+                ]));
             }
         }
+        let _ = total_rows;
 
-        // Help line at bottom
-        let help = Line::from(Span::raw(
-            " Space=assign/unassign  Enter/Esc=close"
-        ));
-
-        // Pad with empty lines to fill box before help
+        // Help line at bottom; pad with empty lines to fill box.
+        let help = Line::from(Span::raw(" Space=assign/unassign  Enter/Esc=close"));
         while cat_lines.len() < inner.height.saturating_sub(1) as usize {
             cat_lines.push(Line::from(""));
         }
