@@ -1,5 +1,86 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
+
+// ── Shared single-line text-field editor ─────────────────────────────────────
+
+#[derive(PartialEq)]
+enum LineEditResult { Handled, Confirm, Cancel, Unhandled }
+
+/// Shared single-line text editor. Handles Ctrl+U/K/Y/A/E, Ctrl+Left/Right,
+/// Left/Right, Home/End, Backspace, Delete, and printable char insertion.
+/// Returns Confirm on Enter, Cancel on Esc, Unhandled for unrecognised keys,
+/// and Handled for everything else — with buf/cursor/kill updated in place.
+fn line_edit(
+    code:      KeyCode,
+    modifiers: KeyModifiers,
+    buf:       &mut String,
+    cursor:    &mut usize,
+    kill:      &mut String,
+) -> LineEditResult {
+    let ctb = |s: &str, n: usize| -> usize {
+        s.char_indices().nth(n).map(|(b, _)| b).unwrap_or(s.len())
+    };
+    let ctrl        = modifiers.contains(KeyModifiers::CONTROL);
+    let no_ctrl_alt = !ctrl && !modifiers.contains(KeyModifiers::ALT);
+
+    if ctrl {
+        match code {
+            KeyCode::Char('u') | KeyCode::Char('U') => {
+                let bp  = ctb(buf, *cursor);
+                *kill   = buf[..bp].to_string();
+                *buf    = buf[bp..].to_string();
+                *cursor = 0;
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                let bp = ctb(buf, *cursor);
+                *kill  = buf[bp..].to_string();
+                buf.truncate(bp);
+            }
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let bp  = ctb(buf, *cursor);
+                let ins = kill.clone();
+                buf.insert_str(bp, &ins);
+                *cursor += ins.chars().count();
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => *cursor = 0,
+            KeyCode::Char('e') | KeyCode::Char('E') => *cursor = buf.chars().count(),
+            KeyCode::Left  => *cursor = crate::app::buf_word_left(buf,  *cursor),
+            KeyCode::Right => *cursor = crate::app::buf_word_right(buf, *cursor),
+            _ => return LineEditResult::Unhandled,
+        }
+        return LineEditResult::Handled;
+    }
+
+    match code {
+        KeyCode::Enter     => return LineEditResult::Confirm,
+        KeyCode::Esc       => return LineEditResult::Cancel,
+        KeyCode::Left      => { if *cursor > 0 { *cursor -= 1; } }
+        KeyCode::Right     => { let n = buf.chars().count(); if *cursor < n { *cursor += 1; } }
+        KeyCode::Home      => *cursor = 0,
+        KeyCode::End       => *cursor = buf.chars().count(),
+        KeyCode::Backspace => {
+            if *cursor > 0 {
+                *cursor -= 1;
+                let bp = ctb(buf, *cursor);
+                buf.remove(bp);
+            }
+        }
+        KeyCode::Delete => {
+            let n = buf.chars().count();
+            if *cursor < n {
+                let bp = ctb(buf, *cursor);
+                buf.remove(bp);
+            }
+        }
+        KeyCode::Char(ch) if no_ctrl_alt => {
+            let bp = ctb(buf, *cursor);
+            buf.insert(bp, ch);
+            *cursor += 1;
+        }
+        _ => return LineEditResult::Unhandled,
+    }
+    LineEditResult::Handled
+}
 
 pub fn handle_event(app: &mut App, event: Event) {
     let Event::Key(KeyEvent { code, modifiers, kind, .. }) = event else { return };
@@ -627,35 +708,53 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn handle_catmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.cat_props_ctrl_u(); return; }
-            KeyCode::Char('k') | KeyCode::Char('K') => { app.cat_props_ctrl_k(); return; }
-            KeyCode::Char('y') | KeyCode::Char('Y') => { app.cat_props_ctrl_y(); return; }
-            KeyCode::Char('a') | KeyCode::Char('A') => { app.cat_props_ctrl_a(); return; }
-            KeyCode::Char('e') | KeyCode::Char('E') => { app.cat_props_ctrl_e(); return; }
-            KeyCode::Left                           => { app.cat_props_word_left();  return; }
-            KeyCode::Right                          => { app.cat_props_word_right(); return; }
-            _ => {}
+    // Extract active text-field buf/cursor (None for boolean / Note fields).
+    let text_state = match &app.cat_state.mode {
+        CatMode::Props { active_field, name_buf, name_cur, short_name_buf, short_name_cur,
+                         also_match_buf, also_match_cur, note_file_buf, note_file_cur, .. } =>
+            match active_field {
+                CatPropsField::Name      => Some((name_buf.clone(),       *name_cur)),
+                CatPropsField::ShortName => Some((short_name_buf.clone(), *short_name_cur)),
+                CatPropsField::AlsoMatch => Some((also_match_buf.clone(), *also_match_cur)),
+                CatPropsField::NoteFile  => Some((note_file_buf.clone(),  *note_file_cur)),
+                _ => None,
+            },
+        _ => return,
+    };
+    if let Some((mut buf, mut cursor)) = text_state {
+        let mut kill = app.kill_buffer.clone();
+        match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+            LineEditResult::Confirm => { app.cat_props_confirm(); return; }
+            LineEditResult::Cancel  => { app.cat_props_cancel();  return; }
+            LineEditResult::Handled => {
+                if let CatMode::Props { active_field, name_buf, name_cur, short_name_buf, short_name_cur,
+                                        also_match_buf, also_match_cur, note_file_buf, note_file_cur, .. }
+                    = &mut app.cat_state.mode
+                {
+                    match active_field {
+                        CatPropsField::Name      => { *name_buf = buf;       *name_cur = cursor; }
+                        CatPropsField::ShortName => { *short_name_buf = buf; *short_name_cur = cursor; }
+                        CatPropsField::AlsoMatch => { *also_match_buf = buf; *also_match_cur = cursor; }
+                        CatPropsField::NoteFile  => { *note_file_buf = buf;  *note_file_cur = cursor; }
+                        _ => {}
+                    }
+                }
+                app.kill_buffer = kill;
+                return;
+            }
+            LineEditResult::Unhandled => {}
         }
     }
+    // Navigation and non-text field keys (also handles Tab/Up/Down for text fields via Unhandled fall-through).
     match code {
         KeyCode::Enter     => app.cat_props_confirm(),
         KeyCode::Esc       => app.cat_props_cancel(),
-        // F2 Edit / F3 Choices open the note editor when Note field is active
         KeyCode::F(2) | KeyCode::F(3) => app.cat_props_open_editor(),
-        // Shift+Tab: BackTab (most terminals) or Tab+SHIFT (some terminals)
         KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => app.cat_props_field_prev(),
         KeyCode::Tab       | KeyCode::Down   => app.cat_props_field_next(),
         KeyCode::BackTab   | KeyCode::Up     => app.cat_props_field_prev(),
         KeyCode::Left      => app.cat_props_cursor_left(),
         KeyCode::Right     => app.cat_props_cursor_right(),
-        KeyCode::Home      => app.cat_props_ctrl_a(),
-        KeyCode::End       => app.cat_props_ctrl_e(),
-        // Both Backspace and Delete perform backward deletion (cursor starts at end of text)
-        KeyCode::Backspace | KeyCode::Delete => app.cat_props_backspace(),
-        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => app.cat_props_input_char(ch),
         _ => {}
     }
 }
@@ -672,31 +771,24 @@ fn handle_menu(app: &mut App, code: KeyCode) {
 }
 
 fn handle_catmgr_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.cat_edit_ctrl_u(); return; }
-            KeyCode::Char('k') | KeyCode::Char('K') => { app.cat_edit_ctrl_k(); return; }
-            KeyCode::Char('y') | KeyCode::Char('Y') => { app.cat_edit_ctrl_y(); return; }
-            KeyCode::Char('a') | KeyCode::Char('A') => { app.cat_edit_ctrl_a(); return; }
-            KeyCode::Char('e') | KeyCode::Char('E') => { app.cat_edit_ctrl_e(); return; }
-            KeyCode::Left                           => { app.cat_edit_word_left();  return; }
-            KeyCode::Right                          => { app.cat_edit_word_right(); return; }
-            _ => {}
-        }
+    let (mut buf, mut cursor) = match &app.cat_state.mode {
+        CatMode::Edit   { buffer, cursor }     => (buffer.clone(), *cursor),
+        CatMode::Create { buffer, cursor, .. } => (buffer.clone(), *cursor),
+        _ => return,
+    };
+    let mut kill = app.kill_buffer.clone();
+    match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+        LineEditResult::Confirm   => { app.cat_confirm(); return; }
+        LineEditResult::Cancel    => { app.cat_cancel();  return; }
+        LineEditResult::Unhandled => return,
+        LineEditResult::Handled   => {}
     }
-    match code {
-        KeyCode::Enter     => app.cat_confirm(),
-        KeyCode::Esc       => app.cat_cancel(),
-        KeyCode::Backspace => app.cat_input_backspace(),
-        KeyCode::Delete    => app.cat_input_delete(),
-        KeyCode::Left      => app.cat_edit_cursor_left(),
-        KeyCode::Right     => app.cat_edit_cursor_right(),
-        KeyCode::Home      => app.cat_edit_ctrl_a(),
-        KeyCode::End       => app.cat_edit_ctrl_e(),
-        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => app.cat_input_char(ch),
+    match &mut app.cat_state.mode {
+        CatMode::Edit   { buffer, cursor: c }     => { *buffer = buf; *c = cursor; }
+        CatMode::Create { buffer, cursor: c, .. } => { *buffer = buf; *c = cursor; }
         _ => {}
     }
+    app.kill_buffer = kill;
 }
 
 fn handle_catmgr_move(app: &mut App, code: KeyCode) {
@@ -719,38 +811,42 @@ fn handle_catmgr_move(app: &mut App, code: KeyCode) {
 // ── Column form handler ───────────────────────────────────────────────────────
 
 fn handle_col_form(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.col_form_ctrl_u(); return; }
-            KeyCode::Char('k') | KeyCode::Char('K') => { app.col_form_ctrl_k(); return; }
-            KeyCode::Char('y') | KeyCode::Char('Y') => { app.col_form_ctrl_y(); return; }
-            KeyCode::Char('a') | KeyCode::Char('A') => { app.col_form_ctrl_a(); return; }
-            KeyCode::Char('e') | KeyCode::Char('E') => { app.col_form_ctrl_e(); return; }
-            KeyCode::Left                           => { app.col_form_word_left();  return; }
-            KeyCode::Right                          => { app.col_form_word_right(); return; }
-            _ => {}
+    let width_active = matches!(&app.col_mode, ColMode::Form { active_field: ColFormField::Width, .. });
+    if width_active {
+        // Width field only accepts ASCII digits; non-digit printable keys are no-ops.
+        if matches!(code, KeyCode::Char(ch) if !ch.is_ascii_digit())
+            && !modifiers.contains(KeyModifiers::CONTROL)
+            && !modifiers.contains(KeyModifiers::ALT)
+        {
+            return;
+        }
+        let (mut buf, mut cursor) = match &app.col_mode {
+            ColMode::Form { width_buf, width_cur, .. } => (width_buf.clone(), *width_cur),
+            _ => return,
+        };
+        let mut kill = app.kill_buffer.clone();
+        match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+            LineEditResult::Confirm   => { app.col_form_confirm(); return; }
+            LineEditResult::Cancel    => { app.col_form_cancel();  return; }
+            LineEditResult::Handled   => {
+                if let ColMode::Form { width_buf, width_cur, .. } = &mut app.col_mode {
+                    *width_buf = buf; *width_cur = cursor;
+                }
+                app.kill_buffer = kill;
+                return;
+            }
+            LineEditResult::Unhandled => {}
         }
     }
+    // Navigation and Head/Position field keys.
     match code {
-        KeyCode::Enter     => app.col_form_confirm(),
-        KeyCode::Esc       => app.col_form_cancel(),
-        KeyCode::Up        => app.col_form_field_prev(),
-        KeyCode::Down      => app.col_form_field_next(),
-        KeyCode::Left      => app.col_form_cursor_left(),
-        KeyCode::Right     => app.col_form_cursor_right(),
-        KeyCode::Home      => app.col_form_ctrl_a(),
-        KeyCode::End       => app.col_form_ctrl_e(),
-        KeyCode::Backspace => app.col_form_backspace(),
-        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => app.col_form_input_char(ch),
-        KeyCode::F(3)      => {
-            if matches!(&app.col_mode,
-                ColMode::Form { active_field: ColFormField::Head, .. } |
-                ColMode::Form { active_field: ColFormField::Position, .. })
-            {
-                app.col_open_choices();
-            }
-        }
+        KeyCode::Enter => app.col_form_confirm(),
+        KeyCode::Esc   => app.col_form_cancel(),
+        KeyCode::Up    => app.col_form_field_prev(),
+        KeyCode::Down  => app.col_form_field_next(),
+        KeyCode::F(3) if matches!(&app.col_mode,
+            ColMode::Form { active_field: ColFormField::Head, .. } |
+            ColMode::Form { active_field: ColFormField::Position, .. }) => app.col_open_choices(),
         _ => {}
     }
 }
@@ -776,30 +872,51 @@ fn handle_col_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 // ── Column Properties handler ─────────────────────────────────────────────────
 
 fn handle_col_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.col_props_ctrl_u(); return; }
-            KeyCode::Char('k') | KeyCode::Char('K') => { app.col_props_ctrl_k(); return; }
-            KeyCode::Char('y') | KeyCode::Char('Y') => { app.col_props_ctrl_y(); return; }
-            KeyCode::Char('a') | KeyCode::Char('A') => { app.col_props_ctrl_a(); return; }
-            KeyCode::Char('e') | KeyCode::Char('E') => { app.col_props_ctrl_e(); return; }
-            KeyCode::Left                           => { app.col_props_word_left();  return; }
-            KeyCode::Right                          => { app.col_props_word_right(); return; }
-            _ => {}
+    // Extract the active text-field buf/cursor, if the active field is Head or Width.
+    let text_state = match &app.col_mode {
+        ColMode::Props { active_field, head_buf, head_cur, width_buf, width_cur, .. } =>
+            match active_field {
+                PropsField::Head  => Some((false, head_buf.clone(),  *head_cur)),
+                PropsField::Width => Some((true,  width_buf.clone(), *width_cur)),
+                _ => None,
+            },
+        _ => return,
+    };
+    if let Some((digits_only, mut buf, mut cursor)) = text_state {
+        // Width field only accepts ASCII digits; non-digit printable keys are no-ops.
+        if digits_only
+            && matches!(code, KeyCode::Char(ch) if !ch.is_ascii_digit())
+            && !modifiers.contains(KeyModifiers::CONTROL)
+            && !modifiers.contains(KeyModifiers::ALT)
+        {
+            return;
+        }
+        let mut kill = app.kill_buffer.clone();
+        match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+            LineEditResult::Confirm => { app.col_props_confirm(); return; }
+            LineEditResult::Cancel  => { app.col_props_cancel();  return; }
+            LineEditResult::Handled => {
+                if let ColMode::Props { active_field, head_buf, head_cur, width_buf, width_cur, .. } = &mut app.col_mode {
+                    match active_field {
+                        PropsField::Head  => { *head_buf  = buf; *head_cur  = cursor; }
+                        PropsField::Width => { *width_buf = buf; *width_cur = cursor; }
+                        _ => {}
+                    }
+                }
+                app.kill_buffer = kill;
+                return;
+            }
+            LineEditResult::Unhandled => {}
         }
     }
+    // Navigation and non-text field keys (Left/Right cycle format/date values).
     match code {
-        KeyCode::Enter     => app.col_props_confirm(),
-        KeyCode::Esc       => app.col_props_cancel(),
-        KeyCode::Up        => app.col_props_field_prev(),
-        KeyCode::Down      => app.col_props_field_next(),
-        KeyCode::Left      => app.col_props_left(),
-        KeyCode::Right     => app.col_props_right(),
-        KeyCode::Home      => app.col_props_ctrl_a(),
-        KeyCode::End       => app.col_props_ctrl_e(),
-        KeyCode::Backspace => app.col_props_backspace(),
-        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => app.col_props_input_char(ch),
+        KeyCode::Enter => app.col_props_confirm(),
+        KeyCode::Esc   => app.col_props_cancel(),
+        KeyCode::Up    => app.col_props_field_prev(),
+        KeyCode::Down  => app.col_props_field_next(),
+        KeyCode::Left  => app.col_props_left(),
+        KeyCode::Right => app.col_props_right(),
         _ => {}
     }
 }
@@ -1225,30 +1342,21 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn handle_vmgr_rename(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_rename_ctrl_u(); return; }
-            KeyCode::Char('k') | KeyCode::Char('K') => { app.vmgr_rename_ctrl_k(); return; }
-            KeyCode::Char('y') | KeyCode::Char('Y') => { app.vmgr_rename_ctrl_y(); return; }
-            KeyCode::Char('a') | KeyCode::Char('A') => { app.vmgr_rename_ctrl_a(); return; }
-            KeyCode::Char('e') | KeyCode::Char('E') => { app.vmgr_rename_ctrl_e(); return; }
-            KeyCode::Left                           => { app.vmgr_rename_word_left();  return; }
-            KeyCode::Right                          => { app.vmgr_rename_word_right(); return; }
-            _ => {}
-        }
+    let (mut buf, mut cursor) = match &app.vmgr_state.mode {
+        ViewMgrMode::Rename { buffer, cursor } => (buffer.clone(), *cursor),
+        _ => return,
+    };
+    let mut kill = app.kill_buffer.clone();
+    match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+        LineEditResult::Confirm   => { app.vmgr_rename_confirm(); return; }
+        LineEditResult::Cancel    => { app.vmgr_rename_cancel();  return; }
+        LineEditResult::Unhandled => return,
+        LineEditResult::Handled   => {}
     }
-    match code {
-        KeyCode::Enter     => app.vmgr_rename_confirm(),
-        KeyCode::Esc       => app.vmgr_rename_cancel(),
-        KeyCode::Left      => app.vmgr_rename_left(),
-        KeyCode::Right     => app.vmgr_rename_right(),
-        KeyCode::Home      => app.vmgr_rename_ctrl_a(),
-        KeyCode::End       => app.vmgr_rename_ctrl_e(),
-        KeyCode::Backspace => app.vmgr_rename_backspace(),
-        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => app.vmgr_rename_char(ch),
-        _ => {}
+    if let ViewMgrMode::Rename { buffer, cursor: c } = &mut app.vmgr_state.mode {
+        *buffer = buf; *c = cursor;
     }
+    app.kill_buffer = kill;
 }
 
 fn handle_vmgr_delete(app: &mut App, code: KeyCode) {
@@ -1260,30 +1368,36 @@ fn handle_vmgr_delete(app: &mut App, code: KeyCode) {
 }
 
 fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Name field text editing (when actively editing).
     let name_editing = matches!(&app.vmgr_state.mode, ViewMgrMode::Props { name_editing: true, .. });
-    // Ctrl bindings: editing keys when name is active, section-reorder otherwise.
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        if name_editing {
-            match code {
-                KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_props_name_ctrl_u(); return; }
-                KeyCode::Char('k') | KeyCode::Char('K') => { app.vmgr_props_name_ctrl_k(); return; }
-                KeyCode::Char('y') | KeyCode::Char('Y') => { app.vmgr_props_name_ctrl_y(); return; }
-                KeyCode::Char('a') | KeyCode::Char('A') => { app.vmgr_props_name_ctrl_a(); return; }
-                KeyCode::Char('e') | KeyCode::Char('E') => { app.vmgr_props_name_ctrl_e(); return; }
-                KeyCode::Left                           => { app.vmgr_props_name_word_left();  return; }
-                KeyCode::Right                          => { app.vmgr_props_name_word_right(); return; }
-                _ => {}
+    if name_editing {
+        let (mut buf, mut cursor) = match &app.vmgr_state.mode {
+            ViewMgrMode::Props { name_buf, name_cur, .. } => (name_buf.clone(), *name_cur),
+            _ => unreachable!(),
+        };
+        let mut kill = app.kill_buffer.clone();
+        match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+            LineEditResult::Confirm => { app.vmgr_props_confirm(); return; }
+            LineEditResult::Cancel  => { app.vmgr_props_cancel();  return; }
+            LineEditResult::Handled => {
+                if let ViewMgrMode::Props { name_buf, name_cur, .. } = &mut app.vmgr_state.mode {
+                    *name_buf = buf; *name_cur = cursor;
+                }
+                app.kill_buffer = kill;
+                return;
             }
-        } else {
-            // Ctrl+Up/Down: reorder sections when Sections field is active.
-            match code {
-                KeyCode::Up                                  => { app.vmgr_props_sec_move_up();   return; }
-                KeyCode::Down                                => { app.vmgr_props_sec_move_down(); return; }
-                // CSI-u: Ctrl+Up/Down encoded as Ctrl+U/D
-                KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_props_sec_move_up();   return; }
-                KeyCode::Char('d') | KeyCode::Char('D') => { app.vmgr_props_sec_move_down(); return; }
-                _ => {}
+            LineEditResult::Unhandled => {
+                // Don't let Ctrl keys leak to the section-reorder block below.
+                if modifiers.contains(KeyModifiers::CONTROL) { return; }
             }
+        }
+    }
+    // Ctrl+Up/Down: reorder sections (only when not editing the name).
+    if !name_editing && modifiers.contains(KeyModifiers::CONTROL) {
+        match code {
+            KeyCode::Up   | KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_props_sec_move_up();   return; }
+            KeyCode::Down | KeyCode::Char('d') | KeyCode::Char('D') => { app.vmgr_props_sec_move_down(); return; }
+            _ => {}
         }
     }
 
@@ -1352,10 +1466,6 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if has_item_sort_picker { handle_vmgr_sort_picker(app, code, modifiers); return; }
     if has_sort             { handle_vmgr_sort_dialog(app, code); return; }
 
-    let is_name = matches!(
-        app.vmgr_state.mode,
-        ViewMgrMode::Props { active_field: ViewPropsField::Name, name_editing: true, .. }
-    );
     let is_name_inactive = matches!(
         app.vmgr_state.mode,
         ViewMgrMode::Props { active_field: ViewPropsField::Name, name_editing: false, .. }
@@ -1410,15 +1520,8 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char(' ') if is_sec_sorting                         => app.vmgr_sec_sort_cycle(),
         KeyCode::Char(' ') if is_sec_order                           => app.vmgr_sec_order_cycle(),
         KeyCode::Char(' ') if is_bool                                => app.vmgr_props_toggle(),
-        KeyCode::Left      if is_name                                => app.vmgr_props_name_left(),
-        KeyCode::Right     if is_name                                => app.vmgr_props_name_right(),
-        KeyCode::Home      if is_name                                => app.vmgr_props_name_ctrl_a(),
-        KeyCode::End       if is_name                                => app.vmgr_props_name_ctrl_e(),
         KeyCode::Left                                                => app.vmgr_props_field_left(),
         KeyCode::Right                                               => app.vmgr_props_field_right(),
-        KeyCode::Backspace if is_name                                => app.vmgr_props_name_backspace(),
-        KeyCode::Char(ch)  if is_name && !modifiers.contains(KeyModifiers::CONTROL)
-                           && !modifiers.contains(KeyModifiers::ALT) => app.vmgr_props_name_char(ch),
         _ => {}
     }
 }
@@ -1526,16 +1629,23 @@ fn handle_sec_props_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         app.sec_mode,
         SectionMode::Props { active_field: SecPropsField::Filter, .. }
     );
-    if is_head && modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.sec_props_head_ctrl_u(); return; }
-            KeyCode::Char('k') | KeyCode::Char('K') => { app.sec_props_head_ctrl_k(); return; }
-            KeyCode::Char('y') | KeyCode::Char('Y') => { app.sec_props_head_ctrl_y(); return; }
-            KeyCode::Char('a') | KeyCode::Char('A') => { app.sec_props_head_ctrl_a(); return; }
-            KeyCode::Char('e') | KeyCode::Char('E') => { app.sec_props_head_ctrl_e(); return; }
-            KeyCode::Left                           => { app.sec_props_head_word_left();  return; }
-            KeyCode::Right                          => { app.sec_props_head_word_right(); return; }
-            _ => {}
+    if is_head {
+        let (mut buf, mut cursor) = match &app.sec_mode {
+            SectionMode::Props { head_buf, head_cur, .. } => (head_buf.clone(), *head_cur),
+            _ => unreachable!(),
+        };
+        let mut kill = app.kill_buffer.clone();
+        match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+            LineEditResult::Confirm => { app.sec_props_confirm(); return; }
+            LineEditResult::Cancel  => { app.sec_props_cancel();  return; }
+            LineEditResult::Handled => {
+                if let SectionMode::Props { head_buf, head_cur, .. } = &mut app.sec_mode {
+                    *head_buf = buf; *head_cur = cursor;
+                }
+                app.kill_buffer = kill;
+                return;
+            }
+            LineEditResult::Unhandled => {}
         }
     }
     match code {
@@ -1543,17 +1653,10 @@ fn handle_sec_props_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::Esc   => app.sec_props_cancel(),
         KeyCode::Up   if is_filter => app.sec_filter_list_up(),
         KeyCode::Down if is_filter => app.sec_filter_list_down(),
-        KeyCode::Tab | KeyCode::Down  => app.sec_props_tab(),
+        KeyCode::Tab | KeyCode::Down   => app.sec_props_tab(),
         KeyCode::BackTab | KeyCode::Up => app.sec_props_tab(),
         KeyCode::F(3) | KeyCode::Char(' ') if is_sorting => app.sec_open_sort_dialog(),
-        KeyCode::F(3) if is_filter    => app.sec_open_filter_picker(),
-        KeyCode::Left  if is_head     => app.sec_props_head_left(),
-        KeyCode::Right if is_head     => app.sec_props_head_right(),
-        KeyCode::Home  if is_head     => app.sec_props_head_ctrl_a(),
-        KeyCode::End   if is_head     => app.sec_props_head_ctrl_e(),
-        KeyCode::Backspace if is_head => app.sec_props_head_backspace(),
-        KeyCode::Char(ch) if is_head && !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => app.sec_props_head_char(ch),
+        KeyCode::F(3) if is_filter => app.sec_open_filter_picker(),
         _ => {}
     }
 }
@@ -1766,16 +1869,23 @@ fn handle_file_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     let desc_editing = matches!(&app.save_state,
         SaveState::FileProps { active_field: FilePropsField::Description, desc_editing: true, .. });
 
-    if modifiers.contains(KeyModifiers::CONTROL) && desc_editing {
-        match code {
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.file_props_ctrl_u(); return; }
-            KeyCode::Char('k') | KeyCode::Char('K') => { app.file_props_ctrl_k(); return; }
-            KeyCode::Char('y') | KeyCode::Char('Y') => { app.file_props_ctrl_y(); return; }
-            KeyCode::Char('a') | KeyCode::Char('A') => { app.file_props_ctrl_a(); return; }
-            KeyCode::Char('e') | KeyCode::Char('E') => { app.file_props_ctrl_e(); return; }
-            KeyCode::Left                           => { app.file_props_word_left();  return; }
-            KeyCode::Right                          => { app.file_props_word_right(); return; }
-            _ => {}
+    if desc_editing {
+        let (mut buf, mut cursor) = match &app.save_state {
+            SaveState::FileProps { desc_buf, desc_cursor, .. } => (desc_buf.clone(), *desc_cursor),
+            _ => unreachable!(),
+        };
+        let mut kill = app.kill_buffer.clone();
+        match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+            LineEditResult::Confirm => { app.file_props_confirm(); return; }
+            LineEditResult::Cancel  => { app.file_props_cancel();  return; }
+            LineEditResult::Handled => {
+                if let SaveState::FileProps { desc_buf, desc_cursor, .. } = &mut app.save_state {
+                    *desc_buf = buf; *desc_cursor = cursor;
+                }
+                app.kill_buffer = kill;
+                return;
+            }
+            LineEditResult::Unhandled => {}
         }
     }
 
@@ -1784,22 +1894,13 @@ fn handle_file_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Enter => app.file_props_confirm(),
         KeyCode::Tab | KeyCode::Up | KeyCode::Down => app.file_props_tab(),
         KeyCode::BackTab => app.file_props_tab(),
-        KeyCode::Backspace if desc_editing => app.file_props_backspace(),
-        KeyCode::Left  if desc_editing => app.file_props_cursor_left(),
-        KeyCode::Right if desc_editing => app.file_props_cursor_right(),
-        KeyCode::Home  if desc_editing => app.file_props_ctrl_a(),
-        KeyCode::End   if desc_editing => app.file_props_ctrl_e(),
         KeyCode::F(2) if desc_active && !desc_editing => app.file_props_desc_begin_edit(),
         KeyCode::F(2) | KeyCode::F(3) => {
-            // Open password sub-window when Password field is active
             if !desc_active { app.file_props_open_password(); }
         }
         KeyCode::Char('i') if desc_active && !desc_editing
                            && app.nav_mode == NavMode::Vi => app.file_props_desc_begin_edit(),
         KeyCode::Char(' ') if !desc_active => app.file_props_open_password(),
-        KeyCode::Char(c) if desc_editing
-                         && !modifiers.contains(KeyModifiers::CONTROL)
-                         && !modifiers.contains(KeyModifiers::ALT) => app.file_props_char(c),
         _ => {}
     }
 }
