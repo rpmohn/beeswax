@@ -1029,6 +1029,16 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         handle_catmgr_props(app, code, modifiers);
         return;
     }
+    // If delete confirmation is active, route to its handler.
+    if matches!(app.cat_state.mode, CatMode::ConfirmDelete { .. }) {
+        handle_catmgr_confirm_delete(app, code);
+        return;
+    }
+    // If protected-category warning is showing, any key closes it.
+    if matches!(app.cat_state.mode, CatMode::ProtectedWarning { .. }) {
+        app.cat_close_protected_warning();
+        return;
+    }
     if handle_vi_list(app, code, modifiers,
         &|a| a.col_sub_pick_down(),   &|a| a.col_sub_pick_up(),
         &|a| a.col_sub_pick_end(),    &|a| a.col_sub_pick_home(),
@@ -1044,6 +1054,7 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(2)            => app.col_sub_pick_begin_edit(),
         KeyCode::F(6)            => app.col_sub_pick_open_props(),
         KeyCode::Insert          => app.col_sub_pick_begin_create(),
+        KeyCode::Delete          => app.col_sub_pick_open_confirm_delete(),
         KeyCode::Enter | KeyCode::Esc | KeyCode::F(3) => app.col_sub_pick_close(),
         _ => {}
     }
@@ -1112,6 +1123,21 @@ fn handle_sec_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 // ── Assignment Profile handler ────────────────────────────────────────────────
 
 fn handle_assign_profile(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // If cat inline edit/create is active, route input there.
+    if matches!(app.cat_state.mode, CatMode::Edit { .. } | CatMode::Create { .. }) {
+        handle_catmgr_input(app, code, modifiers);
+        return;
+    }
+    // If delete confirmation is active, route to its handler.
+    if matches!(app.cat_state.mode, CatMode::ConfirmDelete { .. }) {
+        handle_catmgr_confirm_delete(app, code);
+        return;
+    }
+    // If protected-category warning is showing, any key closes it.
+    if matches!(app.cat_state.mode, CatMode::ProtectedWarning { .. }) {
+        app.cat_close_protected_warning();
+        return;
+    }
     // Search mode: search keys handled here; any other key clears search and falls through.
     if app.cat_search.is_some() {
         match code {
@@ -1135,6 +1161,9 @@ fn handle_assign_profile(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
         KeyCode::PageDown => app.assign_cursor_pgdn(16),
         KeyCode::Home     => app.assign_cursor_home(),
         KeyCode::End      => app.assign_cursor_end(),
+        KeyCode::F(2)     => app.assign_begin_edit(),
+        KeyCode::Insert   => app.assign_begin_create(),
+        KeyCode::Delete   => app.assign_open_confirm_delete(),
         KeyCode::Char(' ')     => app.assign_toggle(),
         KeyCode::Enter | KeyCode::Esc | KeyCode::F(3) => app.assign_close(),
         KeyCode::F(7)     => app.cat_search_prev(),

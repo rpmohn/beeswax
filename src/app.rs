@@ -4668,6 +4668,29 @@ impl App {
         }
     }
 
+    fn assign_sync_cursor(&mut self) -> bool {
+        let (gi, vis_cur) = match &self.assign_mode {
+            AssignMode::Profile { gi, cursor, .. } => (*gi, *cursor),
+            AssignMode::Normal => return false,
+        };
+        let rows = Self::assign_visual_rows(&self.categories, &self.items, gi);
+        let Some(&(cat_idx, _)) = rows.get(vis_cur) else { return false };
+        self.cat_state.cursor = cat_idx;
+        true
+    }
+
+    pub fn assign_begin_edit(&mut self) {
+        if self.assign_sync_cursor() { self.cat_begin_edit(); }
+    }
+
+    pub fn assign_begin_create(&mut self) {
+        if self.assign_sync_cursor() { self.cat_begin_create(false); }
+    }
+
+    pub fn assign_open_confirm_delete(&mut self) {
+        if self.assign_sync_cursor() { self.cat_open_confirm_delete(); }
+    }
+
     /// Toggle the assignment of the highlighted category for the current item.
     /// Standard categories: presence in item.values (empty string) = assigned.
     /// Date categories: assigned when a value string is present.
@@ -6844,6 +6867,9 @@ impl App {
     }
     pub fn col_sub_pick_open_props(&mut self) {
         if self.col_sub_pick_sync_cursor() { self.cat_open_props(); }
+    }
+    pub fn col_sub_pick_open_confirm_delete(&mut self) {
+        if self.col_sub_pick_sync_cursor() { self.cat_open_confirm_delete(); }
     }
     /// Ins — add new sibling below cursor; on the head row, add as child instead.
     pub fn col_sub_pick_begin_create(&mut self) {

@@ -241,7 +241,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 }
 
 /// Render the protected-category warning modal. No-op unless `CatMode::ProtectedWarning`.
-fn render_cat_protected_warning_modal(frame: &mut Frame, app: &App, area: Rect) {
+pub fn render_cat_protected_warning_modal(frame: &mut Frame, app: &App, area: Rect) {
     let CatMode::ProtectedWarning { ref message } = app.cat_state.mode else { return; };
 
     let w = (message.chars().count() as u16 + 6).min(area.width);
@@ -271,7 +271,7 @@ fn render_cat_protected_warning_modal(frame: &mut Frame, app: &App, area: Rect) 
 }
 
 /// Render the delete confirmation modal. No-op unless `CatMode::ConfirmDelete`.
-fn render_cat_confirm_delete_modal(frame: &mut Frame, app: &App, area: Rect) {
+pub fn render_cat_confirm_delete_modal(frame: &mut Frame, app: &App, area: Rect) {
     let CatMode::ConfirmDelete { yes, has_assignments, has_children } = app.cat_state.mode else { return; };
 
     let modal_rect = centered_rect(58, 5, area);

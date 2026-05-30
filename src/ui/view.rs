@@ -14,7 +14,7 @@ use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ChoicesKind, Co
 use crate::model::{FilterOp, SortNewItems, SortOn, SortOrder, SortSeq};
 use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
-use super::{cursor_split, fkeys, menu, title_bar_top};
+use super::{catmgr, cursor_split, fkeys, menu, title_bar_top};
 
 const SECTION_PREFIX:    &str = " ";
 const ITEM_PREFIX:       &str = "    \u{2022} ";   // bullet  •
@@ -1205,6 +1205,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
 
         frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
+
+        catmgr::render_cat_protected_warning_modal(frame, app, area);
+        catmgr::render_cat_confirm_delete_modal(frame, app, area);
     }
 
     // ── Item Properties modal ─────────────────────────────────────────────────
@@ -1492,14 +1495,16 @@ pub fn render(frame: &mut Frame, app: &App) {
         let item_vals   = item.map(|it| &it.values).unwrap_or(&empty_vals);
         let cond_cats   = item.map(|it| &it.cond_cats).unwrap_or(&empty_conds);
 
+        let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
+
         // Build visual rows: one per category, plus a date-sub row for each Date category
         // that has an assigned value. Scroll and cursor are visual-row indices.
         let rows = App::assign_visual_rows(&app.categories, &app.items, gi);
         let total_rows = rows.len();
         let start = stored_scroll.min(prof_cur).max(prof_cur.saturating_sub(VIS.saturating_sub(1)));
 
-        // Box height is fixed: VIS visual rows + 2 borders + 1 title + 1 help.
-        let box_h  = (VIS + 4) as u16;
+        // Box height: VIS rows + 2 borders + 1 title + 1 help, +1 if create row active.
+        let box_h  = (VIS + 4 + if in_create { 1 } else { 0 }) as u16;
         let box_w  = 50u16;
         let dlg_rect = centered_rect(box_w, box_h, area);
         frame.render_widget(Clear, dlg_rect);
@@ -1549,26 +1554,46 @@ pub fn render(frame: &mut Frame, app: &App) {
                     CategoryKind::Unindexed => "\u{25A1}",
                 };
                 let indent = "  ".repeat(e.depth);
-                cat_lines.push(Line::from(vec![
-                    Span::raw(format!(" {}\u{2502} {}{} ", marker, indent, type_ind)),
-                    if highlighted {
-                        Span::styled(e.name.clone(), rev)
-                    } else {
-                        Span::raw(e.name.clone())
-                    },
-                ]));
+                let pfx = Span::raw(format!(" {}\u{2502} {}{} ", marker, indent, type_ind));
+                if highlighted {
+                    match &app.cat_state.mode {
+                        CatMode::Edit { buffer, cursor: buf_cur } => {
+                            let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                            cat_lines.push(Line::from(vec![
+                                pfx,
+                                Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                            ]));
+                        }
+                        CatMode::Create { buffer, cursor: buf_cur, .. } => {
+                            cat_lines.push(Line::from(vec![pfx, Span::raw(e.name.clone())]));
+                            let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                            cat_lines.push(Line::from(vec![
+                                Span::raw(format!("   \u{2502}  {}", indent)),
+                                Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                            ]));
+                        }
+                        _ => {
+                            cat_lines.push(Line::from(vec![pfx, Span::styled(e.name.clone(), rev)]));
+                        }
+                    }
+                } else {
+                    cat_lines.push(Line::from(vec![pfx, Span::raw(e.name.clone())]));
+                }
             }
         }
         let _ = total_rows;
 
         // Help line at bottom; pad with empty lines to fill box.
-        let help = Line::from(Span::raw(" Space=assign/unassign  Enter/Esc=close"));
+        let help = Line::from(Span::raw(" Space=assign  F2=edit  Ins=add  Del=discard"));
         while cat_lines.len() < inner.height.saturating_sub(1) as usize {
             cat_lines.push(Line::from(""));
         }
         cat_lines.push(help);
 
         frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
+
+        catmgr::render_cat_protected_warning_modal(frame, app, area);
+        catmgr::render_cat_confirm_delete_modal(frame, app, area);
     }
 
     // ── Section Add modal ─────────────────────────────────────────────────────
