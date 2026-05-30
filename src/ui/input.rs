@@ -759,7 +759,7 @@ fn handle_col_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if handle_vi_list(app, code, modifiers,
         &|a| a.col_choices_down(),   &|a| a.col_choices_up(),
         &|a| a.col_choices_end(),    &|a| a.col_choices_home(),
-        &|a| a.col_choices_home(),   &|a| a.col_choices_middle(), &|a| a.col_choices_end()) { return; }
+        &|a| a.col_choices_screen_top(), &|a| a.col_choices_screen_mid(), &|a| a.col_choices_screen_bot()) { return; }
     match code {
         KeyCode::Up       => app.col_choices_up(),
         KeyCode::Down     => app.col_choices_down(),
@@ -853,7 +853,7 @@ fn handle_col_quick_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if handle_vi_list(app, code, modifiers,
         &|a| a.col_quick_add_down(),   &|a| a.col_quick_add_up(),
         &|a| a.col_quick_add_end(),    &|a| a.col_quick_add_home(),
-        &|a| a.col_quick_add_home(),   &|a| a.col_quick_add_middle(), &|a| a.col_quick_add_end()) { return; }
+        &|a| a.col_quick_add_screen_top(), &|a| a.col_quick_add_screen_mid(), &|a| a.col_quick_add_screen_bot()) { return; }
     match code {
         KeyCode::Up       => app.col_quick_add_up(),
         KeyCode::Down     => app.col_quick_add_down(),
@@ -1032,7 +1032,7 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if handle_vi_list(app, code, modifiers,
         &|a| a.col_sub_pick_down(),   &|a| a.col_sub_pick_up(),
         &|a| a.col_sub_pick_end(),    &|a| a.col_sub_pick_home(),
-        &|a| a.col_sub_pick_home(),   &|a| a.col_sub_pick_middle(), &|a| a.col_sub_pick_end()) { return; }
+        &|a| a.col_sub_pick_screen_top(), &|a| a.col_sub_pick_screen_mid(), &|a| a.col_sub_pick_screen_bot()) { return; }
     match code {
         KeyCode::Up              => app.col_sub_pick_up(),
         KeyCode::Down            => app.col_sub_pick_down(),
@@ -1095,7 +1095,7 @@ fn handle_sec_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if handle_vi_list(app, code, modifiers,
         &|a| a.sec_choices_down(),   &|a| a.sec_choices_up(),
         &|a| a.sec_choices_end(),    &|a| a.sec_choices_home(),
-        &|a| a.sec_choices_home(),   &|a| a.sec_choices_middle(), &|a| a.sec_choices_end()) { return; }
+        &|a| a.sec_choices_screen_top(), &|a| a.sec_choices_screen_mid(), &|a| a.sec_choices_screen_bot()) { return; }
     match code {
         KeyCode::Up       => app.sec_choices_up(),
         KeyCode::Down     => app.sec_choices_down(),
@@ -1127,7 +1127,7 @@ fn handle_assign_profile(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
     if handle_vi_list(app, code, modifiers,
         &|a| a.assign_cursor_down(),   &|a| a.assign_cursor_up(),
         &|a| a.assign_cursor_end(),    &|a| a.assign_cursor_home(),
-        &|a| a.assign_cursor_home(),   &|a| a.assign_cursor_middle(), &|a| a.assign_cursor_end()) { return; }
+        &|a| a.assign_cursor_screen_top(), &|a| a.assign_cursor_screen_mid(), &|a| a.assign_cursor_screen_bot()) { return; }
     match code {
         KeyCode::Up       => app.assign_cursor_up(),
         KeyCode::Down     => app.assign_cursor_down(),
@@ -1398,7 +1398,7 @@ fn handle_vmgr_filter_picker(app: &mut App, code: KeyCode, modifiers: KeyModifie
     if handle_vi_list(app, code, modifiers,
         &|a| a.vmgr_filter_picker_down(),   &|a| a.vmgr_filter_picker_up(),
         &|a| a.vmgr_filter_picker_end(),    &|a| a.vmgr_filter_picker_home(),
-        &|a| a.vmgr_filter_picker_home(),   &|a| a.vmgr_filter_picker_middle(), &|a| a.vmgr_filter_picker_end()) { return; }
+        &|a| a.vmgr_filter_picker_screen_top(), &|a| a.vmgr_filter_picker_screen_mid(), &|a| a.vmgr_filter_picker_screen_bot()) { return; }
     match code {
         KeyCode::Up       => app.vmgr_filter_picker_up(),
         KeyCode::Down     => app.vmgr_filter_picker_down(),
@@ -1446,7 +1446,7 @@ fn handle_vmgr_sort_picker(app: &mut App, code: KeyCode, modifiers: KeyModifiers
     if handle_vi_list(app, code, modifiers,
         &|a| a.vmgr_sort_picker_down(),   &|a| a.vmgr_sort_picker_up(),
         &|a| a.vmgr_sort_picker_end(),    &|a| a.vmgr_sort_picker_home(),
-        &|a| a.vmgr_sort_picker_home(),   &|a| a.vmgr_sort_picker_middle(), &|a| a.vmgr_sort_picker_end()) { return; }
+        &|a| a.vmgr_sort_picker_screen_top(), &|a| a.vmgr_sort_picker_screen_mid(), &|a| a.vmgr_sort_picker_screen_bot()) { return; }
     match code {
         KeyCode::Up       => app.vmgr_sort_picker_up(),
         KeyCode::Down     => app.vmgr_sort_picker_down(),
@@ -1533,7 +1533,7 @@ fn handle_sec_filter_picker(app: &mut App, code: KeyCode, modifiers: KeyModifier
     if handle_vi_list(app, code, modifiers,
         &|a| a.sec_filter_picker_down(),   &|a| a.sec_filter_picker_up(),
         &|a| a.sec_filter_picker_end(),    &|a| a.sec_filter_picker_home(),
-        &|a| a.sec_filter_picker_home(),   &|a| a.sec_filter_picker_middle(), &|a| a.sec_filter_picker_end()) { return; }
+        &|a| a.sec_filter_picker_screen_top(), &|a| a.sec_filter_picker_screen_mid(), &|a| a.sec_filter_picker_screen_bot()) { return; }
     match code {
         KeyCode::Up       => app.sec_filter_picker_up(),
         KeyCode::Down     => app.sec_filter_picker_down(),
@@ -1563,7 +1563,7 @@ fn handle_sec_sort_picker(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
     if handle_vi_list(app, code, modifiers,
         &|a| a.sec_sort_picker_down(),   &|a| a.sec_sort_picker_up(),
         &|a| a.sec_sort_picker_end(),    &|a| a.sec_sort_picker_home(),
-        &|a| a.sec_sort_picker_home(),   &|a| a.sec_sort_picker_middle(), &|a| a.sec_sort_picker_end()) { return; }
+        &|a| a.sec_sort_picker_screen_top(), &|a| a.sec_sort_picker_screen_mid(), &|a| a.sec_sort_picker_screen_bot()) { return; }
     match code {
         KeyCode::Up       => app.sec_sort_picker_up(),
         KeyCode::Down     => app.sec_sort_picker_down(),
