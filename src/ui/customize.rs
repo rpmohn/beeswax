@@ -7,7 +7,7 @@ use ratatui::{
 };
 use crate::app::{App, CustomizeSubMode, CUSTOMIZE_COLOR_COUNT, CUSTOMIZE_COLOR_LABELS, CURSOR_TO_FIELD, get_custom_field};
 use crate::theme::{color_to_hex, theme_color_for_field, ColorScheme, parse_hex};
-use super::cursor_split;
+use super::{centered_rect, cursor_split};
 
 /// Label column width for color fields.
 const LABEL_W: usize = 16;
@@ -320,12 +320,6 @@ fn render_picker(frame: &mut Frame, base: Rect, title: &str, items: &[&str], cur
         })
         .collect();
     frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
-}
-
-fn centered_rect(w: u16, h: u16, area: Rect) -> Rect {
-    let x = area.x + area.width.saturating_sub(w) / 2;
-    let y = area.y + area.height.saturating_sub(h) / 2;
-    Rect { x, y, width: w.min(area.width), height: h.min(area.height) }
 }
 
 // Verify CURSOR_TO_FIELD and FIELD_TO_CURSOR are consistent at compile time.

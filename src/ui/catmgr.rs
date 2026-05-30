@@ -9,7 +9,7 @@ use crate::app::{App, CatMode, CatPropsField, FlatCat, MenuState, cat_note_for_i
 use ratatui::layout::Alignment;
 use ratatui::widgets::BorderType;
 use crate::model::CategoryKind;
-use super::{cursor_split, fkeys, menu, title_bar_top};
+use super::{centered_rect, cursor_split, fkeys, menu, title_bar_top};
 
 /// Spaces before the indicator column at a given depth.
 fn base_indent(depth: usize) -> String {
@@ -18,7 +18,7 @@ fn base_indent(depth: usize) -> String {
 
 /// The single-character type indicator.
 /// Standard cats show their note indicator (♪ inline, ♬ file); other types show their symbol.
-fn kind_indicator(kind: CategoryKind, note_ind: &'static str) -> &'static str {
+pub fn kind_indicator(kind: CategoryKind, note_ind: &'static str) -> &'static str {
     match kind {
         CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
         CategoryKind::Date      => "*",
@@ -28,7 +28,7 @@ fn kind_indicator(kind: CategoryKind, note_ind: &'static str) -> &'static str {
 }
 
 /// Build the leading indent + indicator for a row.
-fn leading(entry: &FlatCat, note_ind: &'static str) -> (String, &'static str) {
+pub fn leading(entry: &FlatCat, note_ind: &'static str) -> (String, &'static str) {
     (base_indent(entry.depth), kind_indicator(entry.kind, note_ind))
 }
 
@@ -240,6 +240,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     fkeys::render_fkey_bar(frame, chunks[2], app);
 }
 
+/// Render both category overlay modals (protected warning + confirm delete).
+/// Call this instead of the two individual functions wherever both are needed.
+pub fn render_cat_overlays(frame: &mut Frame, app: &App, area: Rect) {
+    render_cat_protected_warning_modal(frame, app, area);
+    render_cat_confirm_delete_modal(frame, app, area);
+}
+
 /// Render the protected-category warning modal. No-op unless `CatMode::ProtectedWarning`.
 pub fn render_cat_protected_warning_modal(frame: &mut Frame, app: &App, area: Rect) {
     let CatMode::ProtectedWarning { ref message } = app.cat_state.mode else { return; };
@@ -320,10 +327,16 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
         excl_children, match_cat_name, match_short_name,
         active_field, parent_name, kind, cat_id, ..
     } = &app.cat_state.mode {
-        let modal_rect = centered_rect(64, 17, area);
+        let modal_rect = centered_rect(64, 15, area);
         frame.render_widget(Clear, modal_rect);
         let block = Block::default().borders(Borders::ALL)
-            .title(" Category Properties ").style(app.theme.dialog_border);
+            .border_type(BorderType::Double)
+            .title(" Category Properties ")
+            .title_bottom(
+                Line::from(" Press ENTER when done, ESC to cancel ")
+                    .alignment(Alignment::Center),
+            )
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
 
@@ -378,7 +391,7 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
         // Right column starts at inner col 37, occupies the remaining 25 chars (inner=62).
         let rc = 37usize;
         let fw = 20usize;
-        let iw = inner.width as usize;
+        let _iw = inner.width as usize;
 
         // Read note live so it reflects edits made via F2/F3 without reopening Props.
         let note_text = cat_note_for_id(&app.categories, *cat_id);
@@ -462,28 +475,12 @@ pub fn render_cat_props_modal(frame: &mut Frame, app: &App, area: Rect) {
         // Row 12: blank
         let row12 = Line::from("");
 
-        // Row 13: centered help line
-        let help_text = "\u{2500}\u{2500}\u{2500} Press ENTER when done, ESC to cancel \u{2500}\u{2500}\u{2500}";
-        let lpad = iw.saturating_sub(help_text.chars().count()) / 2;
-        let row13 = Line::from(Span::raw(format!("{}{}", " ".repeat(lpad), help_text)));
-
-        // Row 14: blank
-        let row14 = Line::from("");
-
         frame.render_widget(
             Paragraph::new(vec![
                 row0, row1, row2, row3, row4, row5, row6, row7, row8,
-                row9, row10, row11, row12, row13, row14,
+                row9, row10, row11, row12,
             ]).style(app.theme.dialog),
             inner,
         );
     }
-}
-
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let w = width.min(area.width);
-    let h = height.min(area.height);
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect { x, y, width: w, height: h }
 }

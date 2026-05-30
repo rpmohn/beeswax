@@ -7,6 +7,50 @@ pub mod render;
 pub mod view;
 pub mod viewmgr;
 
+use ratatui::layout::Rect;
+
+/// Compute a centred Rect of `width` × `height` inside `area`.
+pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let w = width.min(area.width);
+    let h = height.min(area.height);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    Rect { x, y, width: w, height: h }
+}
+
+/// Return `selected` style when `active`, otherwise `normal`.
+/// Used to compute dialog-label styles based on whether a field is active.
+pub fn dlabel_style(active: bool, normal: ratatui::style::Style, selected: ratatui::style::Style) -> ratatui::style::Style {
+    if active { selected } else { normal }
+}
+
+/// Pad `s` to width `w` with spaces, or truncate it to `w` chars.
+pub fn pad_or_trunc(s: &str, w: usize) -> String {
+    let len = s.chars().count();
+    if len >= w {
+        s.chars().take(w).collect()
+    } else {
+        format!("{}{}", s, " ".repeat(w - len))
+    }
+}
+
+/// Build a centred Yes/No button line for confirmation dialogs.
+/// `inner_w` is the available inner width. `yes_active` selects which button is reversed.
+pub fn yes_no_line(inner_w: usize, yes_active: bool, rev: ratatui::style::Style) -> ratatui::text::Line<'static> {
+    let yes_label = "[ Yes ]";
+    let no_label  = "[ No ]";
+    let gap = inner_w.saturating_sub(yes_label.len() + no_label.len() + 6);
+    let lpad = gap / 2;
+    let yes_sty = if yes_active { rev } else { ratatui::style::Style::default() };
+    let no_sty  = if yes_active { ratatui::style::Style::default() } else { rev };
+    ratatui::text::Line::from(vec![
+        ratatui::text::Span::raw(" ".repeat(lpad)),
+        ratatui::text::Span::styled(yes_label, yes_sty),
+        ratatui::text::Span::raw("      "),
+        ratatui::text::Span::styled(no_label, no_sty),
+    ])
+}
+
 /// Build the first line of the two-line title bar:
 /// "File: <path>" left, "beeswax <version> " right-aligned.
 /// The dirty marker uses `dirty_style`; the rest inherits the bar style from the Paragraph.

@@ -10,11 +10,11 @@ use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, ChoicesKind, Co
                  PropsField, SaveState, SecPropsField, SectionFormField, SectionInsert,
                  SectionMode, SortField, SortState, TimeField, cat_is_date,
                  cat_note_indicator, col_autocomplete_match, col_display_values, flatten_cats,
-                 format_date_value, visible_item_indices};
+                 format_date_value, stored_scroll_start, visible_item_indices};
 use crate::model::{FilterOp, SortNewItems, SortOn, SortOrder, SortSeq};
 use crate::model::ColFormat;
 use crate::model::{CategoryKind, Column, DateDisplay, Clock, DateFmtCode};
-use super::{catmgr, cursor_split, fkeys, menu, title_bar_top};
+use super::{catmgr, centered_rect, cursor_split, fkeys, menu, pad_or_trunc, title_bar_top};
 
 const SECTION_PREFIX:    &str = " ";
 const ITEM_PREFIX:       &str = "    \u{2022} ";   // bullet  •
@@ -564,12 +564,18 @@ pub fn render(frame: &mut Frame, app: &App) {
             _ => unreachable!(),
         };
 
-        let modal_rect = centered_rect(64, 10, area);
+        let modal_rect = centered_rect(64, 9, area);
         frame.render_widget(Clear, modal_rect);
 
         let title = if is_add { " Column Add " } else { " Column Properties " };
         let block = Block::default().borders(Borders::ALL)
-            .title(title).style(app.theme.dialog_border);
+            .border_type(BorderType::Double)
+            .title(title)
+            .title_bottom(
+                Line::from(" Press ENTER when done, ESC to cancel ")
+                    .alignment(Alignment::Center),
+            )
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
 
@@ -631,8 +637,6 @@ pub fn render(frame: &mut Frame, app: &App) {
             Line::from(vec![Span::styled(" Format:       ", dlabel), Span::raw("Name only")]),
             Line::from(""),
             Line::from(" Category type: Standard    Insert in: All sections"),
-            Line::from(""),
-            Line::from(" \u{2500}\u{2500}\u{2500} Press ENTER when done, ESC to cancel \u{2500}\u{2500}\u{2500}"),
         ];
 
         frame.render_widget(Paragraph::new(form_lines).style(app.theme.dialog), inner);
@@ -686,7 +690,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Scroll so picker_cursor is visible (lazy scroll)
         let visible = inner.height as usize;
-        let offset  = stored_scroll.min(*picker_cursor).max(picker_cursor.saturating_sub(visible - 1));
+        let offset  = stored_scroll_start(stored_scroll, *picker_cursor, visible);
 
         let visible_lines: Vec<Line> = lines.into_iter()
             .skip(offset)
@@ -795,6 +799,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             let dlg_rect = centered_rect(dlg_w, 5, area);
             frame.render_widget(Clear, dlg_rect);
             let dlg_block = Block::default().borders(Borders::ALL)
+                .border_type(BorderType::Plain)
                 .title(" Discard Category? ").style(app.theme.dialog_border);
             frame.render_widget(dlg_block.clone(), dlg_rect);
             let dlg_inner = dlg_block.inner(dlg_rect);
@@ -820,12 +825,18 @@ pub fn render(frame: &mut Frame, app: &App) {
     // ── Column Properties modal ───────────────────────────────────────────────
     if let ColMode::Props { head_buf, head_cur, head_scroll, width_buf, width_cur, width_scroll,
                             format, date_fmt, active_field, is_date } = &app.col_mode {
-        let modal_h = if *is_date { 18u16 } else { 10u16 };
+        let modal_h = if *is_date { 17u16 } else { 9u16 };
         let modal_rect = centered_rect(66, modal_h, area);
         frame.render_widget(Clear, modal_rect);
 
         let block = Block::default().borders(Borders::ALL)
-            .title(" Column Properties ").style(app.theme.dialog_border);
+            .border_type(BorderType::Double)
+            .title(" Column Properties ")
+            .title_bottom(
+                Line::from(" Press ENTER when done, ESC to cancel ")
+                    .alignment(Alignment::Center),
+            )
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
 
@@ -972,10 +983,6 @@ pub fn render(frame: &mut Frame, app: &App) {
                 form_lines.push(Line::from(""));
             }
         }
-
-        form_lines.push(Line::from(
-            " \u{2500}\u{2500}\u{2500} Press ENTER when done, ESC to cancel \u{2500}\u{2500}\u{2500}"
-        ));
 
         frame.render_widget(Paragraph::new(form_lines).style(app.theme.dialog), inner);
     }
@@ -1136,7 +1143,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Scroll window: same 16-row limit as Assignment Profile.
         let visible = flat_subs.len().min(16);
-        let start   = stored_scroll.min(picker_cursor).max(picker_cursor.saturating_sub(visible - 1));
+        let start   = stored_scroll_start(stored_scroll, picker_cursor, visible);
 
         let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
         let box_h    = (visible + 3 + if in_create { 1 } else { 0 }) as u16;
@@ -1166,12 +1173,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 (false, _)     => "  ",
             };
             let note_ind = cat_note_indicator(&app.categories, e.id);
-            let type_ind = match e.kind {
-                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
-                CategoryKind::Date      => "*",
-                CategoryKind::Numeric   => "#",
-                CategoryKind::Unindexed => "\u{25A1}",
-            };
+            let type_ind = catmgr::kind_indicator(e.kind, note_ind);
             // Indent relative to the column head (head = 0, children = 1, etc.).
             let rel_depth = e.depth.saturating_sub(head_depth);
             let indent    = "  ".repeat(rel_depth);
@@ -1206,8 +1208,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
 
-        catmgr::render_cat_protected_warning_modal(frame, app, area);
-        catmgr::render_cat_confirm_delete_modal(frame, app, area);
+        catmgr::render_cat_overlays(frame, app, area);
     }
 
     // ── Item Properties modal ─────────────────────────────────────────────────
@@ -1234,7 +1235,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let n = assigned.len();
         let max_inner = area.height.saturating_sub(4) as usize;
         let list_h    = n.max(1).min(max_inner.saturating_sub(9));
-        let modal_h   = (2 + 8 + list_h) as u16;
+        let modal_h   = (2 + 7 + list_h) as u16;
         let modal_w   = 58u16;
         let modal_rect = centered_rect(modal_w, modal_h, area);
         frame.render_widget(Clear, modal_rect);
@@ -1243,6 +1244,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
             .title(" Item Properties ")
+            .title_bottom(
+                Line::from(" Press ENTER when done, ESC to cancel ")
+                    .alignment(Alignment::Center),
+            )
             .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), modal_rect);
         let inner = block.inner(modal_rect);
@@ -1319,11 +1324,6 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         }
 
-        lines.push(Line::from(""));
-        let footer = "\u{2550}\u{2550}\u{2550} Press ENTER when done, ESC to cancel \u{2550}\u{2550}\u{2550}";
-        let fpad = iw.saturating_sub(footer.chars().count()) / 2;
-        lines.push(Line::from(Span::raw(format!("{}{}", " ".repeat(fpad), footer))));
-
         frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
     }
 
@@ -1391,6 +1391,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let dlg_rect = centered_rect(38, 7, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL)
+            .border_type(BorderType::Plain)
             .title(" Remove Column ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
@@ -1399,19 +1400,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let msg = "Remove this column from the view?";
         let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
         let msg_line = Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg)));
-
-        let yes_label = " Yes ";
-        let no_label  = " No  ";
-        let yes_style = if *yes { rev } else { app.theme.dialog };
-        let no_style  = if !yes { rev } else { app.theme.dialog };
-        let gap = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
-        let lpad = gap / 2;
-        let btn_line = Line::from(vec![
-            Span::raw(" ".repeat(lpad)),
-            Span::styled(yes_label, yes_style),
-            Span::raw("  "),
-            Span::styled(no_label, no_style),
-        ]);
+        let btn_line = super::yes_no_line(iw, *yes, rev);
 
         frame.render_widget(Paragraph::new(vec![
             Line::from(""),
@@ -1428,6 +1417,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let dlg_rect = centered_rect(44, 7, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL)
+            .border_type(BorderType::Plain)
             .title(" Remove Section ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
@@ -1436,19 +1426,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let msg = "Remove this section from the view?";
         let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
         let msg_line = Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg)));
-
-        let yes_label = " Yes ";
-        let no_label  = " No  ";
-        let yes_style = if *yes { rev } else { app.theme.dialog };
-        let no_style  = if !yes { rev } else { app.theme.dialog };
-        let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
-        let lpad = gap / 2;
-        let btn_line = Line::from(vec![
-            Span::raw(" ".repeat(lpad)),
-            Span::styled(yes_label, yes_style),
-            Span::raw("  "),
-            Span::styled(no_label, no_style),
-        ]);
+        let btn_line = super::yes_no_line(iw, *yes, rev);
 
         frame.render_widget(Paragraph::new(vec![
             Line::from(""),
@@ -1501,15 +1479,20 @@ pub fn render(frame: &mut Frame, app: &App) {
         // that has an assigned value. Scroll and cursor are visual-row indices.
         let rows = App::assign_visual_rows(&app.categories, &app.items, gi);
         let total_rows = rows.len();
-        let start = stored_scroll.min(prof_cur).max(prof_cur.saturating_sub(VIS.saturating_sub(1)));
+        let start = stored_scroll_start(stored_scroll, prof_cur, VIS);
 
-        // Box height: VIS rows + 2 borders + 1 title + 1 help, +1 if create row active.
-        let box_h  = (VIS + 4 + if in_create { 1 } else { 0 }) as u16;
+        // Box height: VIS rows + 2 borders + 1 title, +1 if create row active.
+        let box_h  = (VIS + 3 + if in_create { 1 } else { 0 }) as u16;
         let box_w  = 50u16;
         let dlg_rect = centered_rect(box_w, box_h, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL)
-            .title(" Assignment Profile ").style(app.theme.dialog_border);
+            .title(" Assignment Profile ")
+            .title_bottom(
+                Line::from(" Space=assign  F2=edit  Ins=add  Del=discard ")
+                    .alignment(Alignment::Center),
+            )
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
 
@@ -1547,12 +1530,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     (false, _)     => "  ",
                 };
                 let note_ind  = cat_note_indicator(&app.categories, e.id);
-                let type_ind  = match e.kind {
-                    CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
-                    CategoryKind::Date      => "*",
-                    CategoryKind::Numeric   => "#",
-                    CategoryKind::Unindexed => "\u{25A1}",
-                };
+                let type_ind  = catmgr::kind_indicator(e.kind, note_ind);
                 let indent = "  ".repeat(e.depth);
                 let pfx = Span::raw(format!(" {}\u{2502} {}{} ", marker, indent, type_ind));
                 if highlighted {
@@ -1583,17 +1561,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
         let _ = total_rows;
 
-        // Help line at bottom; pad with empty lines to fill box.
-        let help = Line::from(Span::raw(" Space=assign  F2=edit  Ins=add  Del=discard"));
-        while cat_lines.len() < inner.height.saturating_sub(1) as usize {
-            cat_lines.push(Line::from(""));
-        }
-        cat_lines.push(help);
-
         frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
 
-        catmgr::render_cat_protected_warning_modal(frame, app, area);
-        catmgr::render_cat_confirm_delete_modal(frame, app, area);
+        catmgr::render_cat_overlays(frame, app, area);
     }
 
     // ── Section Add modal ─────────────────────────────────────────────────────
@@ -1609,10 +1579,16 @@ pub fn render(frame: &mut Frame, app: &App) {
         let rev        = app.theme.item_selected_field;
         let dlabel     = app.theme.dialog_label;
         let dlabel_sel = app.theme.dialog_label_sel;
-        let dlg_rect   = centered_rect(52, 11, area);
+        let dlg_rect   = centered_rect(52, 9, area);
         frame.render_widget(Clear, dlg_rect);
         let block = Block::default().borders(Borders::ALL)
-            .title(" Section Add ").style(app.theme.dialog_border);
+            .border_type(BorderType::Double)
+            .title(" Section Add ")
+            .title_bottom(
+                Line::from(" F3=choose category   Enter=confirm   Esc=cancel ")
+                    .alignment(Alignment::Center),
+            )
+            .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
         let iw = inner.width as usize;
@@ -1655,10 +1631,6 @@ pub fn render(frame: &mut Frame, app: &App) {
         };
         let cols_line = Line::from(Span::raw(format!("  Columns:   {}", cols_str)));
 
-        // Help line
-        let help = "  F3 Choose category   Enter confirm   Esc cancel  ";
-        let help_line = Line::from(Span::raw(help));
-
         let lines = vec![
             Line::from(""),
             cat_line,
@@ -1666,8 +1638,6 @@ pub fn render(frame: &mut Frame, app: &App) {
             ins_line,
             Line::from(""),
             cols_line,
-            Line::from(""),
-            help_line,
             Line::from(""),
         ];
 
@@ -1698,15 +1668,6 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     }
 
-}
-
-/// Compute a centred Rect of `width` × `height` inside `area`.
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let w = width.min(area.width);
-    let h = height.min(area.height);
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect { x, y, width: w, height: h }
 }
 
 /// Word-wrap `text` to lines of at most `width` chars, tracking char offsets.
@@ -1761,15 +1722,6 @@ fn find_cursor_in_wrapped(starts: &[usize], lines: &[String], cursor: usize) -> 
     let line_idx = starts.partition_point(|&s| s <= cursor).saturating_sub(1).min(lines.len().saturating_sub(1));
     let col = cursor.saturating_sub(starts[line_idx]).min(lines[line_idx].chars().count());
     (line_idx, col)
-}
-
-fn pad_or_trunc(s: &str, w: usize) -> String {
-    let len = s.chars().count();
-    if len >= w {
-        s.chars().take(w).collect()
-    } else {
-        format!("{}{}", s, " ".repeat(w - len))
-    }
 }
 
 /// Returns the cell edit state (buffer, cursor) if the active column header is being edited.
@@ -1933,6 +1885,7 @@ pub fn render_ask_save_dialog(frame: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
         .title(" Save Changes? ")
         .title_bottom(
             ratatui::text::Line::from(" Press ENTER to accept, ESC to cancel ")
@@ -1973,6 +1926,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Clear, dlg);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Double)
         .title_top(Line::from(" Section Properties ").alignment(Alignment::Center))
         .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center))
         .style(app.theme.dialog_border);
@@ -2178,7 +2132,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let is_active = active_field == SecPropsField::Filter;
 
     // Label line — highlighted when active.
-    let filter_lbl_style = if is_active { dlabel_sel } else { dlabel };
+    let filter_lbl_style = super::dlabel_style(is_active, dlabel, dlabel_sel);
     final_lines.push(Line::from(Span::styled("Filter:", filter_lbl_style)));
     // Entry line 1.
     let hi1 = is_active && filter_cursor == start;
@@ -2211,7 +2165,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
         let all_cats = flatten_cats(&app.categories);
         let max_vis  = 20usize;
         let visible  = all_cats.len().min(max_vis);
-        let start    = stored_scroll.min(cursor).max(cursor.saturating_sub(visible - 1));
+        let start    = stored_scroll_start(stored_scroll, cursor, visible);
 
         let box_h = (visible + 2) as u16;
         let box_w = 62u16;
@@ -2298,6 +2252,7 @@ pub fn render_sort_dialog(
     frame.render_widget(Clear, dlg);
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Double)
         .title_top(Line::from(title.to_string()).alignment(Alignment::Center))
         .title_bottom(Line::from(" Press ENTER when done, ESC to cancel ").alignment(Alignment::Center))
         .style(app.theme.dialog_border);

@@ -5,10 +5,10 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
-use crate::app::{App, FilterState, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator};
+use crate::app::{App, FilterState, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator, stored_scroll_start};
 use crate::model::{CategoryKind, FilterOp};
 use crate::app::SortState;
-use super::cursor_split;
+use super::{centered_rect, cursor_split};
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -91,28 +91,20 @@ pub fn render(frame: &mut Frame, app: &App) {
         let modal_rect = centered_rect(48, 7, area);
         frame.render_widget(Clear, modal_rect);
         let del_block = Block::default().borders(Borders::ALL)
+            .border_type(BorderType::Plain)
             .title(" Delete View? ").style(app.theme.dialog_border);
         frame.render_widget(del_block.clone(), modal_rect);
         let del_inner = del_block.inner(modal_rect);
 
         let rev = app.theme.item_selected_field;
-        let yes_span = if *yes { Span::styled("[ Yes ]", rev) } else { Span::raw("[ Yes ]") };
-        let no_span  = if !*yes { Span::styled("[ No ]", rev)  } else { Span::raw("[ No ]")  };
-
         let iw = del_inner.width as usize;
-        let btn_text = "[ Yes ]      [ No ]";
-        let btn_pad = iw.saturating_sub(btn_text.chars().count()) / 2;
+        let btn_line = super::yes_no_line(iw, *yes, rev);
 
         let del_rows = vec![
             Line::from(""),
             Line::from(Span::raw(format!("  \"{}\"", view_name))),
             Line::from(""),
-            Line::from(vec![
-                Span::raw(" ".repeat(btn_pad)),
-                yes_span,
-                Span::raw("      "),
-                no_span,
-            ]),
+            btn_line,
             Line::from(""),
         ];
         frame.render_widget(Paragraph::new(del_rows).style(app.theme.dialog), del_inner);
@@ -185,7 +177,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let val_str = yn(val);
         let val_w   = left_w.saturating_sub(label.chars().count());
         let is_active = active_field == field;
-        let lbl_style = if is_active { dlabel_sel } else { dlabel };
+        let lbl_style = super::dlabel_style(is_active, dlabel, dlabel_sel);
         let mut spans: Vec<Span<'static>> = if is_active {
             let pad = val_w.saturating_sub(val_str.chars().count());
             vec![
@@ -234,7 +226,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         match slot {
             0 => (String::new(), String::new(), false, Style::default()),
             1 => {
-                let lbl_style = if is_secs_active { dlabel_sel } else { dlabel };
+                let lbl_style = super::dlabel_style(is_secs_active, dlabel, dlabel_sel);
                 (String::new(), "Sections:".chars().take(right_avail).collect(), false, lbl_style)
             }
             n if n >= 2 && n <= 7 => {
@@ -257,7 +249,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             }
             10 => {
                 // Filter: label line (aligns with Number items row)
-                let lbl_style = if is_filter_active { dlabel_sel } else { dlabel };
+                let lbl_style = super::dlabel_style(is_filter_active, dlabel, dlabel_sel);
                 ("".to_string(), "Filter:".chars().take(right_avail).collect(), false, lbl_style)
             }
             11 => {
@@ -558,7 +550,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let all_cats = flatten_cats(&app.categories);
         let max_vis  = 20usize;
         let visible  = all_cats.len().min(max_vis);
-        let start    = stored_scroll.min(cursor).max(cursor.saturating_sub(visible - 1));
+        let start    = stored_scroll_start(stored_scroll, cursor, visible);
 
         let box_h = (visible + 2) as u16;
         let box_w = 62u16;
@@ -625,7 +617,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let view_line = Line::from(Span::styled(view_label, app.theme.dialog_label));
 
         let visible = (pick_inner.height as usize).saturating_sub(1); // -1 for header line
-        let start = (*picker_scroll).min(*picker_cur).max(picker_cur.saturating_sub(visible - 1));
+        let start = stored_scroll_start(*picker_scroll, *picker_cur, visible);
         let rev = app.theme.item_selected_field;
 
         let mut pick_lines: Vec<Line<'static>> = vec![view_line];
@@ -671,12 +663,4 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             *sf, picker_ref,
         );
     }
-}
-
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let w = width.min(area.width);
-    let h = height.min(area.height);
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect { x, y, width: w, height: h }
 }
