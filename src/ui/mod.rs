@@ -61,16 +61,12 @@ pub fn title_bar_top(width: u16, file_path: Option<&std::path::Path>, dirty: boo
 
     if dirty {
         let prefix = " File: ".to_string();
-        let marker = "*".to_string();
-        let suffix_and_pad = {
-            let total_left = prefix.len() + 1 + file_str.chars().count();
-            let pad = w.saturating_sub(total_left + right.chars().count());
-            format!("{}{}{}", file_str, " ".repeat(pad), right)
-        };
+        let styled_text = format!("* {} *", file_str);
+        let pad = w.saturating_sub(prefix.len() + styled_text.chars().count() + right.chars().count());
         ratatui::text::Line::from(vec![
             ratatui::text::Span::raw(prefix),
-            ratatui::text::Span::styled(marker, dirty_style),
-            ratatui::text::Span::raw(suffix_and_pad),
+            ratatui::text::Span::styled(styled_text, dirty_style),
+            ratatui::text::Span::raw(format!("{}{}", " ".repeat(pad), right)),
         ])
     } else {
         let left = format!(" File: {}", file_str);
