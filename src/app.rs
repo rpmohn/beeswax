@@ -4981,7 +4981,7 @@ impl App {
                     insert:        *insert,
                     active_field:  SectionFormField::Category,
                     picker_cursor: cursor,
-                    picker_scroll: cursor.saturating_sub(11),
+                    picker_scroll: cursor.saturating_sub(9),
                 };
             }
         }
@@ -4997,7 +4997,7 @@ impl App {
     }
 
     pub fn sec_choices_down(&mut self) {
-        const VIS: usize = 12;
+        const VIS: usize = 10;
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             if *picker_cursor + 1 < len {
@@ -5013,7 +5013,7 @@ impl App {
         }
     }
     pub fn sec_choices_pgdn(&mut self, page: usize) {
-        const VIS: usize = 12;
+        const VIS: usize = 10;
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             if len > 0 {
@@ -5029,7 +5029,7 @@ impl App {
         }
     }
     pub fn sec_choices_end(&mut self) {
-        const VIS: usize = 12;
+        const VIS: usize = 10;
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             if len > 0 {
@@ -5039,13 +5039,13 @@ impl App {
         }
     }
     pub fn sec_choices_screen_top(&mut self) {
-        const VIS: usize = 12;
+        const VIS: usize = 10;
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
         }
     }
     pub fn sec_choices_screen_mid(&mut self) {
-        const VIS: usize = 12;
+        const VIS: usize = 10;
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
@@ -5053,7 +5053,7 @@ impl App {
         }
     }
     pub fn sec_choices_screen_bot(&mut self) {
-        const VIS: usize = 12;
+        const VIS: usize = 10;
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);

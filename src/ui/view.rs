@@ -1645,21 +1645,22 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Choices picker overlay
         if let Some((picker_cur, scroll_stored)) = picker_cursor {
-            let picker_h = (cats.len().min(10) + 2) as u16;
-            let picker_rect = centered_rect(40, picker_h, area);
+            let visible = 10usize;
+            let picker_h = (visible.min(cats.len()) + 2) as u16;
+            let picker_rect = centered_rect(36, picker_h, area);
             frame.render_widget(Clear, picker_rect);
             let pb = Block::default().borders(Borders::ALL)
                 .title(" Choose Category ").style(app.theme.dialog_border);
             frame.render_widget(pb.clone(), picker_rect);
             let pi = pb.inner(picker_rect);
-            let visible = pi.height as usize;
-            let start = scroll_stored.min(picker_cur).max(picker_cur.saturating_sub(visible - 1));
+            let vis = pi.height as usize;
+            let start = scroll_stored.min(picker_cur).max(picker_cur.saturating_sub(vis - 1));
             let pick_lines: Vec<Line<'static>> = cats.iter().enumerate()
-                .skip(start).take(visible)
+                .skip(start).take(vis)
                 .map(|(i, e)| {
                     let indent = "  ".repeat(e.depth);
                     let label  = format!("{}{}", indent, e.name);
-                    let style  = if i == picker_cur { rev } else { app.theme.dialog };
+                    let style  = if i == picker_cur { rev } else { Style::default() };
                     Line::from(Span::styled(label, style))
                 })
                 .collect();
