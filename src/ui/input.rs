@@ -1220,6 +1220,18 @@ fn handle_sec_form(app: &mut App, code: KeyCode) {
 }
 
 fn handle_sec_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // While a cat create/edit is active, route to catmgr input.
+    if !matches!(app.cat_state.mode, CatMode::Normal) {
+        handle_catmgr_input(app, code, modifiers);
+        // If done, sync picker_cursor to wherever cat_confirm placed the cursor.
+        if matches!(app.cat_state.mode, CatMode::Normal) {
+            let new_cur = app.cat_state.cursor;
+            if let SectionMode::Choices { picker_cursor, .. } = &mut app.sec_mode {
+                *picker_cursor = new_cur;
+            }
+        }
+        return;
+    }
     if handle_vi_list(app, code, modifiers,
         &|a| a.sec_choices_down(),   &|a| a.sec_choices_up(),
         &|a| a.sec_choices_end(),    &|a| a.sec_choices_home(),
@@ -1233,6 +1245,12 @@ fn handle_sec_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::End      => app.sec_choices_end(),
         KeyCode::Enter    => app.sec_choices_confirm(),
         KeyCode::Esc      => app.sec_choices_cancel(),
+        KeyCode::Insert   => {
+            if let SectionMode::Choices { picker_cursor, .. } = &app.sec_mode {
+                app.cat_state.cursor = *picker_cursor;
+            }
+            app.cat_begin_create(false);
+        }
         _ => {}
     }
 }

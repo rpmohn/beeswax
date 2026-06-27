@@ -1645,8 +1645,10 @@ pub fn render(frame: &mut Frame, app: &App) {
 
         // Choices picker overlay
         if let Some((picker_cur, scroll_stored)) = picker_cursor {
+            let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
             let visible = 10usize;
-            let picker_h = (visible.min(cats.len()) + 2) as u16;
+            let extra = if in_create { 1 } else { 0 };
+            let picker_h = (visible.min(cats.len().max(1)) + extra + 2) as u16;
             let picker_rect = centered_rect(36, picker_h, area);
             frame.render_widget(Clear, picker_rect);
             let pb = Block::default().borders(Borders::ALL)
@@ -1654,16 +1656,38 @@ pub fn render(frame: &mut Frame, app: &App) {
             frame.render_widget(pb.clone(), picker_rect);
             let pi = pb.inner(picker_rect);
             let vis = pi.height as usize;
-            let start = scroll_stored.min(picker_cur).max(picker_cur.saturating_sub(vis - 1));
-            let pick_lines: Vec<Line<'static>> = cats.iter().enumerate()
-                .skip(start).take(vis)
-                .map(|(i, e)| {
+            let bottom = if in_create { picker_cur + 1 } else { picker_cur };
+            let start = scroll_stored.min(picker_cur).max(bottom.saturating_sub(vis.saturating_sub(1)));
+            let mut pick_lines: Vec<Line<'static>> = Vec::new();
+            if cats.is_empty() {
+                if let CatMode::Create { buffer, cursor: buf_cur, .. } = &app.cat_state.mode {
+                    let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                    pick_lines.push(Line::from(vec![
+                        Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                    ]));
+                }
+            } else {
+                for (i, e) in cats.iter().enumerate().skip(start) {
+                    if pick_lines.len() >= vis { break; }
                     let indent = "  ".repeat(e.depth);
                     let label  = format!("{}{}", indent, e.name);
                     let style  = if i == picker_cur { rev } else { Style::default() };
-                    Line::from(Span::styled(label, style))
-                })
-                .collect();
+                    pick_lines.push(Line::from(Span::styled(label, style)));
+                    if i == picker_cur {
+                        if let CatMode::Create { buffer, cursor: buf_cur, as_child, .. } = &app.cat_state.mode {
+                            if pick_lines.len() < vis {
+                                let d = if *as_child { e.depth + 1 } else { e.depth };
+                                let cr_indent = "  ".repeat(d);
+                                let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                                pick_lines.push(Line::from(vec![
+                                    Span::raw(cr_indent),
+                                    Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                                ]));
+                            }
+                        }
+                    }
+                }
+            }
             frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pi);
         }
 
