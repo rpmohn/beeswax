@@ -417,11 +417,12 @@ pub enum SectionMode {
         active_field: SectionFormField,
     },
     Choices {
-        cat_idx:       Option<usize>,
-        insert:        SectionInsert,
-        active_field:  SectionFormField,
-        picker_cursor: usize,
-        picker_scroll: usize,
+        cat_idx:        Option<usize>,
+        insert:         SectionInsert,
+        active_field:   SectionFormField,
+        picker_cursor:  usize,
+        picker_scroll:  usize,
+        confirm_delete: bool,
     },
     ConfirmRemove { yes: bool },
     Props {
@@ -4977,11 +4978,12 @@ impl App {
             if *active_field == SectionFormField::Category {
                 let cursor = cat_idx.unwrap_or(0);
                 self.sec_mode = SectionMode::Choices {
-                    cat_idx:       *cat_idx,
-                    insert:        *insert,
-                    active_field:  SectionFormField::Category,
-                    picker_cursor: cursor,
-                    picker_scroll: cursor.saturating_sub(9),
+                    cat_idx:        *cat_idx,
+                    insert:         *insert,
+                    active_field:   SectionFormField::Category,
+                    picker_cursor:  cursor,
+                    picker_scroll:  cursor.saturating_sub(9),
+                    confirm_delete: false,
                 };
             }
         }
@@ -5080,6 +5082,44 @@ impl App {
             let insert       = *insert;
             let active_field = *active_field;
             self.sec_mode = SectionMode::Add { cat_idx, insert, active_field };
+        }
+    }
+
+    pub fn sec_choices_begin_delete(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        if flat.is_empty() { return; }
+        let pc = match &self.sec_mode {
+            SectionMode::Choices { picker_cursor, .. } => *picker_cursor,
+            _ => return,
+        };
+        if flat.get(pc).map(|e| cat_is_protected(e)).unwrap_or(true) { return; }
+        if let SectionMode::Choices { confirm_delete, .. } = &mut self.sec_mode {
+            *confirm_delete = true;
+        }
+    }
+
+    pub fn sec_choices_delete_confirm(&mut self) {
+        let pc = match &self.sec_mode {
+            SectionMode::Choices { confirm_delete, picker_cursor, .. } => {
+                if !*confirm_delete { return; }
+                *picker_cursor
+            }
+            _ => return,
+        };
+        if let SectionMode::Choices { confirm_delete, .. } = &mut self.sec_mode {
+            *confirm_delete = false;
+        }
+        self.cat_state.cursor = pc;
+        self.cat_delete();
+        let new_cur = self.cat_state.cursor;
+        if let SectionMode::Choices { picker_cursor, .. } = &mut self.sec_mode {
+            *picker_cursor = new_cur;
+        }
+    }
+
+    pub fn sec_choices_delete_cancel(&mut self) {
+        if let SectionMode::Choices { confirm_delete, .. } = &mut self.sec_mode {
+            *confirm_delete = false;
         }
     }
 

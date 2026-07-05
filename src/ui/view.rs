@@ -1567,11 +1567,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Section Add modal ─────────────────────────────────────────────────────
+    // (picker_cursor, picker_scroll, confirm_delete)
     let sec_add_state = match &app.sec_mode {
         SectionMode::Add { cat_idx, insert, active_field } =>
-            Some((*cat_idx, *insert, *active_field, None::<(usize, usize)>)),
-        SectionMode::Choices { cat_idx, insert, active_field, picker_cursor, picker_scroll } =>
-            Some((*cat_idx, *insert, *active_field, Some((*picker_cursor, *picker_scroll)))),
+            Some((*cat_idx, *insert, *active_field, None::<(usize, usize, bool)>)),
+        SectionMode::Choices { cat_idx, insert, active_field, picker_cursor, picker_scroll, confirm_delete } =>
+            Some((*cat_idx, *insert, *active_field, Some((*picker_cursor, *picker_scroll, *confirm_delete)))),
         SectionMode::Normal | SectionMode::AutoRemoveError | SectionMode::ConfirmRemove { .. } | SectionMode::Props { .. } => None,
     };
     if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
@@ -1644,10 +1645,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(lines.clone()).style(app.theme.dialog), inner);
 
         // Choices picker overlay
-        if let Some((picker_cur, scroll_stored)) = picker_cursor {
-            let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
+        if let Some((picker_cur, scroll_stored, confirm_delete)) = picker_cursor {
+            let in_edit_create = matches!(app.cat_state.mode, CatMode::Create { .. } | CatMode::Edit { .. });
             let visible = 10usize;
-            let extra = if in_create { 1 } else { 0 };
+            let extra = if in_edit_create { 1 } else { 0 };
             let picker_h = (visible.min(cats.len().max(1)) + extra + 2) as u16;
             let picker_rect = centered_rect(36, picker_h, area);
             frame.render_widget(Clear, picker_rect);
@@ -1656,7 +1657,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             frame.render_widget(pb.clone(), picker_rect);
             let pi = pb.inner(picker_rect);
             let vis = pi.height as usize;
-            let bottom = if in_create { picker_cur + 1 } else { picker_cur };
+            let bottom = if in_edit_create { picker_cur + 1 } else { picker_cur };
             let start = scroll_stored.min(picker_cur).max(bottom.saturating_sub(vis.saturating_sub(1)));
             let mut pick_lines: Vec<Line<'static>> = Vec::new();
             if cats.is_empty() {
@@ -1671,24 +1672,66 @@ pub fn render(frame: &mut Frame, app: &App) {
                     if pick_lines.len() >= vis { break; }
                     let indent = "  ".repeat(e.depth);
                     let label  = format!("{}{}", indent, e.name);
-                    let style  = if i == picker_cur { rev } else { Style::default() };
-                    pick_lines.push(Line::from(Span::styled(label, style)));
-                    if i == picker_cur {
-                        if let CatMode::Create { buffer, cursor: buf_cur, as_child, .. } = &app.cat_state.mode {
-                            if pick_lines.len() < vis {
-                                let d = if *as_child { e.depth + 1 } else { e.depth };
-                                let cr_indent = "  ".repeat(d);
-                                let (left, hi, right) = cursor_split(buffer, *buf_cur);
-                                pick_lines.push(Line::from(vec![
-                                    Span::raw(cr_indent),
-                                    Span::raw(left), Span::styled(hi, rev), Span::raw(right),
-                                ]));
+                    let is_cur = i == picker_cur;
+                    match &app.cat_state.mode {
+                        CatMode::Edit { buffer, cursor: buf_cur } if is_cur => {
+                            let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                            pick_lines.push(Line::from(vec![
+                                Span::raw(indent),
+                                Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                            ]));
+                        }
+                        _ => {
+                            let style = if is_cur { rev } else { Style::default() };
+                            pick_lines.push(Line::from(Span::styled(label, style)));
+                            if is_cur {
+                                if let CatMode::Create { buffer, cursor: buf_cur, as_child, .. } = &app.cat_state.mode {
+                                    if pick_lines.len() < vis {
+                                        let d = if *as_child { e.depth + 1 } else { e.depth };
+                                        let cr_indent = "  ".repeat(d);
+                                        let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                                        pick_lines.push(Line::from(vec![
+                                            Span::raw(cr_indent),
+                                            Span::raw(left), Span::styled(hi, rev), Span::raw(right),
+                                        ]));
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
             frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pi);
+
+            // Delete confirmation overlay
+            if confirm_delete {
+                let cat_name = cats.get(picker_cur).map(|e| e.name.as_str()).unwrap_or("?");
+                let msg = format!("Discard \"{}\"?", cat_name);
+                let dlg_w = (msg.chars().count() + 4).max(30).min(area.width as usize) as u16;
+                let dlg_rect = centered_rect(dlg_w, 5, area);
+                frame.render_widget(Clear, dlg_rect);
+                let dlg_block = Block::default().borders(Borders::ALL)
+                    .border_type(BorderType::Plain)
+                    .title(" Discard Category? ").style(app.theme.dialog_border);
+                frame.render_widget(dlg_block.clone(), dlg_rect);
+                let dlg_inner = dlg_block.inner(dlg_rect);
+                let iw = dlg_inner.width as usize;
+                let mpad = (iw.saturating_sub(msg.chars().count())) / 2;
+                let yes_label = " Yes ";
+                let no_label  = " No  ";
+                let gap  = iw.saturating_sub(yes_label.chars().count() + no_label.chars().count() + 2);
+                let lpad = gap / 2;
+                frame.render_widget(Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::raw(format!("{}{}", " ".repeat(mpad), msg))),
+                    Line::from(vec![
+                        Span::raw(" ".repeat(lpad)),
+                        Span::styled(yes_label, rev),
+                        Span::raw("  "),
+                        Span::raw(no_label),
+                    ]),
+                ]).style(app.theme.dialog), dlg_inner);
+            }
         }
 
     }

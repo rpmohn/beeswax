@@ -1220,6 +1220,16 @@ fn handle_sec_form(app: &mut App, code: KeyCode) {
 }
 
 fn handle_sec_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Delete confirmation takes priority.
+    let confirm_delete = matches!(&app.sec_mode, SectionMode::Choices { confirm_delete: true, .. });
+    if confirm_delete {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => app.sec_choices_delete_confirm(),
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc   => app.sec_choices_delete_cancel(),
+            _ => {}
+        }
+        return;
+    }
     // While a cat create/edit is active, route to catmgr input.
     if !matches!(app.cat_state.mode, CatMode::Normal) {
         handle_catmgr_input(app, code, modifiers);
@@ -1250,6 +1260,13 @@ fn handle_sec_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 app.cat_state.cursor = *picker_cursor;
             }
             app.cat_begin_create(false);
+        }
+        KeyCode::Delete => app.sec_choices_begin_delete(),
+        KeyCode::F(2)   => {
+            if let SectionMode::Choices { picker_cursor, .. } = &app.sec_mode {
+                app.cat_state.cursor = *picker_cursor;
+            }
+            app.cat_begin_edit();
         }
         _ => {}
     }
