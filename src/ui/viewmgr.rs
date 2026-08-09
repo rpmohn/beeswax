@@ -5,8 +5,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
-use crate::app::{App, FilterState, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator, stored_scroll_start};
-use crate::model::{CategoryKind, FilterOp};
+use crate::app::{App, DateFilterField, DateFilterShow, FilterState, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator, stored_scroll_start};
+use crate::model::{CategoryKind, DateFilterRange, FilterOp};
 use crate::app::SortState;
 use super::{centered_rect, cursor_split};
 
@@ -206,14 +206,9 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let can_scroll_down = sec_scroll + 6 < sec_names.len();
 
     // Precompute filter entries for right-column display.
-    let view_filter_entries: Vec<String> = {
-        let all_cats = flatten_cats(&app.categories);
-        view_ref.filter.iter().map(|f| {
-            let name = all_cats.iter().find(|c| c.id == f.cat_id)
-                .map(|c| c.name.as_str()).unwrap_or("?");
-            if f.op == FilterOp::Exclude { format!("-{}", name) } else { name.to_string() }
-        }).collect()
-    };
+    let view_filter_entries: Vec<String> = view_ref.filter.iter()
+        .map(|f| app.filter_entry_label(f, view_ref.date_filter.as_ref()))
+        .collect();
     let filter_entry_w = right_avail.saturating_sub(2);
     let filter_total   = view_filter_entries.len();
     let filter_start   = filter_scroll.min(if filter_total > 2 { filter_total - 2 } else { 0 });
@@ -256,25 +251,23 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
                 // Filter entry line 1 (aligns with blank row)
                 let entry_idx = filter_start;
                 let row_raw = view_filter_entries.get(entry_idx).map(|s| s.as_str()).unwrap_or("");
-                let row_str: String = row_raw.chars().take(filter_entry_w).collect();
+                let mut row_str: String = row_raw.chars().take(filter_entry_w).collect();
                 let hi = is_filter_active && filter_cursor == entry_idx;
-                let padded = if hi {
-                    format!("{:<w$}", row_str, w = filter_entry_w)
-                } else { row_str };
+                // Highlight the entry only, not the rest of the row; an empty slot
+                // still needs one cell so the cursor stays visible.
+                if hi && row_str.is_empty() { row_str.push(' '); }
                 let arrow = if filter_start > 0 { "\u{25B2}" } else { " " };
-                (format!("{} ", arrow), padded, hi, Style::default())
+                (format!("{} ", arrow), row_str, hi, Style::default())
             }
             12 => {
                 // Filter entry line 2 (aligns with View statistics row)
                 let entry_idx = filter_start + 1;
                 let row_raw = view_filter_entries.get(entry_idx).map(|s| s.as_str()).unwrap_or("");
-                let row_str: String = row_raw.chars().take(filter_entry_w).collect();
+                let mut row_str: String = row_raw.chars().take(filter_entry_w).collect();
                 let hi = is_filter_active && filter_cursor == entry_idx;
-                let padded = if hi {
-                    format!("{:<w$}", row_str, w = filter_entry_w)
-                } else { row_str };
+                if hi && row_str.is_empty() { row_str.push(' '); }
                 let arrow = if filter_start + 2 < filter_total { "\u{25BC}" } else { " " };
-                (format!("{} ", arrow), padded, hi, Style::default())
+                (format!("{} ", arrow), row_str, hi, Style::default())
             }
             _ => (String::new(), String::new(), false, Style::default()),
         }
@@ -567,10 +560,16 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let inner_w = inner.width as usize;
         let mut cat_lines: Vec<Line> = Vec::new();
         for (i, cat) in all_cats.iter().enumerate().skip(start).take(visible) {
+            // Date categories carry their state in the date filter, not `entries`;
+            // "Assigned" reads as + and "Not assigned" as -, same as ordinary cats.
             let marker = match entries.get(&cat.id).copied() {
-                None                    => ' ',
                 Some(FilterOp::Include) => '+',
                 Some(FilterOp::Exclude) => '-',
+                None => match view_ref.date_filter.as_ref().filter(|df| df.cat_id == cat.id) {
+                    Some(df) if df.assigned => '+',
+                    Some(_)                 => '-',
+                    None                    => ' ',
+                },
             };
             let note_ind = cat_note_indicator(&app.categories, cat.id);
             let kind_ind = match cat.kind {
@@ -590,6 +589,24 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
         frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
+    }
+
+    // ── Date Filter dialog (F3 on a Date category in the filter picker) ──────
+    if let FilterState::DateFilter {
+        cat_id, show, start_buf, start_cur, end_buf, end_cur,
+        range, active_field, cal, err_flash, ..
+    } = filter_state {
+        let cat_name = flatten_cats(&app.categories).iter()
+            .find(|c| c.id == *cat_id).map(|c| c.name.clone()).unwrap_or_default();
+        render_date_filter_dialog(
+            frame, app, area, &cat_name,
+            *show, start_buf, *start_cur, end_buf, *end_cur,
+            *range, *active_field, *err_flash,
+        );
+        // F3 calendar sits on top of the dialog.
+        if let Some((y, m, d)) = cal {
+            super::view::render_calendar(frame, app, area, *y, *m, *d, None);
+        }
     }
 
     // ── Section Select picker (F3 on Sections field) ──────────────────────────
@@ -663,4 +680,123 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             *sf, picker_ref,
         );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_date_filter_dialog(
+    frame:      &mut ratatui::Frame,
+    app:        &App,
+    area:       ratatui::layout::Rect,
+    cat_name:   &str,
+    show:       DateFilterShow,
+    start_buf:  &str,
+    start_cur:  usize,
+    end_buf:    &str,
+    end_cur:    usize,
+    range:      DateFilterRange,
+    active:     DateFilterField,
+    err_flash:  Option<std::time::Instant>,
+) {
+    let rev      = app.theme.item_selected_field;
+    let dlabel   = app.theme.dialog_label;
+    let dlabel_s = app.theme.dialog_label_sel;
+
+    // Indent and label column, matching Agenda's Date Filter box layout.
+    const IND:     &str  = "   ";
+    const LABEL_W: usize = 17;
+    const VALUE_W: usize = 14;
+
+    // Only "Assigned" has a date range to configure; the other choices blank the
+    // lower fields out. The box keeps its size and every row keeps its position.
+    let show_only = show != DateFilterShow::Assigned;
+
+    let dlg_rect = centered_rect(60, 9, area);
+    frame.render_widget(Clear, dlg_rect);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .title(Line::from(" Date Filter ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" Press ENTER to accept, ESC to cancel ").alignment(Alignment::Center))
+        .style(app.theme.dialog_border);
+    frame.render_widget(block.clone(), dlg_rect);
+    let inner = block.inner(dlg_rect);
+    let iw = inner.width as usize;
+
+    let has_bounds = !start_buf.trim().is_empty() || !end_buf.trim().is_empty();
+
+    let label_span = |text: &str, field: DateFilterField| -> Span<'static> {
+        Span::styled(
+            format!("{:<w$}", text, w = LABEL_W),
+            if active == field { dlabel_s } else { dlabel },
+        )
+    };
+
+    // "if they are <value>  to  <category>" — the value cycles in place.
+    let show_line = {
+        let val   = show.label();
+        let vpad  = VALUE_W.saturating_sub(val.chars().count());
+        let cat_w = iw.saturating_sub(IND.len() + LABEL_W + VALUE_W + 5);
+        let cat: String = cat_name.chars().take(cat_w).collect();
+        // "Clear filter" isn't a description of what to show, so it drops the
+        // sentence lead-in — but keeps its column, so nothing shifts.
+        let lead = if show == DateFilterShow::Clear {
+            Span::raw(" ".repeat(LABEL_W))
+        } else {
+            label_span("if they are", DateFilterField::Show)
+        };
+        Line::from(vec![
+            Span::raw(IND),
+            lead,
+            Span::styled(val, if active == DateFilterField::Show { rev } else { Style::default() }),
+            Span::raw(" ".repeat(vpad)),
+            Span::styled("to   ", dlabel),
+            Span::raw(cat),
+        ])
+    };
+
+    // A rejected exit inverts the offending field briefly — see DATE_FILTER_FLASH.
+    let flashing = err_flash.is_some_and(|t| t.elapsed() < crate::app::DATE_FILTER_FLASH);
+
+    // Editable date field (Start or End).
+    let date_row = |label: &str, field: DateFilterField, buf: &str, cur: usize| -> Line<'static> {
+        let field_w = iw.saturating_sub(IND.len() + LABEL_W);
+        let mut spans = vec![Span::raw(IND), label_span(label, field)];
+        if flashing && active == field {
+            spans.push(Span::styled(buf.chars().take(field_w).collect::<String>(), rev));
+        } else if active == field {
+            spans.extend(super::text_field_spans(buf, cur, 0, field_w, Style::default(), rev));
+        } else {
+            let shown: String = buf.chars().take(field_w).collect();
+            spans.push(Span::raw(shown));
+        }
+        Line::from(spans)
+    };
+
+    let mut lines = vec![
+        Line::from(""),
+        if show == DateFilterShow::Clear { Line::from("") }
+        else { Line::from(Span::styled(" Show items", dlabel)) },
+        show_line,
+    ];
+    if show_only {
+        // Same rows, no content: the box and every other line stay put.
+        lines.extend([Line::from(""), Line::from(""), Line::from("")]);
+    } else {
+        lines.push(date_row("Start date:", DateFilterField::Start, start_buf, start_cur));
+        lines.push(date_row("End date:",   DateFilterField::End,   end_buf,   end_cur));
+        // With neither bound set there is no range to be inside or outside of,
+        // so the row blanks out entirely and navigation skips it.
+        lines.push(if has_bounds {
+            Line::from(vec![
+                Span::raw(IND),
+                label_span("Items should be:", DateFilterField::Range),
+                Span::styled(range.label(),
+                    if active == DateFilterField::Range { rev } else { Style::default() }),
+            ])
+        } else {
+            Line::from("")
+        });
+    }
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
 }

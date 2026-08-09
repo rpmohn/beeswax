@@ -7,5 +7,5 @@ pub mod view;
 pub use category::{Category, CategoryKind};
 pub use column::{ColFormat, Column, DateDisplay, Clock, DateFmtCode, DateFmt};
 pub use item::Item;
-pub use section::{Section, SortOn, SortNewItems, SortOrder, SortSeq, SortNa, FilterOp, FilterEntry};
+pub use section::{Section, SortOn, SortNewItems, SortOrder, SortSeq, SortNa, FilterOp, FilterEntry, DateBound, DateFilterRange, DateFilter};
 pub use view::{View, SectionSortMethod};

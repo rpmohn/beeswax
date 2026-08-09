@@ -58,13 +58,13 @@ pub fn render(frame: &mut Frame, app: &App) {
             };
             Line::from(Span::raw(s))
         } else if matches!(app.screen, AppScreen::ViewMgr) {
-            let left = format!(" View: {}", app.view.name);
+            let left = format!(" View: {}{}", app.view.name, app.view_filter_notation());
             let hint = "^\u{2191}Up ^\u{2193}Dwn ";
             let w = area.width as usize;
             let pad = w.saturating_sub(left.chars().count() + hint.chars().count());
             Line::from(Span::raw(format!("{}{}{}", left, " ".repeat(pad), hint)))
         } else {
-            Line::from(Span::raw(format!(" View: {}", app.view.name)))
+            Line::from(Span::raw(format!(" View: {}{}", app.view.name, app.view_filter_notation())))
         };
         let title = Paragraph::new(vec![
             title_bar_top(area.width, app.file_path.as_deref(), app.dirty, app.theme.item_selected_field),
@@ -127,7 +127,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Note indicator: leading space replaced with ♪/♬ when backing category has a note/file.
         let sec_note_ind = cat_note_indicator(&app.categories, section.cat_id);
         let sec_prefix = if !sec_note_ind.is_empty() { sec_note_ind } else { SECTION_PREFIX };
-        let sec_display_name = section.name.clone();
+        let sec_display_name = format!("{}{}", section.name, app.section_filter_notation(s_idx));
 
         // Left column header cells
         let head_col_text_style = if cursor_on_head && matches!(app.mode, Mode::Normal) {
@@ -989,73 +989,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // ── Calendar modal ────────────────────────────────────────────────────────
     if let ColMode::Calendar { year, month, day, hour, min, sec } = &app.col_mode {
-        let (cal_year, cal_month, cal_day) = (*year, *month, *day);
-        let (cal_hour, cal_min, cal_sec)   = (*hour, *min, *sec);
-        let (today_y, today_m, today_d)    = cal_today();
-        let dim   = cal_days_in_month(cal_year, cal_month);
-        let start = cal_first_dow(cal_year, cal_month) as usize;
-        let mname = CAL_MONTH_NAMES[(cal_month as usize).saturating_sub(1)];
-
-        // Box: 24 wide (22 inner), 12 tall (10 inner)
-        let cal_rect = centered_rect(24, 12, area);
-        frame.render_widget(Clear, cal_rect);
-        let block = Block::default().borders(Borders::ALL)
-            .title(" Calendar ").style(app.theme.dialog_border);
-        frame.render_widget(block.clone(), cal_rect);
-        let inner = block.inner(cal_rect);
-        let iw = inner.width as usize;
-
-        let rev  = app.theme.item_selected_field;
-        let bold = Style::default().add_modifier(Modifier::BOLD);
-
-        // Title: centre "Month YYYY" in iw chars
-        let title_str = format!("{} {}", mname, cal_year);
-        let tpad = (iw.saturating_sub(title_str.chars().count())) / 2;
-        let title_line = Line::from(Span::raw(format!("{}{}", " ".repeat(tpad), title_str)));
-
-        // Day-of-week header
-        let header_line = Line::from(Span::raw(" Su Mo Tu We Th Fr Sa"));
-
-        let mut cal_lines: Vec<Line<'static>> = vec![title_line, header_line];
-
-        // 6 week rows: each cell is 2 chars, separated by 1 space, with 1 leading space
-        for row in 0..6usize {
-            let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
-            for col in 0..7usize {
-                if col > 0 { spans.push(Span::raw(" ")); }
-                let cell = row * 7 + col;
-                if cell < start || cell >= start + dim as usize {
-                    spans.push(Span::raw("  "));
-                } else {
-                    let d = (cell - start + 1) as u32;
-                    let s = format!("{:2}", d);
-                    let style = if d == cal_day {
-                        rev
-                    } else if cal_year == today_y && cal_month == today_m && d == today_d {
-                        bold
-                    } else {
-                        Style::default()
-                    };
-                    spans.push(Span::styled(s, style));
-                }
-            }
-            cal_lines.push(Line::from(spans));
-        }
-
-        // Time display
-        cal_lines.push(Line::from(Span::raw(
-            format!(" Time: {:02}:{:02}:{:02}", cal_hour, cal_min, cal_sec)
-        )));
-
-        // Year hint (< / > keys; Ctrl+PgUp/Dn may be intercepted by terminal)
-        let left_hint  = "< Prev Yr";
-        let right_hint = "Next Yr >";
-        let gap = iw.saturating_sub(left_hint.chars().count() + right_hint.chars().count());
-        cal_lines.push(Line::from(Span::raw(format!(
-            "{}{}{}", left_hint, " ".repeat(gap), right_hint
-        ))));
-
-        frame.render_widget(Paragraph::new(cal_lines).style(app.theme.dialog), inner);
+        render_calendar(frame, app, area, *year, *month, *day, Some((*hour, *min, *sec)));
     }
 
     // ── SetTime modal ─────────────────────────────────────────────────────────
@@ -1903,6 +1837,78 @@ fn input_row_spans(buffer: &str, cursor: usize, text_style: Style, cursor_style:
 
 // ── Calendar helpers ──────────────────────────────────────────────────────────
 
+/// The Calendar modal, shared by the column date picker and the Date Filter
+/// dialog's Start/End fields. `time` adds the Time row; date-only callers pass None.
+pub fn render_calendar(
+    frame: &mut Frame, app: &App, area: Rect,
+    cal_year: i32, cal_month: u32, cal_day: u32, time: Option<(u32, u32, u32)>,
+) {
+    let (today_y, today_m, today_d) = cal_today();
+    let dim   = cal_days_in_month(cal_year, cal_month);
+    let start = cal_first_dow(cal_year, cal_month) as usize;
+    let mname = CAL_MONTH_NAMES[(cal_month as usize).saturating_sub(1)];
+
+    // Box: 24 wide (22 inner); 12 tall with the Time row, 11 without.
+    let cal_rect = centered_rect(24, if time.is_some() { 12 } else { 11 }, area);
+    frame.render_widget(Clear, cal_rect);
+    let block = Block::default().borders(Borders::ALL)
+        .title(" Calendar ").style(app.theme.dialog_border);
+    frame.render_widget(block.clone(), cal_rect);
+    let inner = block.inner(cal_rect);
+    let iw = inner.width as usize;
+
+    let rev  = app.theme.item_selected_field;
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+
+    // Title: centre "Month YYYY" in iw chars
+    let title_str = format!("{} {}", mname, cal_year);
+    let tpad = (iw.saturating_sub(title_str.chars().count())) / 2;
+    let title_line = Line::from(Span::raw(format!("{}{}", " ".repeat(tpad), title_str)));
+
+    // Day-of-week header
+    let header_line = Line::from(Span::raw(" Su Mo Tu We Th Fr Sa"));
+
+    let mut cal_lines: Vec<Line<'static>> = vec![title_line, header_line];
+
+    // 6 week rows: each cell is 2 chars, separated by 1 space, with 1 leading space
+    for row in 0..6usize {
+        let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
+        for col in 0..7usize {
+            if col > 0 { spans.push(Span::raw(" ")); }
+            let cell = row * 7 + col;
+            if cell < start || cell >= start + dim as usize {
+                spans.push(Span::raw("  "));
+            } else {
+                let d = (cell - start + 1) as u32;
+                let s = format!("{:2}", d);
+                let style = if d == cal_day {
+                    rev
+                } else if cal_year == today_y && cal_month == today_m && d == today_d {
+                    bold
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(s, style));
+            }
+        }
+        cal_lines.push(Line::from(spans));
+    }
+
+    if let Some((h, m, s)) = time {
+        cal_lines.push(Line::from(Span::raw(format!(" Time: {:02}:{:02}:{:02}", h, m, s))));
+    }
+
+    // Year hint (< / > keys; Ctrl+PgUp/Dn may be intercepted by terminal)
+    let left_hint  = "< Prev Yr";
+    let right_hint = "Next Yr >";
+    let gap = iw.saturating_sub(left_hint.chars().count() + right_hint.chars().count());
+    cal_lines.push(Line::from(Span::raw(format!(
+        "{}{}{}", left_hint, " ".repeat(gap), right_hint
+    ))));
+
+    frame.render_widget(Paragraph::new(cal_lines).style(app.theme.dialog), inner);
+}
+
 static CAL_MONTH_NAMES: [&str; 12] = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
@@ -2176,14 +2182,12 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     // ── Filter field — label (never highlighted), then up to 2 entry lines ──
     let filter_entry_w = left_w.saturating_sub(2); // 2 chars for "▲ " / "▼ " / "  "
 
-    let filter_entries: Vec<String> = if sec_idx < app.view.sections.len() {
-        let all_cats = flatten_cats(&app.categories);
-        app.view.sections[sec_idx].filter.iter().map(|f| {
-            let name = all_cats.iter().find(|c| c.id == f.cat_id)
-                .map(|c| c.name.as_str()).unwrap_or("?");
-            if f.op == FilterOp::Exclude { format!("-{}", name) } else { name.to_string() }
-        }).collect()
-    } else { vec![] };
+    let filter_entries: Vec<String> = match app.view.sections.get(sec_idx) {
+        Some(sec) => sec.filter.iter()
+            .map(|f| app.filter_entry_label(f, sec.date_filter.as_ref()))
+            .collect(),
+        None => vec![],
+    };
 
     let total = filter_entries.len();
     let start = filter_scroll.min(if total > 2 { total - 2 } else { 0 });
@@ -2191,8 +2195,10 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     let row2_raw = filter_entries.get(start + 1).map(|s| s.as_str()).unwrap_or("");
     let row1_str: String = row1_raw.chars().take(filter_entry_w).collect();
     let row2_str: String = row2_raw.chars().take(filter_entry_w).collect();
-    let pad1 = filter_entry_w.saturating_sub(row1_str.chars().count());
-    let pad2 = filter_entry_w.saturating_sub(row2_str.chars().count());
+    // An empty slot still needs one cell so the cursor stays visible when it lands
+    // there; anything longer would highlight blanks out to the edge of the dialog.
+    let row1_str = if row1_str.is_empty() { " ".to_string() } else { row1_str };
+    let row2_str = if row2_str.is_empty() { " ".to_string() } else { row2_str };
     // Scroll arrows: ▲ on line 1 if entries exist above, ▼ on line 2 if entries exist below.
     let arrow1 = if start > 0              { "\u{25B2}" } else { " " }; // ▲
     let arrow2 = if start + 2 < total      { "\u{25BC}" } else { " " }; // ▼
@@ -2207,7 +2213,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     final_lines.push(Line::from(if hi1 {
         vec![
             Span::raw(format!("{} ", arrow1)),
-            Span::styled(format!("{}{}", row1_str, " ".repeat(pad1)), rev),
+            Span::styled(row1_str.clone(), rev),
         ]
     } else {
         vec![Span::raw(format!("{} {}", arrow1, row1_str))]
@@ -2217,7 +2223,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
     final_lines.push(Line::from(if hi2 {
         vec![
             Span::raw(format!("{} ", arrow2)),
-            Span::styled(format!("{}{}", row2_str, " ".repeat(pad2)), rev),
+            Span::styled(row2_str.clone(), rev),
         ]
     } else {
         vec![Span::raw(format!("{} {}", arrow2, row2_str))]
@@ -2250,10 +2256,19 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
         let inner_w = inner.width as usize;
         let mut cat_lines: Vec<Line> = Vec::new();
         for (i, cat) in all_cats.iter().enumerate().skip(start).take(visible) {
+            // Date categories carry their state in the date filter, not `entries`;
+            // "Assigned" reads as + and "Not assigned" as -, same as ordinary cats.
             let marker = match entries.get(&cat.id).copied() {
-                None                    => ' ',
                 Some(FilterOp::Include) => '+',
                 Some(FilterOp::Exclude) => '-',
+                None => match app.view.sections.get(sec_idx)
+                    .and_then(|s| s.date_filter.as_ref())
+                    .filter(|df| df.cat_id == cat.id)
+                {
+                    Some(df) if df.assigned => '+',
+                    Some(_)                 => '-',
+                    None                    => ' ',
+                },
             };
             let note_ind = cat_note_indicator(&app.categories, cat.id);
             let kind_ind = match cat.kind {
@@ -2273,6 +2288,23 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
         frame.render_widget(Paragraph::new(cat_lines).style(app.theme.dialog), inner);
+    }
+
+    // ── Date filter sub-dialog ────────────────────────────────────────────────
+    if let FilterState::DateFilter {
+        cat_id, show, start_buf, start_cur, end_buf, end_cur, range, active_field, cal, err_flash, ..
+    } = filter_state {
+        let cat_name = flatten_cats(&app.categories).iter()
+            .find(|c| c.id == *cat_id).map(|c| c.name.clone()).unwrap_or_default();
+        super::viewmgr::render_date_filter_dialog(
+            frame, app, area, &cat_name,
+            *show, start_buf, *start_cur, end_buf, *end_cur,
+            *range, *active_field, *err_flash,
+        );
+        // F3 calendar sits on top of the dialog.
+        if let Some((y, m, d)) = cal {
+            render_calendar(frame, app, area, *y, *m, *d, None);
+        }
     }
 
     // ── Sort dialog overlay ───────────────────────────────────────────────────

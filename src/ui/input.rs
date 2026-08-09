@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
 
 // ── Shared single-line text-field editor ─────────────────────────────────────
 
@@ -1007,29 +1007,40 @@ fn handle_col_quick_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 
 // ── Calendar handler ──────────────────────────────────────────────────────────
 
-fn handle_col_calendar(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    match code {
-        KeyCode::Up        => app.col_calendar_up(),
-        KeyCode::Down      => app.col_calendar_down(),
-        KeyCode::Left  if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_prev(),
-        KeyCode::Left      => app.col_calendar_left(),
-        KeyCode::Right if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
-        KeyCode::Right     => app.col_calendar_right(),
+/// Calendar navigation keys, shared by the column date picker and the Date
+/// Filter dialog's Start/End calendar. None for keys the calendar ignores.
+fn cal_step_for(code: KeyCode, modifiers: KeyModifiers) -> Option<CalStep> {
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    Some(match code {
+        KeyCode::Up                              => CalStep::PrevWeek,
+        KeyCode::Down                            => CalStep::NextWeek,
+        KeyCode::Left  if ctrl                   => CalStep::PrevYear,
+        KeyCode::Left                            => CalStep::PrevDay,
+        KeyCode::Right if ctrl                   => CalStep::NextYear,
+        KeyCode::Right                           => CalStep::NextDay,
         // CSI-u terminals encode Ctrl+Arrow as Ctrl+letter (L=Left, R=Right)
-        KeyCode::Char('l') | KeyCode::Char('L')
-            if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_prev(),
-        KeyCode::Char('r') | KeyCode::Char('R')
-            if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
-        KeyCode::PageUp   if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_prev(),
-        KeyCode::PageDown if modifiers.contains(KeyModifiers::CONTROL) => app.col_calendar_year_next(),
-        KeyCode::PageUp    => app.col_calendar_pgup(),
-        KeyCode::PageDown  => app.col_calendar_pgdn(),
+        KeyCode::Char('l') | KeyCode::Char('L') if ctrl => CalStep::PrevYear,
+        KeyCode::Char('r') | KeyCode::Char('R') if ctrl => CalStep::NextYear,
+        KeyCode::PageUp   if ctrl                => CalStep::PrevYear,
+        KeyCode::PageDown if ctrl                => CalStep::NextYear,
+        KeyCode::PageUp                          => CalStep::PrevMonth,
+        KeyCode::PageDown                        => CalStep::NextMonth,
         // < / > as reliable year nav (Ctrl+PgUp/Dn often intercepted by terminal)
-        KeyCode::Char('<') => app.col_calendar_year_prev(),
-        KeyCode::Char('>') => app.col_calendar_year_next(),
-        KeyCode::Enter     => app.col_calendar_confirm(),
-        KeyCode::Esc       => app.col_calendar_cancel(),
-        KeyCode::F(6)      => app.col_open_set_time(),
+        KeyCode::Char('<')                       => CalStep::PrevYear,
+        KeyCode::Char('>')                       => CalStep::NextYear,
+        _ => return None,
+    })
+}
+
+fn handle_col_calendar(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if let Some(step) = cal_step_for(code, modifiers) {
+        app.col_calendar_step(step);
+        return;
+    }
+    match code {
+        KeyCode::Enter => app.col_calendar_confirm(),
+        KeyCode::Esc   => app.col_calendar_cancel(),
+        KeyCode::F(6)  => app.col_open_set_time(),
         _ => {}
     }
 }
@@ -1446,6 +1457,16 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         return;
     }
 
+    // Date filter sub-dialog (F3 on a Date category in the filter picker).
+    let has_date_filter = matches!(
+        app.vmgr_state.mode,
+        ViewMgrMode::Props { filter_state: FilterState::DateFilter { .. }, .. }
+    );
+    if has_date_filter {
+        handle_vmgr_date_filter(app, code, modifiers);
+        return;
+    }
+
     // Filter picker (F3 on Filter field).
     let has_filter_picker = matches!(
         app.vmgr_state.mode,
@@ -1574,8 +1595,69 @@ fn handle_vmgr_filter_picker(app: &mut App, code: KeyCode, modifiers: KeyModifie
         KeyCode::Home     => app.vmgr_filter_picker_home(),
         KeyCode::End      => app.vmgr_filter_picker_end(),
         KeyCode::Char(' ') => app.vmgr_filter_picker_toggle(),
+        KeyCode::F(3)     => app.vmgr_filter_date_open(),
         KeyCode::Enter    => app.vmgr_filter_picker_confirm(),
         KeyCode::Esc      => app.vmgr_filter_picker_cancel(),
+        _ => {}
+    }
+}
+
+fn handle_vmgr_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Calendar over Start/End is the outermost layer.
+    if matches!(&app.vmgr_state.mode,
+        ViewMgrMode::Props { filter_state: FilterState::DateFilter { cal: Some(_), .. }, .. })
+    {
+        if let Some(step) = cal_step_for(code, modifiers) { app.vmgr_filter_date_cal_step(step); return; }
+        match code {
+            KeyCode::Enter => app.vmgr_filter_date_cal_confirm(),
+            KeyCode::Esc   => app.vmgr_filter_date_cal_cancel(),
+            _ => {}
+        }
+        return;
+    }
+    // Route text input to the active text field (Start or End).
+    let active = match &app.vmgr_state.mode {
+        ViewMgrMode::Props { filter_state: FilterState::DateFilter { active_field, .. }, .. } => *active_field,
+        _ => return,
+    };
+    if matches!(active, DateFilterField::Start | DateFilterField::End) {
+        let (mut buf, mut cursor) = match &app.vmgr_state.mode {
+            ViewMgrMode::Props { filter_state: FilterState::DateFilter {
+                start_buf, start_cur, end_buf, end_cur, active_field, ..
+            }, .. } => if *active_field == DateFilterField::Start {
+                (start_buf.clone(), *start_cur)
+            } else {
+                (end_buf.clone(), *end_cur)
+            },
+            _ => return,
+        };
+        let mut kill = app.kill_buffer.clone();
+        match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+            LineEditResult::Confirm => { app.vmgr_filter_date_confirm(); return; }
+            LineEditResult::Cancel  => { app.vmgr_filter_date_cancel();  return; }
+            LineEditResult::Handled => {
+                if let ViewMgrMode::Props { filter_state: FilterState::DateFilter {
+                    start_buf, start_cur, end_buf, end_cur, active_field, ..
+                }, .. } = &mut app.vmgr_state.mode {
+                    if *active_field == DateFilterField::Start {
+                        *start_buf = buf; *start_cur = cursor;
+                    } else {
+                        *end_buf = buf; *end_cur = cursor;
+                    }
+                }
+                app.kill_buffer = kill;
+                return;
+            }
+            LineEditResult::Unhandled => {}
+        }
+    }
+    match code {
+        KeyCode::Enter              => app.vmgr_filter_date_confirm(),
+        KeyCode::Esc                => app.vmgr_filter_date_cancel(),
+        KeyCode::Tab | KeyCode::Down   => app.vmgr_filter_date_tab(),
+        KeyCode::BackTab | KeyCode::Up => app.vmgr_filter_date_tab_back(),
+        KeyCode::Char(' ')          => app.vmgr_filter_date_toggle(),
+        KeyCode::F(3)               => app.vmgr_filter_date_cal_open(),
         _ => {}
     }
 }
@@ -1630,7 +1712,14 @@ fn handle_vmgr_sort_picker(app: &mut App, code: KeyCode, modifiers: KeyModifiers
 // ── Section Properties handlers ───────────────────────────────────────────────
 
 fn handle_sec_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    // Filter picker is outermost (it has no sub-layer).
+    // Date filter sub-dialog is outermost.
+    let has_date_filter = matches!(
+        app.sec_mode,
+        SectionMode::Props { filter_state: FilterState::DateFilter { .. }, .. }
+    );
+    if has_date_filter { handle_sec_date_filter(app, code, modifiers); return; }
+
+    // Filter picker.
     let has_filter = matches!(
         app.sec_mode,
         SectionMode::Props { filter_state: FilterState::Open { .. }, .. }
@@ -1709,8 +1798,68 @@ fn handle_sec_filter_picker(app: &mut App, code: KeyCode, modifiers: KeyModifier
         KeyCode::Home     => app.sec_filter_picker_home(),
         KeyCode::End      => app.sec_filter_picker_end(),
         KeyCode::Char(' ') => app.sec_filter_picker_toggle(),
+        KeyCode::F(3)     => app.sec_filter_date_open(),
         KeyCode::Enter    => app.sec_filter_picker_confirm(),
         KeyCode::Esc      => app.sec_filter_picker_cancel(),
+        _ => {}
+    }
+}
+
+fn handle_sec_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Calendar over Start/End is the outermost layer.
+    if matches!(&app.sec_mode,
+        SectionMode::Props { filter_state: FilterState::DateFilter { cal: Some(_), .. }, .. })
+    {
+        if let Some(step) = cal_step_for(code, modifiers) { app.sec_filter_date_cal_step(step); return; }
+        match code {
+            KeyCode::Enter => app.sec_filter_date_cal_confirm(),
+            KeyCode::Esc   => app.sec_filter_date_cal_cancel(),
+            _ => {}
+        }
+        return;
+    }
+    let active = match &app.sec_mode {
+        SectionMode::Props { filter_state: FilterState::DateFilter { active_field, .. }, .. } => *active_field,
+        _ => return,
+    };
+    if matches!(active, DateFilterField::Start | DateFilterField::End) {
+        let (mut buf, mut cursor) = match &app.sec_mode {
+            SectionMode::Props { filter_state: FilterState::DateFilter {
+                start_buf, start_cur, end_buf, end_cur, active_field, ..
+            }, .. } => if *active_field == DateFilterField::Start {
+                (start_buf.clone(), *start_cur)
+            } else {
+                (end_buf.clone(), *end_cur)
+            },
+            _ => return,
+        };
+        let mut kill = app.kill_buffer.clone();
+        match line_edit(code, modifiers, &mut buf, &mut cursor, &mut kill) {
+            LineEditResult::Confirm => { app.sec_filter_date_confirm(); return; }
+            LineEditResult::Cancel  => { app.sec_filter_date_cancel();  return; }
+            LineEditResult::Handled => {
+                if let SectionMode::Props { filter_state: FilterState::DateFilter {
+                    start_buf, start_cur, end_buf, end_cur, active_field, ..
+                }, .. } = &mut app.sec_mode {
+                    if *active_field == DateFilterField::Start {
+                        *start_buf = buf; *start_cur = cursor;
+                    } else {
+                        *end_buf = buf; *end_cur = cursor;
+                    }
+                }
+                app.kill_buffer = kill;
+                return;
+            }
+            LineEditResult::Unhandled => {}
+        }
+    }
+    match code {
+        KeyCode::Enter              => app.sec_filter_date_confirm(),
+        KeyCode::Esc                => app.sec_filter_date_cancel(),
+        KeyCode::Tab | KeyCode::Down   => app.sec_filter_date_tab(),
+        KeyCode::BackTab | KeyCode::Up => app.sec_filter_date_tab_back(),
+        KeyCode::Char(' ')          => app.sec_filter_date_toggle(),
+        KeyCode::F(3)               => app.sec_filter_date_cal_open(),
         _ => {}
     }
 }

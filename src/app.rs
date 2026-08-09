@@ -1,5 +1,5 @@
 use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
-use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, FilterEntry, FilterOp, Item, Section, SectionSortMethod, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
+use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, DateBound, DateFilter, DateFilterRange, FilterEntry, FilterOp, Item, Section, SectionSortMethod, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
 use crate::persist;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -367,12 +367,50 @@ pub enum SectionFormField { Category, Insert }
 #[derive(Clone, Copy, PartialEq)]
 pub enum SecPropsField { Head, ItemSorting, Filter }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum DateFilterField { Show, Start, End, Range }
+
+/// The three choices on the date dialog's "Show items if they are" field.
+/// `Clear` removes the date filter entirely on confirm.
+#[derive(Clone, Copy, PartialEq)]
+pub enum DateFilterShow { Assigned, NotAssigned, Clear }
+
+impl DateFilterShow {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Assigned    => "Assigned",
+            Self::NotAssigned => "Not assigned",
+            Self::Clear       => "Clear filter",
+        }
+    }
+}
+
 pub enum FilterState {
     Closed,
     Open {
         cursor:  usize,
         scroll:  usize,
         entries: HashMap<usize, FilterOp>,  // cat_id → Include/Exclude
+    },
+    /// Date filter sub-dialog, layered over the picker.
+    DateFilter {
+        cat_id:         usize,
+        show:           DateFilterShow,
+        start_buf:      String,
+        start_cur:      usize,
+        end_buf:        String,
+        end_cur:        usize,
+        range:          DateFilterRange,
+        active_field:   DateFilterField,
+        fmt_code:       DateFmtCode,
+        /// F3 calendar over the Start/End field, as (year, month, day).
+        cal:            Option<(i32, u32, u32)>,
+        /// When the field last refused to be left; drives the error flash.
+        err_flash:      Option<std::time::Instant>,
+        // saved picker state to restore on Esc/confirm
+        picker_cursor:  usize,
+        picker_scroll:  usize,
+        picker_entries: HashMap<usize, FilterOp>,
     },
 }
 
@@ -798,6 +836,9 @@ pub fn section_item_indices(items: &[Item], view: &View, sec_idx: usize, cats: &
         .collect();
     apply_section_filter(&mut indices, items, sec, &parent_map);
     apply_view_filter(&mut indices, items, view, &parent_map);
+    let today = chrono::Local::now().date_naive();
+    if let Some(df) = &sec.date_filter  { apply_date_filter(&mut indices, items, df, today); }
+    if let Some(df) = &view.date_filter { apply_date_filter(&mut indices, items, df, today); }
     indices
 }
 
@@ -848,6 +889,9 @@ fn section_item_indices_sorted(items: &[Item], view: &View, sec_idx: usize, cats
         .collect();
     apply_section_filter(&mut indices, items, sec, &parent_map);
     apply_view_filter(&mut indices, items, view, &parent_map);
+    let today = chrono::Local::now().date_naive();
+    if let Some(df) = &sec.date_filter  { apply_date_filter(&mut indices, items, df, today); }
+    if let Some(df) = &view.date_filter { apply_date_filter(&mut indices, items, df, today); }
 
     let (_, p_on, p_order, p_na, p_cat_id, p_seq, s_on, s_order, s_na, s_cat_id, s_seq)
         = effective_sort(sec, view);
@@ -938,6 +982,343 @@ fn apply_view_filter(
         !view.filter.iter()
             .filter(|f| f.op == FilterOp::Exclude)
             .any(|f| items[gi].values.keys().any(|&k| is_under_map(k, f.cat_id, parent_map)))
+    });
+}
+
+fn date_filter_show_next(s: DateFilterShow) -> DateFilterShow {
+    match s {
+        DateFilterShow::Assigned    => DateFilterShow::NotAssigned,
+        DateFilterShow::NotAssigned => DateFilterShow::Clear,
+        DateFilterShow::Clear       => DateFilterShow::Assigned,
+    }
+}
+
+/// Build the stored `DateFilter` from the dialog's working state.
+/// Only `Clear` removes the filter; `Assigned` with no bounds is a real filter
+/// meaning "show all items that have any date assigned to this category".
+fn build_date_filter(
+    cat_id: usize,
+    show:   DateFilterShow,
+    start:  Option<DateBound>,
+    end:    Option<DateBound>,
+    range:  DateFilterRange,
+) -> Option<DateFilter> {
+    match show {
+        DateFilterShow::Clear       => None,
+        DateFilterShow::NotAssigned =>
+            Some(DateFilter { cat_id, assigned: false, start: None, end: None, range }),
+        DateFilterShow::Assigned    =>
+            Some(DateFilter { cat_id, assigned: true, start, end, range }),
+    }
+}
+
+/// Keep a scrolling list's cursor and scroll inside the list after entries are
+/// added or removed. `visible` is the number of rows the list shows at once.
+fn clamp_list_cursor(cursor: &mut usize, scroll: &mut usize, count: usize, visible: usize) {
+    *cursor = (*cursor).min(count.saturating_sub(1));
+    *scroll = (*scroll).min(count.saturating_sub(visible)).min(*cursor);
+}
+
+/// Number of Filter entry rows in the properties dialogs.
+const FILTER_VIS: usize = 2;
+/// Number of Sections rows in the View Properties dialog.
+const SEC_VIS: usize = 6;
+/// Number of category rows in the Section Select picker.
+const SEC_PICK_VIS: usize = 16;
+
+/// Opening position for the filter picker: the category the Filter list cursor is
+/// on. Falls back to the top when that slot has no entry. The list starts at the
+/// first category, scrolling only as far as needed to bring the cursor onto the
+/// last row. Scroll must be the real offset, not 0 — the movement keys carry it
+/// forward, so a placeholder would make the first keypress jump the page.
+fn filter_picker_start(flat: &[FlatCat], filter: &[FilterEntry], filter_cursor: usize) -> (usize, usize) {
+    const VIS: usize = 20;
+    let cursor = filter.get(filter_cursor)
+        .and_then(|e| flat.iter().position(|c| c.id == e.cat_id))
+        .unwrap_or(0);
+    (cursor, cursor.saturating_sub(VIS - 1))
+}
+
+/// Same, for the Section Select picker: open on the category backing the section
+/// under the Sections list cursor.
+fn sec_picker_start(flat: &[FlatCat], sections: &[Section], sec_cursor: usize) -> (usize, usize) {
+    let cursor = sections.get(sec_cursor)
+        .and_then(|s| flat.iter().position(|c| c.id == s.cat_id))
+        .unwrap_or(0);
+    (cursor, cursor.saturating_sub(SEC_PICK_VIS - 1))
+}
+
+/// The picker's +/- marker for a date category mirrors its date filter, so the
+/// two are kept in step: Assigned = Include, Not assigned = Exclude, Clear = gone.
+fn date_filter_op(show: DateFilterShow) -> Option<FilterOp> {
+    match show {
+        DateFilterShow::Assigned    => Some(FilterOp::Include),
+        DateFilterShow::NotAssigned => Some(FilterOp::Exclude),
+        DateFilterShow::Clear       => None,
+    }
+}
+
+/// Set or remove `cat_id`'s entry in a filter list, leaving the rest untouched.
+fn sync_filter_entry(filter: &mut Vec<FilterEntry>, cat_id: usize, op: Option<FilterOp>) {
+    match op {
+        Some(op) => match filter.iter_mut().find(|e| e.cat_id == cat_id) {
+            Some(e) => e.op = op,
+            None    => filter.push(FilterEntry { cat_id, op }),
+        },
+        None => filter.retain(|e| e.cat_id != cat_id),
+    }
+}
+
+/// Same, for the filter picker's working map.
+fn sync_filter_entry_map(entries: &mut HashMap<usize, FilterOp>, cat_id: usize, op: Option<FilterOp>) {
+    match op {
+        Some(op) => { entries.insert(cat_id, op); }
+        None     => { entries.remove(&cat_id); }
+    }
+}
+
+/// Only "Assigned" has lower fields, so navigation stays put for the others.
+/// With no Start or End date there is no range, so "Items should be" is skipped.
+fn date_filter_field_next(f: DateFilterField, show: DateFilterShow, has_bounds: bool) -> DateFilterField {
+    if show != DateFilterShow::Assigned { return DateFilterField::Show; }
+    match f {
+        DateFilterField::Show  => DateFilterField::Start,
+        DateFilterField::Start => DateFilterField::End,
+        DateFilterField::End   => if has_bounds { DateFilterField::Range } else { DateFilterField::Show },
+        DateFilterField::Range => DateFilterField::Show,
+    }
+}
+
+fn date_filter_field_prev(f: DateFilterField, show: DateFilterShow, has_bounds: bool) -> DateFilterField {
+    if show != DateFilterShow::Assigned { return DateFilterField::Show; }
+    match f {
+        DateFilterField::Show  => if has_bounds { DateFilterField::Range } else { DateFilterField::End },
+        DateFilterField::Start => DateFilterField::Show,
+        DateFilterField::End   => DateFilterField::Start,
+        DateFilterField::Range => DateFilterField::End,
+    }
+}
+
+/// Find the DateFmtCode used by columns in `view` for `cat_id`.
+/// Falls back to MMDDYY if no matching column exists.
+fn find_date_fmt_code(view: &View, cat_id: usize) -> DateFmtCode {
+    view.columns.iter()
+        .find(|c| c.cat_id == cat_id)
+        .and_then(|c| c.date_fmt.as_ref())
+        .map(|f| f.code)
+        .unwrap_or(DateFmtCode::MMDDYY)
+}
+
+/// Format a `DateBound` back to an editable string for the dialog fields.
+fn format_date_bound(b: &DateBound) -> String {
+    match b {
+        DateBound::Absolute(d) => d.format("%Y-%m-%d").to_string(),
+        DateBound::Today       => "today".to_string(),
+        DateBound::Yesterday   => "yesterday".to_string(),
+        DateBound::Tomorrow    => "tomorrow".to_string(),
+        DateBound::Weekday(wd) => format!("{}", wd).to_lowercase(),
+    }
+}
+
+/// A `DateBound` as it appears in the bracket notation: absolute dates in the
+/// view's date format, relative bounds as the keyword the user typed.
+fn format_date_bound_display(b: &DateBound, code: DateFmtCode) -> String {
+    match b {
+        DateBound::Absolute(d) => match code {
+            DateFmtCode::MMDDYY   => d.format("%m/%d/%y").to_string(),
+            DateFmtCode::DDMMYY   => d.format("%d/%m/%y").to_string(),
+            DateFmtCode::YYYYMMDD => d.format("%Y/%m/%d").to_string(),
+        },
+        _ => format_date_bound(b),
+    }
+}
+
+/// One category's contribution to the bracket notation (User's Guide 11-15):
+///   `Calls`                     assigned to Calls
+///   `-Calls`                    not assigned to Calls
+///   `When(12/26/90↔12/30/90)`   When dates within the range
+///   `When(↔12/30/90)`           When dates through 12/30/90
+///   `When(12/26/90↔)`           When dates from 12/26/90 on
+///   `When-(today)`              When dates other than today (outside range)
+fn format_filter_term(name: &str, op: FilterOp, df: Option<&DateFilter>, code: DateFmtCode) -> String {
+    let assigned = df.map_or(op == FilterOp::Include, |d| d.assigned);
+    let mut out  = String::new();
+    if !assigned { out.push('-'); }
+    out.push_str(name);
+    let Some(df) = df else { return out };
+    if df.start.is_none() && df.end.is_none() { return out; }
+    if df.range == DateFilterRange::Outside { out.push('-'); }
+    out.push('(');
+    let start = df.start.as_ref().map(|b| format_date_bound_display(b, code));
+    let end   = df.end.as_ref().map(|b| format_date_bound_display(b, code));
+    // A single-day range collapses: `(today)` rather than `(today<today)`.
+    if start.is_some() && start == end {
+        out.push_str(start.as_deref().unwrap_or(""));
+    } else {
+        out.push_str(start.as_deref().unwrap_or(""));
+        out.push('\u{2194}');   // ↔
+        out.push_str(end.as_deref().unwrap_or(""));
+    }
+    out.push(')');
+    out
+}
+
+// ── Date Filter calendar (F3 on Start/End) ───────────────────────────────────
+// These operate on the FilterState directly so the view and section dialogs can
+// share one implementation.
+
+/// Open the calendar over the active Start/End field, seeded from whatever that
+/// field holds — including relative keywords, which resolve against today.
+fn date_filter_cal_open(fs: &mut FilterState) {
+    use chrono::Datelike;
+    let FilterState::DateFilter { active_field, start_buf, end_buf, fmt_code, cal, .. } = fs else { return };
+    let buf = match active_field {
+        DateFilterField::Start => start_buf.as_str(),
+        DateFilterField::End   => end_buf.as_str(),
+        _ => return,   // no date to pick on the Show or Items-should-be rows
+    };
+    let today = chrono::Local::now().date_naive();
+    let seed  = parse_date_bound(buf, *fmt_code)
+        .map(|b| resolve_date_bound(&b, today))
+        .unwrap_or(today);
+    *cal = Some((seed.year(), seed.month(), seed.day()));
+}
+
+fn date_filter_cal_step(fs: &mut FilterState, step: CalStep) {
+    if let FilterState::DateFilter { cal: Some((y, m, d)), .. } = fs {
+        cal_step(y, m, d, step);
+    }
+}
+
+/// Write the picked date into the field the calendar was opened over.
+fn date_filter_cal_confirm(fs: &mut FilterState) {
+    let FilterState::DateFilter {
+        active_field, start_buf, start_cur, end_buf, end_cur, fmt_code, cal, ..
+    } = fs else { return };
+    let Some((y, m, d)) = *cal else { return };
+    *cal = None;
+    let Some(date) = chrono::NaiveDate::from_ymd_opt(y, m, d) else { return };
+    let text = format_date_bound_display(&DateBound::Absolute(date), *fmt_code);
+    let len  = text.chars().count();
+    match active_field {
+        DateFilterField::Start => { *start_buf = text; *start_cur = len; }
+        DateFilterField::End   => { *end_buf   = text; *end_cur   = len; }
+        _ => {}
+    }
+}
+
+fn date_filter_cal_cancel(fs: &mut FilterState) {
+    if let FilterState::DateFilter { cal, .. } = fs { *cal = None; }
+}
+
+/// How long the Start/End field stays inverted after a rejected exit.
+pub const DATE_FILTER_FLASH: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// True when the active Start/End field holds something that can't be parsed.
+/// Empty is valid — it means an open-ended bound.
+fn date_filter_field_invalid(fs: &FilterState) -> bool {
+    let FilterState::DateFilter { active_field, start_buf, end_buf, fmt_code, .. } = fs else { return false };
+    let buf = match active_field {
+        DateFilterField::Start => start_buf,
+        DateFilterField::End   => end_buf,
+        _ => return false,
+    };
+    !buf.trim().is_empty() && parse_date_bound(buf, *fmt_code).is_none()
+}
+
+/// Refuse to leave a field holding an unparseable date, flashing it instead.
+/// Returns true when the caller should abandon the move.
+///
+/// Because every exit goes through here, only the *active* field can ever be
+/// invalid — which is why confirm only has to check that one.
+fn date_filter_block_exit(fs: &mut FilterState) -> bool {
+    if !date_filter_field_invalid(fs) { return false; }
+    if let FilterState::DateFilter { err_flash, .. } = fs {
+        *err_flash = Some(std::time::Instant::now());
+    }
+    true
+}
+
+/// Parse a user-typed date string into a `DateBound`.
+/// Recognises relative keywords (today, yesterday, tomorrow, weekday names)
+/// and absolute dates in ISO or locale format.
+fn parse_date_bound(s: &str, fmt_code: DateFmtCode) -> Option<DateBound> {
+    let lower = s.trim().to_lowercase();
+    match lower.as_str() {
+        "today"                  => return Some(DateBound::Today),
+        "yesterday"              => return Some(DateBound::Yesterday),
+        "tomorrow"               => return Some(DateBound::Tomorrow),
+        "monday"   | "mon"       => return Some(DateBound::Weekday(chrono::Weekday::Mon)),
+        "tuesday"  | "tue"       => return Some(DateBound::Weekday(chrono::Weekday::Tue)),
+        "wednesday"| "wed"       => return Some(DateBound::Weekday(chrono::Weekday::Wed)),
+        "thursday" | "thu"       => return Some(DateBound::Weekday(chrono::Weekday::Thu)),
+        "friday"   | "fri"       => return Some(DateBound::Weekday(chrono::Weekday::Fri)),
+        "saturday" | "sat"       => return Some(DateBound::Weekday(chrono::Weekday::Sat)),
+        "sunday"   | "sun"       => return Some(DateBound::Weekday(chrono::Weekday::Sun)),
+        "" => return None,
+        _ => {}
+    }
+    let (y, mo, d, _, _, _) = parse_date_input(s.trim(), fmt_code)?;
+    chrono::NaiveDate::from_ymd_opt(y, mo, d).map(DateBound::Absolute)
+}
+
+/// Resolve a `DateBound` to a concrete date relative to `today`.
+/// `DateBound::Weekday(wd)` gives the date of that weekday in the ISO week
+/// containing `today` (Mon–Sun), which makes "Monday–Friday" a current-week window.
+fn resolve_date_bound(bound: &DateBound, today: chrono::NaiveDate) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    match bound {
+        DateBound::Absolute(d) => *d,
+        DateBound::Today       => today,
+        DateBound::Yesterday   => today - chrono::Duration::days(1),
+        DateBound::Tomorrow    => today + chrono::Duration::days(1),
+        DateBound::Weekday(wd) => {
+            let offset = wd.num_days_from_monday() as i64
+                       - today.weekday().num_days_from_monday() as i64;
+            today + chrono::Duration::days(offset)
+        }
+    }
+}
+
+/// Apply a date filter to the item index list.
+/// Called after category filters so the two filter types compose (AND).
+fn apply_date_filter(
+    indices: &mut Vec<usize>,
+    items:   &[Item],
+    df:      &DateFilter,
+    today:   chrono::NaiveDate,
+) {
+    let start = df.start.as_ref().map(|b| resolve_date_bound(b, today));
+    let end   = df.end.as_ref().map(|b| resolve_date_bound(b, today));
+
+    indices.retain(|&gi| {
+        let item = &items[gi];
+        let raw  = item.values.get(&df.cat_id);
+
+        if !df.assigned {
+            return raw.map_or(true, |s| s.is_empty());
+        }
+
+        let Some(val) = raw else { return false; };
+        if val.is_empty() { return false; }
+
+        // No bounds → keep all items that have any assigned value.
+        if start.is_none() && end.is_none() { return true; }
+
+        let Some((y, mo, d, _, _, _)) = parse_datetime(val) else { return false; };
+        let Some(item_date) = chrono::NaiveDate::from_ymd_opt(y, mo, d) else { return false; };
+
+        let in_range = match (start, end) {
+            (Some(s), Some(e)) => item_date >= s && item_date <= e,
+            (Some(s), None)    => item_date >= s,
+            (None,    Some(e)) => item_date <= e,
+            (None,    None)    => unreachable!(),
+        };
+
+        match df.range {
+            DateFilterRange::Inside  => in_range,
+            DateFilterRange::Outside => !in_range,
+        }
     });
 }
 
@@ -1941,6 +2322,48 @@ fn today() -> (i32, u32, u32) {
     civil_from_days((secs / 86400) as i64)
 }
 
+// ── Calendar cursor movement ─────────────────────────────────────────────────
+// Shared by the column date picker and the Date Filter dialog's Start/End fields.
+
+/// One step of calendar movement.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CalStep { PrevDay, NextDay, PrevWeek, NextWeek, PrevMonth, NextMonth, PrevYear, NextYear }
+
+/// Move a (year, month, day) triple by one step, rolling over month and year
+/// boundaries. Month and year steps clamp the day into the target month.
+pub fn cal_step(year: &mut i32, month: &mut u32, day: &mut u32, step: CalStep) {
+    match step {
+        CalStep::PrevDay => {
+            if *day > 1 { *day -= 1; }
+            else if *month > 1 { *month -= 1; *day = days_in_month(*year, *month); }
+            else { *year -= 1; *month = 12; *day = 31; }
+        }
+        CalStep::NextDay => {
+            if *day < days_in_month(*year, *month) { *day += 1; }
+            else if *month < 12 { *month += 1; *day = 1; }
+            else { *year += 1; *month = 1; *day = 1; }
+        }
+        CalStep::PrevWeek => for _ in 0..7 { cal_step(year, month, day, CalStep::PrevDay); },
+        CalStep::NextWeek => for _ in 0..7 { cal_step(year, month, day, CalStep::NextDay); },
+        CalStep::PrevMonth => {
+            if *month > 1 { *month -= 1; } else { *year -= 1; *month = 12; }
+            *day = (*day).min(days_in_month(*year, *month));
+        }
+        CalStep::NextMonth => {
+            if *month < 12 { *month += 1; } else { *year += 1; *month = 1; }
+            *day = (*day).min(days_in_month(*year, *month));
+        }
+        CalStep::PrevYear => {
+            *year -= 1;
+            *day = (*day).min(days_in_month(*year, *month));
+        }
+        CalStep::NextYear => {
+            *year += 1;
+            *day = (*day).min(days_in_month(*year, *month));
+        }
+    }
+}
+
 pub fn days_in_month(year: i32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -1965,6 +2388,7 @@ impl App {
             secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
             secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
             filter:           vec![],
+            date_filter:      None,
         };
         let view = View {
             id:         1,
@@ -1985,7 +2409,7 @@ impl App {
             sort_secondary_on: SortOn::None,     sort_secondary_order: SortOrder::Ascending,
             sort_secondary_na: SortNa::Bottom,   sort_secondary_cat_id: None,
             sort_secondary_seq: SortSeq::CategoryHierarchy,
-            filter: vec![],
+            filter: vec![], date_filter: None,
         };
 
         fn date(id: usize, name: &str) -> Category {
@@ -2267,7 +2691,7 @@ impl App {
             sort_secondary_on: SortOn::None,  sort_secondary_order: SortOrder::Ascending,
             sort_secondary_na: SortNa::Bottom, sort_secondary_cat_id: None,
             sort_secondary_seq: SortSeq::CategoryHierarchy,
-            filter: vec![],
+            filter: vec![], date_filter: None,
         };
         self.inactive_views.push(blank);
         // The new view is always appended last in the ordered list.
@@ -4877,7 +5301,7 @@ impl App {
             primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
             secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
             secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
-            filter:           vec![],
+            filter:           vec![], date_filter: None,
         });
         self.cursor = CursorPos::SectionHead(insert_idx);
     }
@@ -5197,17 +5621,21 @@ impl App {
     // ── Filter picker ─────────────────────────────────────────────────────────
 
     pub fn sec_open_filter_picker(&mut self) {
-        let sec_idx = match &self.sec_mode {
-            SectionMode::Props { sec_idx, active_field: SecPropsField::Filter, .. } => *sec_idx,
+        let (sec_idx, filter_cursor) = match &self.sec_mode {
+            SectionMode::Props { sec_idx, filter_cursor, active_field: SecPropsField::Filter, .. } =>
+                (*sec_idx, *filter_cursor),
             _ => return,
         };
-        let entries: HashMap<usize, FilterOp> = if sec_idx < self.view.sections.len() {
-            self.view.sections[sec_idx].filter.iter().map(|e| (e.cat_id, e.op)).collect()
+        let filter = if sec_idx < self.view.sections.len() {
+            self.view.sections[sec_idx].filter.as_slice()
         } else {
-            HashMap::new()
+            &[]
         };
+        let entries: HashMap<usize, FilterOp> = filter.iter().map(|e| (e.cat_id, e.op)).collect();
+        // Land on the category the Filter list cursor is sitting on.
+        let (cursor, scroll) = filter_picker_start(&flatten_cats(&self.categories), filter, filter_cursor);
         if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
-            *filter_state = FilterState::Open { cursor: 0, scroll: 0, entries };
+            *filter_state = FilterState::Open { cursor, scroll, entries };
         }
     }
 
@@ -5285,17 +5713,19 @@ impl App {
     }
 
     /// Cycle the filter status of the category at the cursor: (none) → Include → Exclude → (none).
+    /// Date categories open the date filter dialog instead.
     pub fn sec_filter_picker_toggle(&mut self) {
-        let cat_id = {
+        let cat = {
             let flat = flatten_cats(&self.categories);
             match &self.sec_mode {
                 SectionMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } => {
-                    flat.get(*cursor).map(|c| c.id)
+                    flat.get(*cursor).map(|c| (c.id, c.kind))
                 }
                 _ => None,
             }
         };
-        let Some(cat_id) = cat_id else { return; };
+        let Some((cat_id, kind)) = cat else { return; };
+        if kind == CategoryKind::Date { self.sec_filter_date_open(); return; }
         if let SectionMode::Props { filter_state: FilterState::Open { entries, .. }, .. } = &mut self.sec_mode {
             match entries.get(&cat_id).copied() {
                 None                     => { entries.insert(cat_id, FilterOp::Include); }
@@ -5323,8 +5753,10 @@ impl App {
                 .collect();
             self.view.sections[sec_idx].filter = new_filter;
         }
-        if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
+        let count = self.view.sections.get(sec_idx).map(|s| s.filter.len()).unwrap_or(0);
+        if let SectionMode::Props { ref mut filter_state, ref mut filter_cursor, ref mut filter_scroll, .. } = self.sec_mode {
             *filter_state = FilterState::Closed;
+            clamp_list_cursor(filter_cursor, filter_scroll, count, FILTER_VIS);
         }
     }
 
@@ -5337,21 +5769,26 @@ impl App {
     // ── ViewMgr filter picker ─────────────────────────────────────────────────
 
     pub fn vmgr_open_filter_picker(&mut self) {
-        if !matches!(&self.vmgr_state.mode, ViewMgrMode::Props { active_field: ViewPropsField::Filter, .. }) {
-            return;
-        }
+        let filter_cursor = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { filter_cursor, active_field: ViewPropsField::Filter, .. } => *filter_cursor,
+            _ => return,
+        };
         let v_cursor = self.vmgr_state.cursor;
         let voi      = self.view_order_idx;
-        let entries: HashMap<usize, FilterOp> = {
+        let (entries, cursor, scroll) = {
             let view_ref = if v_cursor == voi { &self.view }
                            else {
                                let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
                                &self.inactive_views[ii]
                            };
-            view_ref.filter.iter().map(|e| (e.cat_id, e.op)).collect()
+            let entries: HashMap<usize, FilterOp> =
+                view_ref.filter.iter().map(|e| (e.cat_id, e.op)).collect();
+            // Land on the category the Filter list cursor is sitting on.
+            let (c, s) = filter_picker_start(&flatten_cats(&self.categories), &view_ref.filter, filter_cursor);
+            (entries, c, s)
         };
         if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
-            *filter_state = FilterState::Open { cursor: 0, scroll: 0, entries };
+            *filter_state = FilterState::Open { cursor, scroll, entries };
         }
     }
 
@@ -5431,16 +5868,18 @@ impl App {
     }
 
     pub fn vmgr_filter_picker_toggle(&mut self) {
-        let cat_id = {
+        let cat = {
             let flat = flatten_cats(&self.categories);
             match &self.vmgr_state.mode {
                 ViewMgrMode::Props { filter_state: FilterState::Open { cursor, .. }, .. } => {
-                    flat.get(*cursor).map(|c| c.id)
+                    flat.get(*cursor).map(|c| (c.id, c.kind))
                 }
                 _ => None,
             }
         };
-        let Some(cat_id) = cat_id else { return; };
+        let Some((cat_id, kind)) = cat else { return; };
+        // Date categories open the date filter dialog instead of cycling +/-.
+        if kind == CategoryKind::Date { self.vmgr_filter_date_open(); return; }
         if let ViewMgrMode::Props { filter_state: FilterState::Open { entries, .. }, .. } = &mut self.vmgr_state.mode {
             match entries.get(&cat_id).copied() {
                 None                    => { entries.insert(cat_id, FilterOp::Include); }
@@ -5471,14 +5910,381 @@ impl App {
                 self.inactive_views[ii].filter = new_filter;
             }
         }
-        if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
+        let count = self.vmgr_filter_count();
+        if let ViewMgrMode::Props { ref mut filter_state, ref mut filter_cursor, ref mut filter_scroll, .. } = self.vmgr_state.mode {
             *filter_state = FilterState::Closed;
+            clamp_list_cursor(filter_cursor, filter_scroll, count, FILTER_VIS);
         }
     }
 
     pub fn vmgr_filter_picker_cancel(&mut self) {
         if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
             *filter_state = FilterState::Closed;
+        }
+    }
+
+    // ── ViewMgr date filter dialog ────────────────────────────────────────────
+
+    /// Open the date filter dialog for the category under the picker cursor.
+    /// Only does anything if that category has kind == Date.
+    pub fn vmgr_filter_date_open(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        let (cursor, scroll, entries, cat_id, kind) = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, entries }, .. } => {
+                let cat = flat.get(*cursor);
+                let (id, k) = cat.map(|c| (c.id, c.kind)).unwrap_or((0, crate::model::CategoryKind::Standard));
+                (*cursor, *scroll, entries.clone(), id, k)
+            }
+            _ => return,
+        };
+        if kind != crate::model::CategoryKind::Date { return; }
+        let v_cursor = self.vmgr_state.cursor;
+        let voi      = self.view_order_idx;
+        let existing = if v_cursor == voi { &self.view } else {
+            let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
+            &self.inactive_views[ii]
+        };
+        let (show, start_buf, end_buf, range, fmt_code) = existing.date_filter.as_ref()
+            .filter(|df| df.cat_id == cat_id)
+            .map(|df| (
+                if df.assigned { DateFilterShow::Assigned } else { DateFilterShow::NotAssigned },
+                df.start.as_ref().map(|b| format_date_bound(b)).unwrap_or_default(),
+                df.end.as_ref().map(|b| format_date_bound(b)).unwrap_or_default(),
+                df.range,
+                find_date_fmt_code(existing, cat_id),
+            ))
+            .unwrap_or_else(|| {
+                // No date filter yet: fall back to the picker's own +/- for this category.
+                let show = match existing.filter.iter().find(|e| e.cat_id == cat_id).map(|e| e.op) {
+                    Some(FilterOp::Exclude) => DateFilterShow::NotAssigned,
+                    _                       => DateFilterShow::Assigned,
+                };
+                (show, String::new(), String::new(), DateFilterRange::Inside,
+                 find_date_fmt_code(existing, cat_id))
+            });
+        if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
+            *filter_state = FilterState::DateFilter {
+                cat_id, show, start_buf, start_cur: 0, end_buf, end_cur: 0,
+                range, active_field: DateFilterField::Show, fmt_code,
+                cal: None,
+                err_flash: None,
+                picker_cursor: cursor, picker_scroll: scroll, picker_entries: entries,
+            };
+        }
+    }
+
+    pub fn vmgr_filter_date_tab(&mut self) {
+        if self.vmgr_date_fs().is_some_and(date_filter_block_exit) { return; }
+        if let ViewMgrMode::Props { filter_state: FilterState::DateFilter { active_field, show, start_buf, end_buf, .. }, .. } = &mut self.vmgr_state.mode {
+            let has_bounds = !start_buf.trim().is_empty() || !end_buf.trim().is_empty();
+            *active_field = date_filter_field_next(*active_field, *show, has_bounds);
+        }
+    }
+
+    pub fn vmgr_filter_date_tab_back(&mut self) {
+        if self.vmgr_date_fs().is_some_and(date_filter_block_exit) { return; }
+        if let ViewMgrMode::Props { filter_state: FilterState::DateFilter { active_field, show, start_buf, end_buf, .. }, .. } = &mut self.vmgr_state.mode {
+            let has_bounds = !start_buf.trim().is_empty() || !end_buf.trim().is_empty();
+            *active_field = date_filter_field_prev(*active_field, *show, has_bounds);
+        }
+    }
+
+    // ── Date filter calendar (F3 on Start/End) ────────────────────────────────
+
+    fn vmgr_date_fs(&mut self) -> Option<&mut FilterState> {
+        match &mut self.vmgr_state.mode {
+            ViewMgrMode::Props { filter_state, .. } => Some(filter_state),
+            _ => None,
+        }
+    }
+
+    pub fn vmgr_filter_date_cal_open(&mut self) {
+        if let Some(fs) = self.vmgr_date_fs() { date_filter_cal_open(fs); }
+    }
+    pub fn vmgr_filter_date_cal_step(&mut self, step: CalStep) {
+        if let Some(fs) = self.vmgr_date_fs() { date_filter_cal_step(fs, step); }
+    }
+    pub fn vmgr_filter_date_cal_confirm(&mut self) {
+        if let Some(fs) = self.vmgr_date_fs() { date_filter_cal_confirm(fs); }
+    }
+    pub fn vmgr_filter_date_cal_cancel(&mut self) {
+        if let Some(fs) = self.vmgr_date_fs() { date_filter_cal_cancel(fs); }
+    }
+
+    pub fn vmgr_filter_date_toggle(&mut self) {
+        if let ViewMgrMode::Props { filter_state: FilterState::DateFilter { show, range, active_field, .. }, .. } = &mut self.vmgr_state.mode {
+            match *active_field {
+                DateFilterField::Show  => *show = date_filter_show_next(*show),
+                DateFilterField::Range => *range = if *range == DateFilterRange::Inside { DateFilterRange::Outside } else { DateFilterRange::Inside },
+                _ => {}
+            }
+        }
+    }
+
+    pub fn vmgr_filter_date_confirm(&mut self) {
+        if self.vmgr_date_fs().is_some_and(date_filter_block_exit) { return; }
+        let (cat_id, show, start_buf, end_buf, range, fmt_code, picker_cursor, picker_scroll, picker_entries) =
+            match &self.vmgr_state.mode {
+                ViewMgrMode::Props { filter_state: FilterState::DateFilter {
+                    cat_id, show, start_buf, end_buf, range, fmt_code,
+                    picker_cursor, picker_scroll, picker_entries, ..
+                }, .. } => (*cat_id, *show, start_buf.clone(), end_buf.clone(),
+                            *range, *fmt_code, *picker_cursor, *picker_scroll, picker_entries.clone()),
+                _ => return,
+            };
+        let start = parse_date_bound(&start_buf, fmt_code);
+        let end   = parse_date_bound(&end_buf, fmt_code);
+        let new_df = build_date_filter(cat_id, show, start, end, range);
+        let new_op = date_filter_op(show);
+        let is_new = matches!(&self.vmgr_state.mode, ViewMgrMode::Props { is_new: true, .. });
+        if !is_new { self.push_undo(); }
+        let v_cursor = self.vmgr_state.cursor;
+        let voi      = self.view_order_idx;
+        if v_cursor == voi {
+            self.view.date_filter = new_df;
+            sync_filter_entry(&mut self.view.filter, cat_id, new_op);
+        } else {
+            let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
+            if ii < self.inactive_views.len() {
+                self.inactive_views[ii].date_filter = new_df;
+                sync_filter_entry(&mut self.inactive_views[ii].filter, cat_id, new_op);
+            }
+        }
+        // Keep the picker's working set in step so the marker updates on return.
+        let mut picker_entries = picker_entries;
+        sync_filter_entry_map(&mut picker_entries, cat_id, new_op);
+        let count = self.vmgr_filter_count();
+        if let ViewMgrMode::Props { filter_cursor, filter_scroll, .. } = &mut self.vmgr_state.mode {
+            clamp_list_cursor(filter_cursor, filter_scroll, count, FILTER_VIS);
+        }
+        if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
+            *filter_state = FilterState::Open {
+                cursor:  picker_cursor,
+                scroll:  picker_scroll,
+                entries: picker_entries,
+            };
+        }
+    }
+
+    pub fn vmgr_filter_date_cancel(&mut self) {
+        let (picker_cursor, picker_scroll, picker_entries) = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { filter_state: FilterState::DateFilter {
+                picker_cursor, picker_scroll, picker_entries, ..
+            }, .. } => (*picker_cursor, *picker_scroll, picker_entries.clone()),
+            _ => return,
+        };
+        if let ViewMgrMode::Props { ref mut filter_state, .. } = self.vmgr_state.mode {
+            *filter_state = FilterState::Open {
+                cursor:  picker_cursor,
+                scroll:  picker_scroll,
+                entries: picker_entries,
+            };
+        }
+    }
+
+    // ── Section date filter dialog ────────────────────────────────────────────
+
+    pub fn sec_filter_date_open(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        let (cursor, scroll, entries, cat_id, kind) = match &self.sec_mode {
+            SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, entries }, .. } => {
+                let cat = flat.get(*cursor);
+                let (id, k) = cat.map(|c| (c.id, c.kind)).unwrap_or((0, crate::model::CategoryKind::Standard));
+                (*cursor, *scroll, entries.clone(), id, k)
+            }
+            _ => return,
+        };
+        if kind != crate::model::CategoryKind::Date { return; }
+        let sec_idx = match &self.sec_mode {
+            SectionMode::Props { sec_idx, .. } => *sec_idx,
+            _ => return,
+        };
+        let (show, start_buf, end_buf, range, fmt_code) = self.view.sections
+            .get(sec_idx)
+            .and_then(|s| s.date_filter.as_ref())
+            .filter(|df| df.cat_id == cat_id)
+            .map(|df| (
+                if df.assigned { DateFilterShow::Assigned } else { DateFilterShow::NotAssigned },
+                df.start.as_ref().map(|b| format_date_bound(b)).unwrap_or_default(),
+                df.end.as_ref().map(|b| format_date_bound(b)).unwrap_or_default(),
+                df.range,
+                find_date_fmt_code(&self.view, cat_id),
+            ))
+            .unwrap_or_else(|| {
+                // No date filter yet: fall back to the picker's own +/- for this category.
+                let show = match entries.get(&cat_id).copied() {
+                    Some(FilterOp::Exclude) => DateFilterShow::NotAssigned,
+                    _                       => DateFilterShow::Assigned,
+                };
+                (show, String::new(), String::new(), DateFilterRange::Inside,
+                 find_date_fmt_code(&self.view, cat_id))
+            });
+        if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
+            *filter_state = FilterState::DateFilter {
+                cat_id, show, start_buf, start_cur: 0, end_buf, end_cur: 0,
+                range, active_field: DateFilterField::Show, fmt_code,
+                cal: None,
+                err_flash: None,
+                picker_cursor: cursor, picker_scroll: scroll, picker_entries: entries,
+            };
+        }
+    }
+
+    pub fn sec_filter_date_tab(&mut self) {
+        if self.sec_date_fs().is_some_and(date_filter_block_exit) { return; }
+        if let SectionMode::Props { filter_state: FilterState::DateFilter { active_field, show, start_buf, end_buf, .. }, .. } = &mut self.sec_mode {
+            let has_bounds = !start_buf.trim().is_empty() || !end_buf.trim().is_empty();
+            *active_field = date_filter_field_next(*active_field, *show, has_bounds);
+        }
+    }
+
+    pub fn sec_filter_date_tab_back(&mut self) {
+        if self.sec_date_fs().is_some_and(date_filter_block_exit) { return; }
+        if let SectionMode::Props { filter_state: FilterState::DateFilter { active_field, show, start_buf, end_buf, .. }, .. } = &mut self.sec_mode {
+            let has_bounds = !start_buf.trim().is_empty() || !end_buf.trim().is_empty();
+            *active_field = date_filter_field_prev(*active_field, *show, has_bounds);
+        }
+    }
+
+    // ── Date filter calendar (F3 on Start/End) ────────────────────────────────
+
+    fn sec_date_fs(&mut self) -> Option<&mut FilterState> {
+        match &mut self.sec_mode {
+            SectionMode::Props { filter_state, .. } => Some(filter_state),
+            _ => None,
+        }
+    }
+
+    pub fn sec_filter_date_cal_open(&mut self) {
+        if let Some(fs) = self.sec_date_fs() { date_filter_cal_open(fs); }
+    }
+    pub fn sec_filter_date_cal_step(&mut self, step: CalStep) {
+        if let Some(fs) = self.sec_date_fs() { date_filter_cal_step(fs, step); }
+    }
+    pub fn sec_filter_date_cal_confirm(&mut self) {
+        if let Some(fs) = self.sec_date_fs() { date_filter_cal_confirm(fs); }
+    }
+    pub fn sec_filter_date_cal_cancel(&mut self) {
+        if let Some(fs) = self.sec_date_fs() { date_filter_cal_cancel(fs); }
+    }
+
+    pub fn sec_filter_date_toggle(&mut self) {
+        if let SectionMode::Props { filter_state: FilterState::DateFilter { show, range, active_field, .. }, .. } = &mut self.sec_mode {
+            match *active_field {
+                DateFilterField::Show  => *show = date_filter_show_next(*show),
+                DateFilterField::Range => *range = if *range == DateFilterRange::Inside { DateFilterRange::Outside } else { DateFilterRange::Inside },
+                _ => {}
+            }
+        }
+    }
+
+    pub fn sec_filter_date_confirm(&mut self) {
+        if self.sec_date_fs().is_some_and(date_filter_block_exit) { return; }
+        let (sec_idx, cat_id, show, start_buf, end_buf, range, fmt_code, picker_cursor, picker_scroll, picker_entries) =
+            match &self.sec_mode {
+                SectionMode::Props { sec_idx, filter_state: FilterState::DateFilter {
+                    cat_id, show, start_buf, end_buf, range, fmt_code,
+                    picker_cursor, picker_scroll, picker_entries, ..
+                }, .. } => (*sec_idx, *cat_id, *show, start_buf.clone(), end_buf.clone(),
+                            *range, *fmt_code, *picker_cursor, *picker_scroll, picker_entries.clone()),
+                _ => return,
+            };
+        let start = parse_date_bound(&start_buf, fmt_code);
+        let end   = parse_date_bound(&end_buf, fmt_code);
+        let new_df = build_date_filter(cat_id, show, start, end, range);
+        let new_op = date_filter_op(show);
+        self.push_undo();
+        if sec_idx < self.view.sections.len() {
+            self.view.sections[sec_idx].date_filter = new_df;
+            sync_filter_entry(&mut self.view.sections[sec_idx].filter, cat_id, new_op);
+        }
+        // Keep the picker's working set in step so the marker updates on return.
+        let mut picker_entries = picker_entries;
+        sync_filter_entry_map(&mut picker_entries, cat_id, new_op);
+        let count = self.view.sections.get(sec_idx).map(|s| s.filter.len()).unwrap_or(0);
+        if let SectionMode::Props { filter_cursor, filter_scroll, .. } = &mut self.sec_mode {
+            clamp_list_cursor(filter_cursor, filter_scroll, count, FILTER_VIS);
+        }
+        if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
+            *filter_state = FilterState::Open {
+                cursor:  picker_cursor,
+                scroll:  picker_scroll,
+                entries: picker_entries,
+            };
+        }
+    }
+
+    pub fn sec_filter_date_cancel(&mut self) {
+        let (picker_cursor, picker_scroll, picker_entries) = match &self.sec_mode {
+            SectionMode::Props { filter_state: FilterState::DateFilter {
+                picker_cursor, picker_scroll, picker_entries, ..
+            }, .. } => (*picker_cursor, *picker_scroll, picker_entries.clone()),
+            _ => return,
+        };
+        if let SectionMode::Props { ref mut filter_state, .. } = self.sec_mode {
+            *filter_state = FilterState::Open {
+                cursor:  picker_cursor,
+                scroll:  picker_scroll,
+                entries: picker_entries,
+            };
+        }
+    }
+
+    /// Agenda shows a view's or section's filters next to its name in brackets.
+    /// Returns "" when nothing is filtered, so callers can append unconditionally.
+    fn filter_notation(&self, filter: &[FilterEntry], date_filter: Option<&DateFilter>) -> String {
+        if filter.is_empty() && date_filter.is_none() { return String::new(); }
+        let cats = flatten_cats(&self.categories);
+        let name_of = |id: usize| cats.iter().find(|c| c.id == id)
+            .map(|c| c.name.clone()).unwrap_or_else(|| "?".to_string());
+        let mut terms: Vec<String> = filter.iter().map(|e| {
+            let df   = date_filter.filter(|d| d.cat_id == e.cat_id);
+            let code = find_date_fmt_code(&self.view, e.cat_id);
+            format_filter_term(&name_of(e.cat_id), e.op, df, code)
+        }).collect();
+        // A date filter whose category never made it into `filter` — the picker was
+        // cancelled after the date dialog wrote through — still gets shown.
+        if let Some(df) = date_filter {
+            if !filter.iter().any(|e| e.cat_id == df.cat_id) {
+                let code = find_date_fmt_code(&self.view, df.cat_id);
+                terms.push(format_filter_term(&name_of(df.cat_id), FilterOp::Include, Some(df), code));
+            }
+        }
+        if terms.is_empty() { String::new() } else { format!(" [{}]", terms.join(",")) }
+    }
+
+    /// One row of the Filter list in the properties dialogs, in the same notation
+    /// used next to the view name (no brackets — the list supplies the framing).
+    pub fn filter_entry_label(&self, entry: &FilterEntry, date_filter: Option<&DateFilter>) -> String {
+        let cats = flatten_cats(&self.categories);
+        let name = cats.iter().find(|c| c.id == entry.cat_id)
+            .map(|c| c.name.as_str()).unwrap_or("?");
+        let df   = date_filter.filter(|d| d.cat_id == entry.cat_id);
+        format_filter_term(name, entry.op, df, find_date_fmt_code(&self.view, entry.cat_id))
+    }
+
+    /// Bracket notation for the current view's own filters.
+    pub fn view_filter_notation(&self) -> String {
+        self.filter_notation(&self.view.filter, self.view.date_filter.as_ref())
+    }
+
+    /// Bracket notation for one section's filters.
+    pub fn section_filter_notation(&self, s_idx: usize) -> String {
+        match self.view.sections.get(s_idx) {
+            Some(s) => self.filter_notation(&s.filter, s.date_filter.as_ref()),
+            None    => String::new(),
+        }
+    }
+
+    /// Number of filter entries on the view being edited.
+    fn vmgr_filter_count(&self) -> usize {
+        let v_cursor = self.vmgr_state.cursor;
+        let voi      = self.view_order_idx;
+        if v_cursor == voi {
+            self.view.filter.len()
+        } else {
+            let ii = if v_cursor < voi { v_cursor } else { v_cursor - 1 };
+            self.inactive_views.get(ii).map(|v| v.filter.len()).unwrap_or(0)
         }
     }
 
@@ -6599,73 +7405,9 @@ impl App {
         self.col_mode = ColMode::Normal;
     }
 
-    pub fn col_calendar_left(&mut self) {
+    pub fn col_calendar_step(&mut self, step: CalStep) {
         if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
-            if *day > 1 { *day -= 1; }
-            else if *month > 1 { *month -= 1; *day = days_in_month(*year, *month); }
-            else { *year -= 1; *month = 12; *day = 31; }
-        }
-    }
-
-    pub fn col_calendar_right(&mut self) {
-        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
-            let dim = days_in_month(*year, *month);
-            if *day < dim { *day += 1; }
-            else if *month < 12 { *month += 1; *day = 1; }
-            else { *year += 1; *month = 1; *day = 1; }
-        }
-    }
-
-    pub fn col_calendar_up(&mut self) {
-        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
-            for _ in 0..7 {
-                if *day > 1 { *day -= 1; }
-                else {
-                    if *month > 1 { *month -= 1; } else { *year -= 1; *month = 12; }
-                    *day = days_in_month(*year, *month);
-                }
-            }
-        }
-    }
-
-    pub fn col_calendar_down(&mut self) {
-        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
-            for _ in 0..7 {
-                let dim = days_in_month(*year, *month);
-                if *day < dim { *day += 1; }
-                else {
-                    if *month < 12 { *month += 1; } else { *year += 1; *month = 1; }
-                    *day = 1;
-                }
-            }
-        }
-    }
-
-    pub fn col_calendar_pgup(&mut self) {
-        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
-            if *month > 1 { *month -= 1; } else { *year -= 1; *month = 12; }
-            *day = (*day).min(days_in_month(*year, *month));
-        }
-    }
-
-    pub fn col_calendar_pgdn(&mut self) {
-        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
-            if *month < 12 { *month += 1; } else { *year += 1; *month = 1; }
-            *day = (*day).min(days_in_month(*year, *month));
-        }
-    }
-
-    pub fn col_calendar_year_prev(&mut self) {
-        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
-            *year -= 1;
-            *day = (*day).min(days_in_month(*year, *month));
-        }
-    }
-
-    pub fn col_calendar_year_next(&mut self) {
-        if let ColMode::Calendar { year, month, day, .. } = &mut self.col_mode {
-            *year += 1;
-            *day = (*day).min(days_in_month(*year, *month));
+            cal_step(year, month, day, step);
         }
     }
 
@@ -6857,7 +7599,7 @@ impl App {
                     primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
                     secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
                     secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
-                    filter:           vec![],
+                    filter:           vec![], date_filter: None,
                 });
             }
         }
@@ -7663,10 +8405,21 @@ impl App {
     // ── Section Add picker (F3 on Sections field) ────────────────────────────
 
     pub fn vmgr_sec_pick_open(&mut self) {
-        if let ViewMgrMode::Props { active_field: ViewPropsField::Sections, sec_add_picker, .. }
-            = &mut self.vmgr_state.mode
-        {
-            *sec_add_picker = Some((0, 0));
+        let sec_cursor = match &self.vmgr_state.mode {
+            ViewMgrMode::Props { sec_cursor, active_field: ViewPropsField::Sections, .. } => *sec_cursor,
+            _ => return,
+        };
+        let v_idx = self.vmgr_state.cursor;
+        let voi   = self.view_order_idx;
+        let view_ref = if v_idx == voi { &self.view }
+                       else { match self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi)) {
+                           Some(v) => v, None => return,
+                       }};
+        // Land on the category the Sections list cursor is sitting on.
+        let (cursor, scroll) = sec_picker_start(
+            &flatten_cats(&self.categories), &view_ref.sections, sec_cursor);
+        if let ViewMgrMode::Props { sec_add_picker, .. } = &mut self.vmgr_state.mode {
+            *sec_add_picker = Some((cursor, scroll));
         }
     }
 
@@ -7822,7 +8575,7 @@ impl App {
                             primary_cat_id:   None,           primary_seq:     SortSeq::CategoryHierarchy,
                             secondary_on:     SortOn::None,   secondary_order: SortOrder::Ascending,  secondary_na: SortNa::Bottom,
                             secondary_cat_id: None,           secondary_seq:   SortSeq::CategoryHierarchy,
-                            filter:           vec![],
+                            filter:           vec![], date_filter: None,
                         });
                     }
                 }
@@ -7853,15 +8606,30 @@ impl App {
 
     /// Enter: close the picker, accepting whatever toggles were made.
     pub fn vmgr_sec_pick_confirm(&mut self) {
-        if let ViewMgrMode::Props { sec_add_picker, .. } = &mut self.vmgr_state.mode {
-            *sec_add_picker = None;
-        }
+        self.vmgr_sec_pick_close();
     }
 
     pub fn vmgr_sec_pick_cancel(&mut self) {
-        if let ViewMgrMode::Props { sec_add_picker, .. } = &mut self.vmgr_state.mode {
+        self.vmgr_sec_pick_close();
+    }
+
+    /// Toggles apply as they are made, so the Sections list may have shrunk while
+    /// the picker was open; pull its cursor back inside on the way out.
+    fn vmgr_sec_pick_close(&mut self) {
+        let count = self.vmgr_sec_count();
+        if let ViewMgrMode::Props { sec_add_picker, sec_cursor, sec_scroll, .. } = &mut self.vmgr_state.mode {
             *sec_add_picker = None;
+            clamp_list_cursor(sec_cursor, sec_scroll, count, SEC_VIS);
         }
+    }
+
+    /// Number of sections on the view being edited.
+    fn vmgr_sec_count(&self) -> usize {
+        let v_idx = self.vmgr_state.cursor;
+        let voi   = self.view_order_idx;
+        if v_idx == voi { self.view.sections.len() }
+        else { self.inactive_views.get(Self::vmgr_inact_idx(v_idx, voi))
+                   .map(|v| v.sections.len()).unwrap_or(0) }
     }
 
     // ── Section Sort picker ───────────────────────────────────────────────────

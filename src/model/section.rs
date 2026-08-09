@@ -106,6 +106,48 @@ pub struct FilterEntry {
     pub op:     FilterOp,
 }
 
+/// One endpoint of a date filter range. Absolute dates are stored as ISO-8601;
+/// relative variants are re-evaluated against the system date on each render.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "value")]
+pub enum DateBound {
+    Absolute(chrono::NaiveDate),
+    Today,
+    Yesterday,
+    Tomorrow,
+    Weekday(chrono::Weekday),   // "Monday"–"Sunday": resolves to that day in the current week
+}
+
+#[derive(Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub enum DateFilterRange {
+    #[default] Inside,
+    Outside,
+}
+
+impl DateFilterRange {
+    pub fn label(self) -> &'static str {
+        match self {
+            DateFilterRange::Inside  => "Inside range",
+            DateFilterRange::Outside => "Outside range",
+        }
+    }
+}
+
+/// Date-range filter attached to a view or section.
+/// Mirrors Agenda's Date Filter Settings dialog.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct DateFilter {
+    pub cat_id:   usize,
+    /// true = show items assigned to the date category (Agenda default)
+    /// false = show items *not* assigned to the date category
+    pub assigned: bool,
+    pub start:    Option<DateBound>,
+    pub end:      Option<DateBound>,
+    /// Whether to show items inside or outside [start, end]. Only meaningful
+    /// when at least one of start/end is Some.
+    #[serde(default)] pub range: DateFilterRange,
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Section {
     pub id:     usize,
@@ -126,4 +168,5 @@ pub struct Section {
     #[serde(default)] pub secondary_cat_id:  Option<usize>,
     #[serde(default)] pub secondary_seq:     SortSeq,
     #[serde(default)] pub filter:            Vec<FilterEntry>,
+    #[serde(default)] pub date_filter:      Option<DateFilter>,
 }

@@ -49,6 +49,22 @@ static CALENDAR_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "", "", "", "", "",        "", "", "", ""],
 };
 
+/// Date Filter dialog: F3 opens the calendar over Start/End.
+static DATE_FILTER_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "", "Calendar", "", "", "", "", "", "", ""],
+    shift:  ["",     "", "",         "", "", "", "", "", "", ""],
+    ctrl:   ["",     "", "",         "", "", "", "", "", "", ""],
+    alt:    ["",     "", "",         "", "", "", "", "", "", ""],
+};
+
+/// The date-bound calendar has no time component, so no SetTime.
+static DATE_CAL_FKEYS: FKeyLabels = FKeyLabels {
+    normal: ["Help", "", "", "", "", "", "", "", "", ""],
+    shift:  ["",     "", "", "", "", "", "", "", "", ""],
+    ctrl:   ["",     "", "", "", "", "", "", "", "", ""],
+    alt:    ["",     "", "", "", "", "", "", "", "", ""],
+};
+
 static SET_TIME_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "", "", "", "", "", "", "", "", ""],
     shift:  ["",     "", "", "", "", "", "", "", "", ""],
@@ -162,6 +178,10 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &MENU_FKEYS   // self-describing dialogs
     } else if matches!(app.sec_mode, SectionMode::Add { .. }) {
         &CHOICES_FKEYS   // F3 = Choices (category picker)
+    } else if matches!(app.sec_mode, SectionMode::Props { filter_state: FilterState::DateFilter { cal: Some(_), .. }, .. }) {
+        &DATE_CAL_FKEYS
+    } else if matches!(app.sec_mode, SectionMode::Props { filter_state: FilterState::DateFilter { .. }, .. }) {
+        &DATE_FILTER_FKEYS
     } else if matches!(app.sec_mode, SectionMode::Props { filter_state: FilterState::Open { .. }, .. }) {
         &MENU_FKEYS   // filter picker is self-describing
     } else if matches!(app.sec_mode, SectionMode::Props { sort_state: SortState::Dialog { picker: Some(_), .. }, .. }) {
@@ -212,6 +232,10 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &MENU_FKEYS   // sort field picker is self-describing
     } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { sort_state: SortState::Dialog { .. }, .. }) {
         &CHOICES_FKEYS   // F3 = Choices (sort field picker)
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { filter_state: FilterState::DateFilter { cal: Some(_), .. }, .. }) {
+        &DATE_CAL_FKEYS
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { filter_state: FilterState::DateFilter { .. }, .. }) {
+        &DATE_FILTER_FKEYS
     } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { .. }) {
         &VIEW_PROPS_FKEYS
     } else if matches!(app.vmgr_state.mode, ViewMgrMode::ConfirmDelete { .. }) {

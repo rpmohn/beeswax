@@ -82,7 +82,7 @@ fn view_v1_to_view(v: ViewV1) -> View {
            sort_secondary_on: SortOn::None,     sort_secondary_order: SortOrder::Ascending,
            sort_secondary_na: SortNa::Bottom,   sort_secondary_cat_id: None,
            sort_secondary_seq: SortSeq::CategoryHierarchy,
-           filter: vec![] }
+           filter: vec![], date_filter: None }
 }
 
 fn migrate(version: u32, json: &str) -> Result<SaveData, LoadError> {
@@ -145,6 +145,7 @@ fn clone_view(view: &View) -> View {
             secondary_on:     s.secondary_on, secondary_order: s.secondary_order, secondary_na: s.secondary_na,
             secondary_cat_id: s.secondary_cat_id, secondary_seq: s.secondary_seq,
             filter:           s.filter.clone(),
+            date_filter:      s.date_filter.clone(),
         }).collect(),
         columns:    view.columns.iter().map(|c| crate::model::Column {
             id:       c.id,
@@ -181,6 +182,7 @@ fn clone_view(view: &View) -> View {
         sort_secondary_cat_id: view.sort_secondary_cat_id,
         sort_secondary_seq:    view.sort_secondary_seq,
         filter:                view.filter.clone(),
+        date_filter:           view.date_filter.clone(),
     }
 }
 
