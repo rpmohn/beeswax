@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use crate::app::{App, DateFilterField, DateFilterShow, FilterState, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator, stored_scroll_start};
-use crate::model::{CategoryKind, DateFilterRange, FilterOp};
+use crate::model::{CategoryKind, DateFilterRange, DateFmtCode, FilterOp};
 use crate::app::SortState;
 use super::{centered_rect, cursor_split};
 
@@ -594,7 +594,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
     // ── Date Filter dialog (F3 on a Date category in the filter picker) ──────
     if let FilterState::DateFilter {
         cat_id, show, start_buf, start_cur, end_buf, end_cur,
-        range, active_field, cal, err_flash, ..
+        range, active_field, cal, err_flash, help, fmt_code, ..
     } = filter_state {
         let cat_name = flatten_cats(&app.categories).iter()
             .find(|c| c.id == *cat_id).map(|c| c.name.clone()).unwrap_or_default();
@@ -603,6 +603,10 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             *show, start_buf, *start_cur, end_buf, *end_cur,
             *range, *active_field, *err_flash,
         );
+        // F1 help is the topmost layer.
+        if *help {
+            render_date_help(frame, app, area, *fmt_code);
+        }
         // F3 calendar sits on top of the dialog.
         if let Some((y, m, d)) = cal {
             super::view::render_calendar(frame, app, area, *y, *m, *d, None);
@@ -683,6 +687,55 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// F1 over Start/End: what the field accepts. The numeric examples follow the
+/// view's own date format, so they show the field order that actually applies.
+pub fn render_date_help(
+    frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect, fmt_code: DateFmtCode,
+) {
+    let dlabel = app.theme.dialog_label;
+
+    let numeric = match fmt_code {
+        DateFmtCode::MMDDYY   => "11/9    11/9/26    2026-11-09",
+        DateFmtCode::DDMMYY   => "9/11    9/11/26    2026-11-09",
+        DateFmtCode::YYYYMMDD => "2026/11/9          2026-11-09",
+    };
+
+    let dlg_rect = centered_rect(62, 19, area);
+    frame.render_widget(Clear, dlg_rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .title(Line::from(" Start / End Date ").alignment(Alignment::Center))
+        .title_bottom(Line::from(" Press any key to continue ").alignment(Alignment::Center))
+        .style(app.theme.dialog_border);
+    frame.render_widget(block.clone(), dlg_rect);
+    let inner = block.inner(dlg_rect);
+
+    let head = |s: &'static str| Line::from(Span::styled(s, dlabel));
+    let body = |s: String|       Line::from(Span::raw(s));
+    let item = |s: &str|         Line::from(Span::raw(format!("     {}", s)));
+
+    let lines = vec![
+        Line::from(""),
+        body(" Leave a field blank for an open end: no Start date means".into()),
+        body(" the earliest date in the file, no End date the latest.".into()),
+        Line::from(""),
+        head(" Relative — re-read from the system date every time:"),
+        item("today      yesterday     tomorrow"),
+        item("monday .. sunday   (this week, starting Monday)"),
+        Line::from(""),
+        head(" Fixed — worked out once, when you type them:"),
+        item("next friday        last tuesday"),
+        item("3 days   -2 weeks   a month   1 yr"),
+        item(numeric),
+        Line::from(""),
+        head(" Keys:"),
+        item("F3   pick this date from a calendar"),
+        Line::from(""),
+    ];
+    frame.render_widget(Paragraph::new(lines).style(app.theme.dialog), inner);
+}
+
 pub fn render_date_filter_dialog(
     frame:      &mut ratatui::Frame,
     app:        &App,

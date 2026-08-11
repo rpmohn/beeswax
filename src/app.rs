@@ -407,6 +407,8 @@ pub enum FilterState {
         cal:            Option<(i32, u32, u32)>,
         /// When the field last refused to be left; drives the error flash.
         err_flash:      Option<std::time::Instant>,
+        /// F1 help popup over the Start/End field.
+        help:           bool,
         // saved picker state to restore on Esc/confirm
         picker_cursor:  usize,
         picker_scroll:  usize,
@@ -1211,6 +1213,17 @@ fn date_filter_cal_cancel(fs: &mut FilterState) {
     if let FilterState::DateFilter { cal, .. } = fs { *cal = None; }
 }
 
+/// F1 over a Start/End field: what may be typed there. No-op elsewhere.
+fn date_filter_help_open(fs: &mut FilterState) {
+    if let FilterState::DateFilter { active_field, help, .. } = fs {
+        if matches!(active_field, DateFilterField::Start | DateFilterField::End) { *help = true; }
+    }
+}
+
+fn date_filter_help_close(fs: &mut FilterState) {
+    if let FilterState::DateFilter { help, .. } = fs { *help = false; }
+}
+
 /// How long the Start/End field stays inverted after a rejected exit.
 pub const DATE_FILTER_FLASH: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -1244,22 +1257,27 @@ fn date_filter_block_exit(fs: &mut FilterState) -> bool {
 /// and absolute dates in ISO or locale format.
 fn parse_date_bound(s: &str, fmt_code: DateFmtCode) -> Option<DateBound> {
     let lower = s.trim().to_lowercase();
-    match lower.as_str() {
-        "today"                  => return Some(DateBound::Today),
-        "yesterday"              => return Some(DateBound::Yesterday),
-        "tomorrow"               => return Some(DateBound::Tomorrow),
-        "monday"   | "mon"       => return Some(DateBound::Weekday(chrono::Weekday::Mon)),
-        "tuesday"  | "tue"       => return Some(DateBound::Weekday(chrono::Weekday::Tue)),
-        "wednesday"| "wed"       => return Some(DateBound::Weekday(chrono::Weekday::Wed)),
-        "thursday" | "thu"       => return Some(DateBound::Weekday(chrono::Weekday::Thu)),
-        "friday"   | "fri"       => return Some(DateBound::Weekday(chrono::Weekday::Fri)),
-        "saturday" | "sat"       => return Some(DateBound::Weekday(chrono::Weekday::Sat)),
-        "sunday"   | "sun"       => return Some(DateBound::Weekday(chrono::Weekday::Sun)),
-        "" => return None,
-        _ => {}
+    if lower.is_empty() { return None; }
+    // Relative keywords come from the same table the natural-language parser uses,
+    // so the two can't drift apart on aliases ("tues", "tmrw", "now", …). Anything
+    // this misses falls through to numeric parsing and freezes to a fixed date.
+    let t = &ENGLISH_TABLE;
+    if nat_matches(&lower, t.today)     { return Some(DateBound::Today); }
+    if nat_matches(&lower, t.yesterday) { return Some(DateBound::Yesterday); }
+    if nat_matches(&lower, t.tomorrow)  { return Some(DateBound::Tomorrow); }
+    if let Some(dow) = nat_weekday(&lower, t) {
+        return Some(DateBound::Weekday(weekday_from_sunday_index(dow)));
     }
     let (y, mo, d, _, _, _) = parse_date_input(s.trim(), fmt_code)?;
     chrono::NaiveDate::from_ymd_opt(y, mo, d).map(DateBound::Absolute)
+}
+
+/// `NatLangTable::weekdays` is indexed 0 = Sunday … 6 = Saturday.
+fn weekday_from_sunday_index(i: u32) -> chrono::Weekday {
+    use chrono::Weekday::*;
+    match i {
+        0 => Sun, 1 => Mon, 2 => Tue, 3 => Wed, 4 => Thu, 5 => Fri, _ => Sat,
+    }
 }
 
 /// Resolve a `DateBound` to a concrete date relative to `today`.
@@ -5967,7 +5985,7 @@ impl App {
                 cat_id, show, start_buf, start_cur: 0, end_buf, end_cur: 0,
                 range, active_field: DateFilterField::Show, fmt_code,
                 cal: None,
-                err_flash: None,
+                err_flash: None, help: false,
                 picker_cursor: cursor, picker_scroll: scroll, picker_entries: entries,
             };
         }
@@ -6009,6 +6027,13 @@ impl App {
     }
     pub fn vmgr_filter_date_cal_cancel(&mut self) {
         if let Some(fs) = self.vmgr_date_fs() { date_filter_cal_cancel(fs); }
+    }
+
+    pub fn vmgr_filter_date_help_open(&mut self) {
+        if let Some(fs) = self.vmgr_date_fs() { date_filter_help_open(fs); }
+    }
+    pub fn vmgr_filter_date_help_close(&mut self) {
+        if let Some(fs) = self.vmgr_date_fs() { date_filter_help_close(fs); }
     }
 
     pub fn vmgr_filter_date_toggle(&mut self) {
@@ -6124,7 +6149,7 @@ impl App {
                 cat_id, show, start_buf, start_cur: 0, end_buf, end_cur: 0,
                 range, active_field: DateFilterField::Show, fmt_code,
                 cal: None,
-                err_flash: None,
+                err_flash: None, help: false,
                 picker_cursor: cursor, picker_scroll: scroll, picker_entries: entries,
             };
         }
@@ -6166,6 +6191,13 @@ impl App {
     }
     pub fn sec_filter_date_cal_cancel(&mut self) {
         if let Some(fs) = self.sec_date_fs() { date_filter_cal_cancel(fs); }
+    }
+
+    pub fn sec_filter_date_help_open(&mut self) {
+        if let Some(fs) = self.sec_date_fs() { date_filter_help_open(fs); }
+    }
+    pub fn sec_filter_date_help_close(&mut self) {
+        if let Some(fs) = self.sec_date_fs() { date_filter_help_close(fs); }
     }
 
     pub fn sec_filter_date_toggle(&mut self) {

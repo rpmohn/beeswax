@@ -1603,6 +1603,13 @@ fn handle_vmgr_filter_picker(app: &mut App, code: KeyCode, modifiers: KeyModifie
 }
 
 fn handle_vmgr_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Help popup is the outermost layer: any key dismisses it.
+    if matches!(&app.vmgr_state.mode,
+        ViewMgrMode::Props { filter_state: FilterState::DateFilter { help: true, .. }, .. })
+    {
+        app.vmgr_filter_date_help_close();
+        return;
+    }
     // Calendar over Start/End is the outermost layer.
     if matches!(&app.vmgr_state.mode,
         ViewMgrMode::Props { filter_state: FilterState::DateFilter { cal: Some(_), .. }, .. })
@@ -1658,6 +1665,7 @@ fn handle_vmgr_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers
         KeyCode::BackTab | KeyCode::Up => app.vmgr_filter_date_tab_back(),
         KeyCode::Char(' ')          => app.vmgr_filter_date_toggle(),
         KeyCode::F(3)               => app.vmgr_filter_date_cal_open(),
+        KeyCode::F(1)               => app.vmgr_filter_date_help_open(),
         _ => {}
     }
 }
@@ -1806,6 +1814,13 @@ fn handle_sec_filter_picker(app: &mut App, code: KeyCode, modifiers: KeyModifier
 }
 
 fn handle_sec_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Help popup is the outermost layer: any key dismisses it.
+    if matches!(&app.sec_mode,
+        SectionMode::Props { filter_state: FilterState::DateFilter { help: true, .. }, .. })
+    {
+        app.sec_filter_date_help_close();
+        return;
+    }
     // Calendar over Start/End is the outermost layer.
     if matches!(&app.sec_mode,
         SectionMode::Props { filter_state: FilterState::DateFilter { cal: Some(_), .. }, .. })
@@ -1860,6 +1875,7 @@ fn handle_sec_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
         KeyCode::BackTab | KeyCode::Up => app.sec_filter_date_tab_back(),
         KeyCode::Char(' ')          => app.sec_filter_date_toggle(),
         KeyCode::F(3)               => app.sec_filter_date_cal_open(),
+        KeyCode::F(1)               => app.sec_filter_date_help_open(),
         _ => {}
     }
 }

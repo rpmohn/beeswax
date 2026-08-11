@@ -2292,7 +2292,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
 
     // ── Date filter sub-dialog ────────────────────────────────────────────────
     if let FilterState::DateFilter {
-        cat_id, show, start_buf, start_cur, end_buf, end_cur, range, active_field, cal, err_flash, ..
+        cat_id, show, start_buf, start_cur, end_buf, end_cur, range, active_field, cal, err_flash, help, fmt_code, ..
     } = filter_state {
         let cat_name = flatten_cats(&app.categories).iter()
             .find(|c| c.id == *cat_id).map(|c| c.name.clone()).unwrap_or_default();
@@ -2301,6 +2301,10 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
             *show, start_buf, *start_cur, end_buf, *end_cur,
             *range, *active_field, *err_flash,
         );
+        // F1 help is the topmost layer.
+        if *help {
+            super::viewmgr::render_date_help(frame, app, area, *fmt_code);
+        }
         // F3 calendar sits on top of the dialog.
         if let Some((y, m, d)) = cal {
             render_calendar(frame, app, area, *y, *m, *d, None);

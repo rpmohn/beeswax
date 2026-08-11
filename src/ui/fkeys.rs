@@ -178,6 +178,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &MENU_FKEYS   // self-describing dialogs
     } else if matches!(app.sec_mode, SectionMode::Add { .. }) {
         &CHOICES_FKEYS   // F3 = Choices (category picker)
+    } else if matches!(app.sec_mode, SectionMode::Props { filter_state: FilterState::DateFilter { help: true, .. }, .. }) {
+        &MENU_FKEYS   // help popup is self-describing
     } else if matches!(app.sec_mode, SectionMode::Props { filter_state: FilterState::DateFilter { cal: Some(_), .. }, .. }) {
         &DATE_CAL_FKEYS
     } else if matches!(app.sec_mode, SectionMode::Props { filter_state: FilterState::DateFilter { .. }, .. }) {
@@ -232,6 +234,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &MENU_FKEYS   // sort field picker is self-describing
     } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { sort_state: SortState::Dialog { .. }, .. }) {
         &CHOICES_FKEYS   // F3 = Choices (sort field picker)
+    } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { filter_state: FilterState::DateFilter { help: true, .. }, .. }) {
+        &MENU_FKEYS   // help popup is self-describing
     } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { filter_state: FilterState::DateFilter { cal: Some(_), .. }, .. }) {
         &DATE_CAL_FKEYS
     } else if matches!(app.vmgr_state.mode, ViewMgrMode::Props { filter_state: FilterState::DateFilter { .. }, .. }) {
