@@ -106,6 +106,21 @@ pub struct FilterEntry {
     pub op:     FilterOp,
 }
 
+/// Unit of a signed offset bound (`+7d`, `-3w`, `+1m`, `-1y`).
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum OffsetUnit { Days, Weeks, Months, Years }
+
+impl OffsetUnit {
+    pub fn suffix(self) -> char {
+        match self {
+            OffsetUnit::Days   => 'd',
+            OffsetUnit::Weeks  => 'w',
+            OffsetUnit::Months => 'm',
+            OffsetUnit::Years  => 'y',
+        }
+    }
+}
+
 /// One endpoint of a date filter range. Absolute dates are stored as ISO-8601;
 /// relative variants are re-evaluated against the system date on each render.
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -116,6 +131,8 @@ pub enum DateBound {
     Yesterday,
     Tomorrow,
     Weekday(chrono::Weekday),   // "Monday"–"Sunday": resolves to that day in the current week
+    /// Signed offset from today: `+7d`, `-3w`, `+1m`, `-1y`.
+    Offset { n: i32, unit: OffsetUnit },
 }
 
 #[derive(Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]

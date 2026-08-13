@@ -723,6 +723,7 @@ pub fn render_date_help(
         head(" Relative — re-read from the system date every time:"),
         item("today      yesterday     tomorrow"),
         item("monday .. sunday   (this week, starting Monday)"),
+        item("+7d  -3w  +1m  -1y   (sign, number, then d/w/m/y)"),
         Line::from(""),
         head(" Fixed — worked out once, when you type them:"),
         item("next friday        last tuesday"),

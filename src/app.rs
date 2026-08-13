@@ -1,5 +1,5 @@
 use crate::menu::{MenuAction, CATMGR_MENU, VIEW_MENU};
-use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, DateBound, DateFilter, DateFilterRange, FilterEntry, FilterOp, Item, Section, SectionSortMethod, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
+use crate::model::{Category, CategoryKind, ColFormat, Column, DateFmt, DateDisplay, Clock, DateFmtCode, DateBound, OffsetUnit, DateFilter, DateFilterRange, FilterEntry, FilterOp, Item, Section, SectionSortMethod, SortNewItems, SortNa, SortOn, SortOrder, SortSeq, View};
 use crate::persist;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -1119,6 +1119,7 @@ fn format_date_bound(b: &DateBound) -> String {
         DateBound::Yesterday   => "yesterday".to_string(),
         DateBound::Tomorrow    => "tomorrow".to_string(),
         DateBound::Weekday(wd) => format!("{}", wd).to_lowercase(),
+        DateBound::Offset { n, unit } => format!("{:+}{}", n, unit.suffix()),
     }
 }
 
@@ -1261,6 +1262,7 @@ fn parse_date_bound(s: &str, fmt_code: DateFmtCode) -> Option<DateBound> {
     // Relative keywords come from the same table the natural-language parser uses,
     // so the two can't drift apart on aliases ("tues", "tmrw", "now", …). Anything
     // this misses falls through to numeric parsing and freezes to a fixed date.
+    if let Some(b) = parse_date_offset(&lower) { return Some(b); }
     let t = &ENGLISH_TABLE;
     if nat_matches(&lower, t.today)     { return Some(DateBound::Today); }
     if nat_matches(&lower, t.yesterday) { return Some(DateBound::Yesterday); }
@@ -1270,6 +1272,25 @@ fn parse_date_bound(s: &str, fmt_code: DateFmtCode) -> Option<DateBound> {
     }
     let (y, mo, d, _, _, _) = parse_date_input(s.trim(), fmt_code)?;
     chrono::NaiveDate::from_ymd_opt(y, mo, d).map(DateBound::Absolute)
+}
+
+/// A signed offset from today: `+7d`, `-3w`, `+1m`, `-1y`. The sign is required —
+/// it is what marks the entry as relative and keeps it clear of `3 days`, which
+/// resolves to a fixed date instead.
+fn parse_date_offset(s: &str) -> Option<DateBound> {
+    if !s.is_ascii() { return None; }
+    let sign: i32 = match s.as_bytes().first()? { b'+' => 1, b'-' => -1, _ => return None };
+    let body = &s[1..];
+    let (digits, unit) = body.split_at(body.len().checked_sub(1)?);
+    if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) { return None; }
+    let unit = match unit {
+        "d" => OffsetUnit::Days,
+        "w" => OffsetUnit::Weeks,
+        "m" => OffsetUnit::Months,
+        "y" => OffsetUnit::Years,
+        _   => return None,
+    };
+    Some(DateBound::Offset { n: sign * digits.parse::<i32>().ok()?, unit })
 }
 
 /// `NatLangTable::weekdays` is indexed 0 = Sunday … 6 = Saturday.
@@ -1295,7 +1316,24 @@ fn resolve_date_bound(bound: &DateBound, today: chrono::NaiveDate) -> chrono::Na
                        - today.weekday().num_days_from_monday() as i64;
             today + chrono::Duration::days(offset)
         }
+        DateBound::Offset { n, unit } => {
+            let n = *n;
+            match unit {
+                OffsetUnit::Days   => today + chrono::Duration::days(n as i64),
+                OffsetUnit::Weeks  => today + chrono::Duration::days(n as i64 * 7),
+                OffsetUnit::Months => add_months_naive(today, n),
+                OffsetUnit::Years  => add_months_naive(today, n.saturating_mul(12)),
+            }
+        }
     }
+}
+
+/// Month arithmetic on a `NaiveDate`, clamping the day into the target month
+/// (31 Jan + 1m = 28/29 Feb), matching `date_add_months`.
+fn add_months_naive(d: chrono::NaiveDate, n: i32) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    let (y, m, dd) = date_add_months(d.year(), d.month(), d.day(), n);
+    chrono::NaiveDate::from_ymd_opt(y, m, dd).unwrap_or(d)
 }
 
 /// Apply a date filter to the item index list.
