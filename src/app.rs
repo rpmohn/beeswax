@@ -2260,11 +2260,13 @@ pub fn col_display_values(
 }
 
 /// The categories at or under `col_cat_id` that the item is assigned to, in the
-/// order their sub-rows appear, along with the name map used to order them.
+/// order their sub-rows appear, along with the name map for rendering them.
 ///
-/// `item_values` is a HashMap, so its iteration order is arbitrary and can differ
-/// between runs. Sorting here is what makes the sub-rows stable and what lets
-/// `sub_row` mean the same thing to the renderer and to the code acting on it.
+/// Sub-rows follow category tree order, so they read the same way as the category
+/// hierarchy itself. `item_values` is a HashMap whose iteration order is arbitrary
+/// and can differ between runs, so ordering here is also what makes the rows stable
+/// and lets `sub_row` mean the same thing to the renderer and to the code acting
+/// on it.
 fn col_assigned_ids_and_names(
     item_values: &HashMap<usize, String>,
     col_cat_id:  usize,
@@ -2285,10 +2287,11 @@ fn col_assigned_ids_and_names(
     let mut ids: Vec<usize> = item_values.keys().copied()
         .filter(|&id| is_at_or_under(id))
         .collect();
-    ids.sort_by(|a, b| {
-        let (na, nb) = (name_map.get(a), name_map.get(b));
-        na.cmp(&nb).then(a.cmp(b))   // id breaks ties so equal names stay put
-    });
+    // Depth-first position in the tree; ids not found sort last, by id, so the
+    // order stays total no matter what is in `item_values`.
+    let rank: HashMap<usize, usize> = flatten_cats(cats).into_iter().enumerate()
+        .map(|(i, c)| (c.id, i)).collect();
+    ids.sort_by_key(|id| (rank.get(id).copied().unwrap_or(usize::MAX), *id));
     (ids, name_map)
 }
 
