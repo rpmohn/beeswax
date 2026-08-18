@@ -475,7 +475,12 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                     CursorPos::Item { .. }    => app.item_open_confirm_delete(),
                 }
             } else {
-                app.col_open_confirm_remove();
+                match app.cursor {
+                    // On the column head: remove the column. On an item: drop that
+                    // item's assignment to the column's category.
+                    CursorPos::SectionHead(_) => app.col_open_confirm_remove(),
+                    CursorPos::Item { .. }    => app.col_clear_item_value(),
+                }
             }
         }
         KeyCode::F(8)   => app.open_view_mgr(),

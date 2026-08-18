@@ -2255,31 +2255,21 @@ pub fn col_display_values(
         let s = col_display_value(item_values, col_cat_id, col_format, cats);
         return if s.is_empty() { vec![] } else { vec![s] };
     }
-    let mut parent_map = HashMap::new();
-    let mut name_map   = HashMap::new();
-    build_cat_maps(cats, None, &mut parent_map, &mut name_map);
-    let is_at_or_under = |mut id: usize| -> bool {
-        loop {
-            if id == col_cat_id { return true; }
-            match parent_map.get(&id) {
-                Some(Some(p)) => id = *p,
-                _             => return false,
-            }
-        }
-    };
-    item_values.keys().copied()
-        .filter(|&id| is_at_or_under(id))
-        .filter_map(|id| name_map.get(&id).cloned())
-        .collect()
+    let (ids, name_map) = col_assigned_ids_and_names(item_values, col_cat_id, cats);
+    ids.iter().filter_map(|id| name_map.get(id).cloned()).collect()
 }
 
-/// Return the category IDs of sub-categories under `col_cat_id` that the item is assigned to.
-/// Used to resolve which sub-category a note belongs to (non-date columns).
-pub fn item_col_assigned_cat_ids(
+/// The categories at or under `col_cat_id` that the item is assigned to, in the
+/// order their sub-rows appear, along with the name map used to order them.
+///
+/// `item_values` is a HashMap, so its iteration order is arbitrary and can differ
+/// between runs. Sorting here is what makes the sub-rows stable and what lets
+/// `sub_row` mean the same thing to the renderer and to the code acting on it.
+fn col_assigned_ids_and_names(
     item_values: &HashMap<usize, String>,
     col_cat_id:  usize,
     cats:        &[Category],
-) -> Vec<usize> {
+) -> (Vec<usize>, HashMap<usize, String>) {
     let mut parent_map = HashMap::new();
     let mut name_map   = HashMap::new();
     build_cat_maps(cats, None, &mut parent_map, &mut name_map);
@@ -2295,9 +2285,21 @@ pub fn item_col_assigned_cat_ids(
     let mut ids: Vec<usize> = item_values.keys().copied()
         .filter(|&id| is_at_or_under(id))
         .collect();
-    // Sort by name for stable ordering (matches col_display_values NameOnly order).
-    ids.sort_by_key(|id| name_map.get(id).cloned().unwrap_or_default());
-    ids
+    ids.sort_by(|a, b| {
+        let (na, nb) = (name_map.get(a), name_map.get(b));
+        na.cmp(&nb).then(a.cmp(b))   // id breaks ties so equal names stay put
+    });
+    (ids, name_map)
+}
+
+/// Return the category IDs of sub-categories under `col_cat_id` that the item is
+/// assigned to, in sub-row order. Indexed by `sub_row`.
+pub fn item_col_assigned_cat_ids(
+    item_values: &HashMap<usize, String>,
+    col_cat_id:  usize,
+    cats:        &[Category],
+) -> Vec<usize> {
+    col_assigned_ids_and_names(item_values, col_cat_id, cats).0
 }
 
 /// Find a descendant of the category with `head_id` whose name starts with `prefix`
@@ -7232,6 +7234,33 @@ impl App {
             }
             if self.file_path.is_some() { self.dirty = true; }
         }
+    }
+
+    /// DEL on an item's column cell: drop that assignment.
+    ///
+    /// A date column holds one value under the column's own category. A standard
+    /// column can show several sub-category assignments stacked in sub-rows, so
+    /// only the one under `sub_row` goes.
+    pub fn col_clear_item_value(&mut self) {
+        if self.col_cursor == 0 { return; }
+        let Some(col) = self.view.columns.get(self.col_cursor - 1) else { return };
+        let (col_cat_id, is_date) = (col.cat_id, col.date_fmt.is_some());
+        let CursorPos::Item { section, item } = self.cursor else { return };
+        let Some(gi) = self.global_item_idx(section, item) else { return };
+        let cat_id = if is_date {
+            col_cat_id
+        } else {
+            let ids = item_col_assigned_cat_ids(&self.items[gi].values, col_cat_id, &self.categories);
+            match ids.get(self.sub_row) { Some(&id) => id, None => return }
+        };
+        if !self.items[gi].values.contains_key(&cat_id) { return; }
+        self.push_undo();
+        self.items[gi].values.remove(&cat_id);
+        self.items[gi].cond_cats.remove(&cat_id);
+        // The stack of sub-rows just got shorter; keep the cursor inside it.
+        let left = item_col_assigned_cat_ids(&self.items[gi].values, col_cat_id, &self.categories).len();
+        self.sub_row = self.sub_row.min(left.saturating_sub(1));
+        self.dirty = true;
     }
 
     // ── Calendar picker ───────────────────────────────────────────────────────
