@@ -2295,6 +2295,45 @@ fn col_assigned_ids_and_names(
     (ids, name_map)
 }
 
+/// Reorder a view's sections per its own Section sorting setting. `None` leaves
+/// the manual order (set with Move) alone.
+///
+/// This has to run whenever the section list or the category tree changes, not
+/// just when the setting is edited — otherwise a section added later lands at the
+/// end and stays there.
+pub fn sort_view_sections(view: &mut View, cats: &[Category]) {
+    let desc = view.section_sort_order == SortOrder::Descending;
+    let dir  = |c: std::cmp::Ordering| if desc { c.reverse() } else { c };
+    match view.section_sort_method {
+        SectionSortMethod::None => {}
+        SectionSortMethod::Alphabetic => view.sections.sort_by(|a, b| {
+            dir(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        }),
+        SectionSortMethod::CategoryOrder => {
+            let rank: HashMap<usize, usize> = flatten_cats(cats).into_iter().enumerate()
+                .map(|(i, c)| (c.id, i)).collect();
+            let pos = |s: &Section| rank.get(&s.cat_id).copied().unwrap_or(usize::MAX);
+            view.sections.sort_by(|a, b| dir(pos(a).cmp(&pos(b))));
+        }
+        SectionSortMethod::Numeric => view.sections.sort_by(|a, b| {
+            dir(section_numeric_key(&a.name).cmp(&section_numeric_key(&b.name)))
+        }),
+    }
+}
+
+/// Sort key for Numeric section sorting: the leading number in the name.
+/// Names without one sort after every numbered name.
+fn section_numeric_key(name: &str) -> (u8, i64, String) {
+    let t   = name.trim();
+    let neg = t.starts_with('-');
+    let digits: String = t.trim_start_matches('-')
+        .chars().take_while(|c| c.is_ascii_digit()).collect();
+    match digits.parse::<i64>() {
+        Ok(n)  => (0, if neg { -n } else { n }, t.to_lowercase()),
+        Err(_) => (1, 0, t.to_lowercase()),
+    }
+}
+
 /// Return the category IDs of sub-categories under `col_cat_id` that the item is
 /// assigned to, in sub-row order. Indexed by `sub_row`.
 pub fn item_col_assigned_cat_ids(
@@ -5365,6 +5404,8 @@ impl App {
             filter:           vec![], date_filter: None,
         });
         self.cursor = CursorPos::SectionHead(insert_idx);
+        // With a sort method set, the sort decides where it goes, not insert_idx.
+        self.resort_sections();
     }
 
     pub fn sec_form_cancel(&mut self) {
@@ -7203,6 +7244,8 @@ impl App {
 
     pub fn cat_move_confirm(&mut self) {
         self.cat_state.mode = CatMode::Normal;
+        // Moving a category changes tree order, which Category order sections follow.
+        self.resort_sections();
     }
 
     pub fn cat_move_up(&mut self) {
@@ -7669,6 +7712,27 @@ impl App {
         Self::sync_one_view_dynamic(&mut self.view, &cats, &mut self.next_id);
         for view in &mut self.inactive_views {
             Self::sync_one_view_dynamic(view, &cats, &mut self.next_id);
+        }
+        // Newly added auto sections are appended, so re-sort to put them in place.
+        self.resort_sections();
+    }
+
+    /// Re-apply every view's section sorting, keeping the cursor on its section.
+    pub fn resort_sections(&mut self) {
+        let cats = self.categories.clone();
+        let cur_sec_id = match self.cursor {
+            CursorPos::SectionHead(s) | CursorPos::Item { section: s, .. } =>
+                self.view.sections.get(s).map(|sec| sec.id),
+        };
+        sort_view_sections(&mut self.view, &cats);
+        for view in &mut self.inactive_views { sort_view_sections(view, &cats); }
+        if let Some(new_s) = cur_sec_id
+            .and_then(|id| self.view.sections.iter().position(|s| s.id == id))
+        {
+            self.cursor = match self.cursor {
+                CursorPos::SectionHead(_)    => CursorPos::SectionHead(new_s),
+                CursorPos::Item { item, .. } => CursorPos::Item { section: new_s, item },
+            };
         }
     }
 
@@ -8331,25 +8395,7 @@ impl App {
             draft.section_sort_order   = sso;
             draft.section_separators   = ss;
             draft.number_items         = ni;
-            // Apply section sorting if set.
-            match ssm {
-                SectionSortMethod::Alphabetic => {
-                    draft.sections.sort_by(|a, b| {
-                        let c = a.name.to_lowercase().cmp(&b.name.to_lowercase());
-                        if sso == SortOrder::Descending { c.reverse() } else { c }
-                    });
-                }
-                SectionSortMethod::CategoryOrder => {
-                    let flat = flatten_cats(&self.categories);
-                    draft.sections.sort_by(|a, b| {
-                        let ca = flat.iter().position(|f| f.id == a.cat_id).unwrap_or(usize::MAX);
-                        let cb = flat.iter().position(|f| f.id == b.cat_id).unwrap_or(usize::MAX);
-                        let c = ca.cmp(&cb);
-                        if sso == SortOrder::Descending { c.reverse() } else { c }
-                    });
-                }
-                _ => {}
-            }
+            sort_view_sections(&mut draft, &self.categories);
             // Re-insert draft and switch to it.
             self.inactive_views.insert(ii, draft);
             self.vmgr_state.mode = ViewMgrMode::Normal;
@@ -8360,7 +8406,8 @@ impl App {
 
         self.push_undo();
         self.vmgr_state.mode = ViewMgrMode::Normal;
-        let voi = self.view_order_idx;
+        let voi  = self.view_order_idx;
+        let cats = self.categories.clone();   // sort_view_sections needs it alongside &mut view
         let view = if idx == voi { &mut self.view }
                    else { match self.inactive_views.get_mut(Self::vmgr_inact_idx(idx, voi)) { Some(v) => v, None => return } };
         view.name                = name;
@@ -8374,40 +8421,9 @@ impl App {
         view.section_sort_method  = ssm;
         view.section_sort_order   = sso;
         // Apply section sort in place, then follow the cursor's section by ID.
-        let sort_applied = match ssm {
-            SectionSortMethod::Alphabetic => {
-                view.sections.sort_by(|a, b| {
-                    let c = a.name.to_lowercase().cmp(&b.name.to_lowercase());
-                    if sso == SortOrder::Descending { c.reverse() } else { c }
-                });
-                true
-            }
-            SectionSortMethod::CategoryOrder => {
-                let flat = flatten_cats(&self.categories);
-                let pos_of = |sec: &crate::model::Section| -> usize {
-                    flat.iter().position(|f| f.id == sec.cat_id).unwrap_or(usize::MAX)
-                };
-                view.sections.sort_by(|a, b| {
-                    let c = pos_of(a).cmp(&pos_of(b));
-                    if sso == SortOrder::Descending { c.reverse() } else { c }
-                });
-                true
-            }
-            _ => false,
-        };
-        if sort_applied && idx == voi {
-            // Follow cursor's section by ID rather than resetting to 0.
-            let cur_sec_id = match self.cursor {
-                CursorPos::SectionHead(s) | CursorPos::Item { section: s, .. } =>
-                    self.view.sections.get(s).map(|sec| sec.id),
-            };
-            self.cursor = match cur_sec_id.and_then(|id| self.view.sections.iter().position(|s| s.id == id)) {
-                Some(new_s) => match self.cursor {
-                    CursorPos::SectionHead(_)      => CursorPos::SectionHead(new_s),
-                    CursorPos::Item { item, .. }   => CursorPos::Item { section: new_s, item },
-                },
-                None => CursorPos::SectionHead(0),
-            };
+        sort_view_sections(view, &cats);
+        if ssm != SectionSortMethod::None && idx == voi {
+            self.resort_sections();
             self.mode = Mode::Normal;
         }
     }
