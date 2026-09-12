@@ -5167,9 +5167,9 @@ impl App {
         self.item_search = None;
     }
 
-    /// Confirm the search: move cursor to the next visible item (after the
-    /// current position, wrapping) whose text matches the query as a
-    /// case-insensitive regular expression, then close.
+    /// Confirm the search: move cursor to the next visible section head or item
+    /// (after the current position, wrapping) whose name or text matches the
+    /// query as a case-insensitive regular expression, then close.
     /// If the buffer is empty, repeats the last successful query.
     pub fn search_confirm(&mut self) {
         let (pattern, forward) = match &self.item_search {
@@ -5208,26 +5208,29 @@ impl App {
             .ok();
         let re = match re { Some(r) => r, None => return };
 
-        // Build a flat list of (section_idx, item_idx) for all visible items.
+        // Everything the cursor can land on, in screen order: each visible section's
+        // head, then its items. `None` marks a head (matched on its name); `Some(gi)`
+        // an item (matched on its text).
         let n_secs = self.view.sections.len();
-        let mut candidates: Vec<(usize, usize)> = Vec::new();
+        let mut candidates: Vec<(CursorPos, Option<usize>)> = Vec::new();
         for s_idx in 0..n_secs {
             let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
             if self.view.hide_empty_sections && vis.is_empty() { continue; }
-            for i_idx in 0..vis.len() {
-                candidates.push((s_idx, i_idx));
+            candidates.push((CursorPos::SectionHead(s_idx), None));
+            for (i_idx, &gi) in vis.iter().enumerate() {
+                candidates.push((CursorPos::Item { section: s_idx, item: i_idx }, Some(gi)));
             }
         }
         if candidates.is_empty() { return; }
         let len = candidates.len();
 
         // Find where the current cursor sits in the candidate list.
-        let cur_pos = match self.cursor {
-            CursorPos::SectionHead(_) => 0,
-            CursorPos::Item { section, item } => {
-                candidates.iter().position(|&(s, i)| s == section && i == item).unwrap_or(0)
-            }
-        };
+        let cur_pos = candidates.iter().position(|(pos, _)| match (pos, &self.cursor) {
+            (CursorPos::SectionHead(a), CursorPos::SectionHead(b)) => a == b,
+            (CursorPos::Item { section: s1, item: i1 },
+             CursorPos::Item { section: s2, item: i2 }) => s1 == s2 && i1 == i2,
+            _ => false,
+        }).unwrap_or(0);
 
         // Start one step ahead/behind and search with wrap.
         let start = if forward {
@@ -5241,11 +5244,14 @@ impl App {
             } else {
                 (start + len - offset) % len
             };
-            let (s_idx, i_idx) = candidates[idx];
-            let vis = visible_item_indices(&self.items, &self.view, s_idx, &self.categories);
-            let gi = vis[i_idx];
-            if re.is_match(&self.items[gi].text) {
-                self.cursor = CursorPos::Item { section: s_idx, item: i_idx };
+            let (pos, gi) = &candidates[idx];
+            let text = match (pos, gi) {
+                (CursorPos::SectionHead(s), _) => self.view.sections[*s].name.as_str(),
+                (_, Some(gi))                  => self.items[*gi].text.as_str(),
+                _                              => continue,
+            };
+            if re.is_match(text) {
+                self.cursor = *pos;
                 self.col_cursor = 0;
                 self.sub_row = 0;
                 return;
