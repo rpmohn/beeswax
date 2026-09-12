@@ -1092,8 +1092,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
 
-        // Header line: bold description.
-        let header = format!(" Select categories for \"{}\"", item_text);
+        // Header line: the search prompt while searching, else a bold description.
+        let header = match &app.cat_search {
+            Some(buf) => format!(" Search for: {}", buf),
+            None      => format!(" Select categories for \"{}\"", item_text),
+        };
         let mut cat_lines: Vec<Line<'static>> = vec![
             Line::from(Span::styled(header, bold)),
         ];

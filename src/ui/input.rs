@@ -1005,6 +1005,8 @@ fn handle_col_quick_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             }
             app.cat_open_props();
         }
+        // Vi mode reserves letters for movement, so search opens explicitly with /.
+        KeyCode::Char('/') if app.nav_mode == NavMode::Vi => app.cat_search_open(),
         KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
         _ => {}
     }
@@ -1172,6 +1174,17 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         app.cat_close_protected_warning();
         return;
     }
+    // Search bar owns typing while it is active.
+    if app.cat_search.is_some() {
+        match code {
+            KeyCode::Esc | KeyCode::Enter => { app.cat_search_clear(); return; }
+            KeyCode::Backspace => { app.cat_search_backspace(); return; }
+            KeyCode::F(7)      => { app.cat_search_prev(); return; }
+            KeyCode::F(8)      => { app.cat_search_next(); return; }
+            KeyCode::Char(ch) if ch != ' ' => { app.cat_search_char(ch); return; }
+            _ => { app.cat_search_clear(); }  // navigation key: cancel search, then handle
+        }
+    }
     if handle_vi_list(app, code, modifiers,
         &|a| a.col_sub_pick_down(),   &|a| a.col_sub_pick_up(),
         &|a| a.col_sub_pick_end(),    &|a| a.col_sub_pick_home(),
@@ -1189,6 +1202,13 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Insert          => app.col_sub_pick_begin_create(),
         KeyCode::Delete          => app.col_sub_pick_open_confirm_delete(),
         KeyCode::Enter | KeyCode::Esc | KeyCode::F(3) => app.col_sub_pick_close(),
+        KeyCode::F(7)            => app.cat_search_prev(),
+        KeyCode::F(8)            => app.cat_search_next(),
+        KeyCode::Backspace       => app.cat_search_backspace(),
+        // Vi mode reserves letters for movement, so search opens explicitly with /,
+        // as in the Category Manager. Agenda mode starts it with any letter.
+        KeyCode::Char('/') if app.nav_mode == NavMode::Vi => app.cat_search_open(),
+        KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
         _ => {}
     }
 }

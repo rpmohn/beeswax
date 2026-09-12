@@ -5262,13 +5262,23 @@ impl App {
     // ── Category search ───────────────────────────────────────────────────────
 
     /// Returns the indices of all cats whose names contain `buf` (case-insensitive).
-    fn cat_search_matches(cats: &[FlatCat], buf: &str) -> Vec<usize> {
+    fn cat_search_matches(names: &[String], buf: &str) -> Vec<usize> {
         if buf.is_empty() { return vec![]; }
         let lower = buf.to_lowercase();
-        cats.iter().enumerate()
-            .filter(|(_, e)| e.name.to_lowercase().contains(&lower))
+        names.iter().enumerate()
+            .filter(|(_, n)| n.to_lowercase().contains(&lower))
             .map(|(i, _)| i)
             .collect()
+    }
+
+    /// Names of the list the cursor is currently moving through, indexed the same
+    /// way `active_cat_cursor` counts. Most pickers show the whole category tree;
+    /// the column sub-picker shows only its column's head and descendants.
+    fn search_names(&self) -> Vec<String> {
+        if let ColMode::SubPick { col_idx, .. } = &self.col_mode {
+            return self.col_sub_cat_list(*col_idx).into_iter().map(|(_, n, _)| n).collect();
+        }
+        flatten_cats(&self.categories).into_iter().map(|c| c.name).collect()
     }
 
     /// Active cat-list cursor regardless of which window is visible.
@@ -5278,7 +5288,11 @@ impl App {
             let rows = Self::assign_visual_rows(&self.categories, &self.items, *gi);
             return rows.get(*cursor).map(|&(cat_idx, _)| cat_idx).unwrap_or(0);
         }
-        if let ColMode::QuickAdd { picker_cursor, .. } = &self.col_mode { return *picker_cursor; }
+        match &self.col_mode {
+            ColMode::QuickAdd { picker_cursor, .. } => return *picker_cursor,
+            ColMode::SubPick  { picker_cursor, .. } => return *picker_cursor,
+            _ => {}
+        }
         self.cat_state.cursor
     }
 
@@ -5298,6 +5312,14 @@ impl App {
         if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
             *picker_cursor = idx; return;
         }
+        if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            *picker_cursor = idx;
+            // Keep the stored scroll honest, or the next arrow key jumps a page.
+            const VIS: usize = 16;
+            if idx < *picker_scroll { *picker_scroll = idx; }
+            else if idx >= *picker_scroll + VIS { *picker_scroll = idx + 1 - VIS; }
+            return;
+        }
         self.cat_state.cursor = idx;
     }
 
@@ -5311,8 +5333,8 @@ impl App {
         let buf = self.cat_search.get_or_insert_with(String::new);
         buf.push(ch);
         let buf = buf.clone();
-        let cats = flatten_cats(&self.categories);
-        let matches = Self::cat_search_matches(&cats, &buf);
+        let names = self.search_names();
+        let matches = Self::cat_search_matches(&names, &buf);
         if let Some(&first) = matches.first() {
             self.set_active_cat_cursor(first);
         }
@@ -5327,8 +5349,8 @@ impl App {
                 return;
             }
             let buf = buf.clone();
-            let cats = flatten_cats(&self.categories);
-            let matches = Self::cat_search_matches(&cats, &buf);
+            let names = self.search_names();
+            let matches = Self::cat_search_matches(&names, &buf);
             if let Some(&first) = matches.first() {
                 self.set_active_cat_cursor(first);
             }
@@ -5343,8 +5365,8 @@ impl App {
     /// Move to the next match (F8).
     pub fn cat_search_next(&mut self) {
         let buf = match &self.cat_search { Some(b) => b.clone(), None => return };
-        let cats = flatten_cats(&self.categories);
-        let matches = Self::cat_search_matches(&cats, &buf);
+        let names = self.search_names();
+        let matches = Self::cat_search_matches(&names, &buf);
         if matches.is_empty() { return; }
         let cur = self.active_cat_cursor();
         let next = matches.iter().find(|&&i| i > cur)
@@ -5356,8 +5378,8 @@ impl App {
     /// Move to the previous match (F7).
     pub fn cat_search_prev(&mut self) {
         let buf = match &self.cat_search { Some(b) => b.clone(), None => return };
-        let cats = flatten_cats(&self.categories);
-        let matches = Self::cat_search_matches(&cats, &buf);
+        let names = self.search_names();
+        let matches = Self::cat_search_matches(&names, &buf);
         if matches.is_empty() { return; }
         let cur = self.active_cat_cursor();
         let prev = matches.iter().rev().find(|&&i| i < cur)
@@ -7553,7 +7575,8 @@ impl App {
     }
 
     pub fn col_sub_pick_close(&mut self) {
-        self.col_mode = ColMode::Normal;
+        self.col_mode   = ColMode::Normal;
+        self.cat_search = None;   // don't leak the search into the next picker
     }
 
     pub fn col_calendar_step(&mut self, step: CalStep) {
