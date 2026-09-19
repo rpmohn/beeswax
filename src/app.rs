@@ -3742,17 +3742,7 @@ impl App {
             }
             Mode::Normal | Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. } | Mode::ItemProps { .. } => {}
         }
-        // Apply sort immediately if section is configured for WhenEntered.
-        let sec_idx = match &self.cursor {
-            CursorPos::SectionHead(s)       => *s,
-            CursorPos::Item { section, .. } => *section,
-        };
-        if sec_idx < self.view.sections.len() {
-            let eff_sort_new = effective_sort(&self.view.sections[sec_idx], &self.view).0;
-            if eff_sort_new == SortNewItems::WhenEntered {
-                self.apply_section_sort(sec_idx);
-            }
-        }
+        self.sort_after_item_change();
     }
 
     pub fn cancel(&mut self) {
@@ -4174,6 +4164,7 @@ impl App {
             self.items[gi].values.insert(done_id, now_datetime_string());
         }
         self.clamp_cursor_to_visible();
+        self.sort_after_item_change();
     }
 
     // ── Section sort ──────────────────────────────────────────────────────────
@@ -4204,6 +4195,17 @@ impl App {
             _ => None,
         };
 
+        // Open modals hold global item indices, which the rearrange below
+        // invalidates; remember their items by ID so they can be re-found.
+        let assign_item_id = match &self.assign_mode {
+            AssignMode::Profile { gi, .. } => self.items.get(*gi).map(|it| it.id),
+            _ => None,
+        };
+        let props_item_id = match &self.mode {
+            Mode::ItemProps { gi, .. } => self.items.get(*gi).map(|it| it.id),
+            _ => None,
+        };
+
         // Rearrange: copy items in `sorted` order into the slots `natural` occupies.
         let sorted_items: Vec<Item> = sorted.iter().map(|&gi| self.items[gi].clone()).collect();
         for (slot, item) in natural.iter().zip(sorted_items) {
@@ -4216,6 +4218,30 @@ impl App {
             if let Some(new_local) = new_vis.iter().position(|&gi| self.items[gi].id == id) {
                 self.cursor = CursorPos::Item { section: sec_idx, item: new_local };
             }
+        }
+        if let Some(id) = assign_item_id {
+            if let Some(new_gi) = self.items.iter().position(|it| it.id == id) {
+                if let AssignMode::Profile { gi, .. } = &mut self.assign_mode { *gi = new_gi; }
+            }
+        }
+        if let Some(id) = props_item_id {
+            if let Some(new_gi) = self.items.iter().position(|it| it.id == id) {
+                if let Mode::ItemProps { gi, .. } = &mut self.mode { *gi = new_gi; }
+            }
+        }
+    }
+
+    /// Re-sort the cursor's section when it is set to sort as items are entered.
+    /// Call after anything that changes an item's data: not only the text edit
+    /// ENTER confirms, but column values, assignments and Done as well.
+    fn sort_after_item_change(&mut self) {
+        let sec_idx = match &self.cursor {
+            CursorPos::SectionHead(s)       => *s,
+            CursorPos::Item { section, .. } => *section,
+        };
+        if sec_idx >= self.view.sections.len() { return; }
+        if effective_sort(&self.view.sections[sec_idx], &self.view).0 == SortNewItems::WhenEntered {
+            self.apply_section_sort(sec_idx);
         }
     }
 
@@ -5100,6 +5126,7 @@ impl App {
         } else {
             item.values.insert(cat_id, String::new());
         }
+        self.sort_after_item_change();
     }
 
     // ── Item search ───────────────────────────────────────────────────────────
@@ -7335,6 +7362,7 @@ impl App {
         let left = item_col_assigned_cat_ids(&self.items[gi].values, col_cat_id, &self.categories).len();
         self.sub_row = self.sub_row.min(left.saturating_sub(1));
         self.dirty = true;
+        self.sort_after_item_change();
     }
 
     // ── Calendar picker ───────────────────────────────────────────────────────
@@ -7572,6 +7600,7 @@ impl App {
                 item.values.insert(cat_id, String::new());
             }
         }
+        self.sort_after_item_change();
     }
 
     pub fn col_sub_pick_close(&mut self) {
@@ -7603,6 +7632,7 @@ impl App {
                 self.items[gi].values.insert(cat_id, val);
             }
         }
+        self.sort_after_item_change();
     }
 
     pub fn col_calendar_cancel(&mut self) {
@@ -7651,6 +7681,7 @@ impl App {
                 self.items[gi].values.insert(cat_id, val);
             }
         }
+        self.sort_after_item_change();
     }
 
     pub fn col_set_time_cancel(&mut self) {
