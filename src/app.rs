@@ -7797,8 +7797,8 @@ impl App {
     }
 
     fn sync_one_view_dynamic(view: &mut View, cats: &[Category], next_id: &mut usize) {
-        if view.sec_subs.is_empty() && view.sec_all.is_empty() { return; }
-
+        // No early return when both rule lists are empty: dropping a view's last
+        // Subs/All rule is exactly when its auto sections need clearing out.
         let wanted = dynamic_wanted_ids(&view.sec_subs, &view.sec_all, cats);
 
         let mut existing_cats = std::collections::HashSet::new();
