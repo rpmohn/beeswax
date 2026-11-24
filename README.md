@@ -15,7 +15,7 @@ There's still a huge amount of work to do, but I am now using Beeswax at both ho
 - **Category Manager** — hierarchical category tree with rename, create, delete, reorder
 - **View Manager** — switch view, rename, create, delete
 - **Notes** — per-item notes opened in `$EDITOR` (defaults to `notepad.exe` on Windows)
-- **Search** — `/` searches forward, `?` searches backward (vi mode); `n`/`N` repeat in same/opposite direction with wrap-around
+- **Search** — `/` searches forward, `?` searches backward (vi mode), Ctrl+F opens the search bar in either mode; matches both item text and section heads; `n`/`N` repeat in same/opposite direction with wrap-around
 - **Undo / Redo** — session-length undo / redo
 - **Encryption** — optional AES-256-GCM file encryption with Argon2id key derivation
 - **Color schemes** — eight built-in themes plus a fully custom, editable, hex-color scheme
@@ -61,11 +61,12 @@ When opening an encrypted file beeswax prompts for the password before entering 
 |-----|--------|
 | ↑ / ↓ | Move up / down |
 | ← / → or Tab / Shift+Tab | Move left / right across columns |
-| PgUp / PgDn | Scroll up / down 10 rows |
+| PgUp / PgDn | Move up / down one screenful |
 | Ctrl+PgUp / Ctrl+PgDn | Cycle to previous / next view |
 | Ctrl+F | Open search bar |
-| Home | Move to current section head (or previous section head if already there) |
-| End | Move to last item in current section (or next section if already there) |
+| Home / End | Move to current section head / last item in current section (press again for the previous / next section) |
+| Shift+Home / Shift+End | Move to the head of the previous / next section |
+| Ctrl+Home / Ctrl+End | Move to the very top / bottom of the view |
 | Enter | Move down |
 | F2 | Edit item text or cell value |
 | F3 | Assign categories (main column) / pick value (data column) |
@@ -76,7 +77,7 @@ When opening an encrypted file beeswax prompts for the password before entering 
 | F9 | Category Manager |
 | F10 | Menu |
 | Insert | Create new blank item below cursor |
-| Delete | Remove item from section's category (on section head: remove section) |
+| Delete | Main column — remove item from the section's category (on a section head: remove the section). Data column — clear the item's value for that column (on the column head: remove the column) |
 | Shift+Delete | Discard item from all categories permanently |
 | Ctrl+S | Save file |
 | Ctrl+Z | Undo |
