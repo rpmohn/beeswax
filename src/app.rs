@@ -3384,6 +3384,35 @@ impl App {
         }
     }
 
+    /// Shift+End: head of the next visible section. Position within the current
+    /// section does not matter, and it is a no-op on the last section.
+    pub fn cursor_section_next(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        let s = match self.cursor {
+            CursorPos::SectionHead(s)       => s,
+            CursorPos::Item { section, .. } => section,
+        };
+        if let Some(n) = self.next_visible_section_fwd(s + 1) {
+            self.sub_row = 0;
+            self.cursor = CursorPos::SectionHead(n);
+        }
+    }
+
+    /// Shift+Home: head of the previous visible section. Position within the
+    /// current section does not matter, and it is a no-op on the first section.
+    pub fn cursor_section_prev(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        let s = match self.cursor {
+            CursorPos::SectionHead(s)       => s,
+            CursorPos::Item { section, .. } => section,
+        };
+        if s == 0 { return; }
+        if let Some(p) = self.next_visible_section_bwd(s - 1) {
+            self.sub_row = 0;
+            self.cursor = CursorPos::SectionHead(p);
+        }
+    }
+
     /// Ctrl+Home: the first row of the view, i.e. the head of the first section
     /// that is not hidden by `hide_empty_sections`.
     pub fn cursor_view_top(&mut self) {
