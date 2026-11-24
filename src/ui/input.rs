@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, PAGE_FULL, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
 
 // ── Shared single-line text-field editor ─────────────────────────────────────
 
@@ -115,6 +115,10 @@ pub fn handle_event(app: &mut App, event: Event) {
     if !matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return;
     }
+
+    // Any open list's scroll comes from what the renderer last drew, so movement
+    // starts from the real window rather than a guessed one.
+    app.sync_list_scroll();
 
     // Alt-Q — trigger quit (may show ask-save dialog)
     if modifiers.contains(KeyModifiers::ALT) && code == KeyCode::Char('q') {
@@ -864,8 +868,8 @@ fn handle_col_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
         KeyCode::Up       => app.col_choices_up(),
         KeyCode::Down     => app.col_choices_down(),
-        KeyCode::PageUp   => app.col_choices_pgup(12),
-        KeyCode::PageDown => app.col_choices_pgdn(12),
+        KeyCode::PageUp   => app.col_choices_pgup(PAGE_FULL),
+        KeyCode::PageDown => app.col_choices_pgdn(PAGE_FULL),
         KeyCode::Home     => app.col_choices_home(),
         KeyCode::End      => app.col_choices_end(),
         KeyCode::Enter    => app.col_choices_confirm(),
@@ -979,8 +983,8 @@ fn handle_col_quick_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
         KeyCode::Up       => app.col_quick_add_up(),
         KeyCode::Down     => app.col_quick_add_down(),
-        KeyCode::PageUp   => app.col_quick_add_pgup(12),
-        KeyCode::PageDown => app.col_quick_add_pgdn(12),
+        KeyCode::PageUp   => app.col_quick_add_pgup(PAGE_FULL),
+        KeyCode::PageDown => app.col_quick_add_pgdn(PAGE_FULL),
         KeyCode::Home     => app.col_quick_add_home(),
         KeyCode::End      => app.col_quick_add_end(),
         KeyCode::Enter    => app.col_quick_add_confirm(),
@@ -1517,8 +1521,8 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             KeyCode::Esc      => app.vmgr_sec_pick_cancel(),
             KeyCode::Up       => app.vmgr_sec_pick_up(),
             KeyCode::Down     => app.vmgr_sec_pick_down(),
-            KeyCode::PageUp   => app.vmgr_sec_pick_pgup(12),
-            KeyCode::PageDown => app.vmgr_sec_pick_pgdn(12),
+            KeyCode::PageUp   => app.vmgr_sec_pick_pgup(PAGE_FULL),
+            KeyCode::PageDown => app.vmgr_sec_pick_pgdn(PAGE_FULL),
             KeyCode::Home     => app.vmgr_sec_pick_home(),
             KeyCode::End      => app.vmgr_sec_pick_end(),
             KeyCode::Char(' ') => app.vmgr_sec_pick_toggle(),

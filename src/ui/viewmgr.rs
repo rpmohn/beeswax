@@ -544,6 +544,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let max_vis  = 20usize;
         let visible  = all_cats.len().min(max_vis);
         let start    = stored_scroll_start(stored_scroll, cursor, visible);
+        app.list_view.publish(visible, start);
 
         let box_h = (visible + 2) as u16;
         let box_w = 62u16;
@@ -620,8 +621,8 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
         let used_ids: std::collections::HashSet<usize> =
             view_ref.sections.iter().map(|s| s.cat_id).collect();
 
-        let visible_rows = cats.len().min(16);
-        let picker_h = (visible_rows as u16 + 3).max(6).min(area.height.saturating_sub(4));
+        const MAX_ROWS: usize = 16;
+        let picker_h = (cats.len().min(MAX_ROWS) as u16 + 3).max(6).min(area.height.saturating_sub(4));
         let picker_w = 50u16.min(area.width.saturating_sub(4));
         let pick_rect = centered_rect(picker_w, picker_h, area);
         frame.render_widget(Clear, pick_rect);
@@ -639,6 +640,7 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
         let visible = (pick_inner.height as usize).saturating_sub(1); // -1 for header line
         let start = stored_scroll_start(*picker_scroll, *picker_cur, visible);
+        app.list_view.publish(visible, start);
         let rev = app.theme.item_selected_field;
 
         let mut pick_lines: Vec<Line<'static>> = vec![view_line];

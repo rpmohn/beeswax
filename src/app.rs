@@ -693,6 +693,8 @@ pub struct App {
     pub cursor_line:      std::cell::Cell<usize>,
     /// Height of the view body in rows — set each render frame.
     pub body_height:      std::cell::Cell<usize>,
+    /// Window of the open picker, published by the renderer each frame.
+    pub list_view:        ListView,
     /// Map of every renderable cursor position to its (first_line, last_line) — set each render frame.
     pub line_map:         std::cell::RefCell<Vec<(CursorPos, usize, usize)>>,
     /// Pending first character of a two-key vi sequence (e.g. 'z' waiting for 'z').
@@ -713,6 +715,32 @@ pub struct App {
 /// Compute the lazy-scroll start row.
 /// `stored` is the stored scroll field; `cursor` is the current cursor; `visible` is the window size.
 /// This is the renderer formula: clamp stored so cursor stays visible.
+/// What the renderer last drew for whichever scrolling list is open: how many
+/// rows it can show, and the scroll offset it actually used.
+///
+/// The renderer is the only thing that knows the real layout, so it publishes
+/// both here each frame and the movement keys read them back. That makes the
+/// window correct at any terminal size and for any box layout, with no height
+/// arithmetic restated outside the renderer. One pair is enough because only one
+/// such list is ever open at a time.
+#[derive(Default)]
+pub struct ListView {
+    rows:   std::cell::Cell<usize>,
+    offset: std::cell::Cell<usize>,
+}
+
+impl ListView {
+    /// Called by the renderer with the window it just drew.
+    pub fn publish(&self, rows: usize, offset: usize) {
+        self.rows.set(rows.max(1));
+        self.offset.set(offset);
+    }
+    /// Visible rows. Never 0, so `rows() - 1` is always safe.
+    pub fn rows(&self) -> usize { self.rows.get().max(1) }
+    /// The offset actually on screen, which is the authoritative scroll position.
+    pub fn offset(&self) -> usize { self.offset.get() }
+}
+
 pub fn stored_scroll_start(stored: usize, cursor: usize, visible: usize) -> usize {
     stored.min(cursor).max(cursor.saturating_sub(visible.saturating_sub(1)))
 }
@@ -1025,8 +1053,12 @@ fn clamp_list_cursor(cursor: &mut usize, scroll: &mut usize, count: usize, visib
 const FILTER_VIS: usize = 2;
 /// Number of Sections rows in the View Properties dialog.
 const SEC_VIS: usize = 6;
-/// Number of category rows in the Section Select picker.
-const SEC_PICK_VIS: usize = 16;
+
+
+/// Page size meaning "one screenful". The picker clamps it to however many rows
+/// are really visible, which only it can work out, so callers need not care.
+pub const PAGE_FULL: usize = usize::MAX;
+
 
 /// Opening position for the filter picker: the category the Filter list cursor is
 /// on. Falls back to the top when that slot has no entry. The list starts at the
@@ -1034,11 +1066,10 @@ const SEC_PICK_VIS: usize = 16;
 /// last row. Scroll must be the real offset, not 0 — the movement keys carry it
 /// forward, so a placeholder would make the first keypress jump the page.
 fn filter_picker_start(flat: &[FlatCat], filter: &[FilterEntry], filter_cursor: usize) -> (usize, usize) {
-    const VIS: usize = 20;
     let cursor = filter.get(filter_cursor)
         .and_then(|e| flat.iter().position(|c| c.id == e.cat_id))
         .unwrap_or(0);
-    (cursor, cursor.saturating_sub(VIS - 1))
+    (cursor, 0)
 }
 
 /// Same, for the Section Select picker: open on the category backing the section
@@ -1047,7 +1078,7 @@ fn sec_picker_start(flat: &[FlatCat], sections: &[Section], sec_cursor: usize) -
     let cursor = sections.get(sec_cursor)
         .and_then(|s| flat.iter().position(|c| c.id == s.cat_id))
         .unwrap_or(0);
-    (cursor, cursor.saturating_sub(SEC_PICK_VIS - 1))
+    (cursor, 0)
 }
 
 /// The picker's +/- marker for a date category mirrors its date filter, so the
@@ -2578,6 +2609,7 @@ impl App {
             scroll_offset:   std::cell::Cell::new(0),
             cursor_line:     std::cell::Cell::new(0),
             body_height:     std::cell::Cell::new(0),
+            list_view:       ListView::default(),
             line_map:        std::cell::RefCell::new(Vec::new()),
             vi_pending:      None,
             theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::GruvboxDark),
@@ -2634,6 +2666,7 @@ impl App {
             scroll_offset:   std::cell::Cell::new(0),
             cursor_line:     std::cell::Cell::new(0),
             body_height:     std::cell::Cell::new(0),
+            list_view:       ListView::default(),
             line_map:        std::cell::RefCell::new(Vec::new()),
             vi_pending:      None,
             theme:           crate::theme::Theme::for_scheme(crate::theme::ColorScheme::GruvboxDark),
@@ -4322,17 +4355,19 @@ impl App {
     }
 
     pub fn col_quick_add_down(&mut self) {
-        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
         if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if *picker_cursor + 1 < len {
                 *picker_cursor += 1;
-                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
             }
         }
     }
 
     pub fn col_quick_add_pgup(&mut self, page: usize) {
+        // A page is a screenful, so never more than what is actually visible.
+        let page = page.min(self.list_view.rows());
         if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = picker_cursor.saturating_sub(page);
             *picker_scroll = picker_scroll.saturating_sub(page);
@@ -4340,12 +4375,13 @@ impl App {
     }
 
     pub fn col_quick_add_pgdn(&mut self, page: usize) {
-        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
+        let page = page.min(vis);
         if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if len > 0 {
                 *picker_cursor = (*picker_cursor + page).min(len - 1);
-                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
             }
         }
     }
@@ -4357,35 +4393,35 @@ impl App {
         }
     }
     pub fn col_quick_add_end(&mut self) {
-        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
         if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if len > 0 {
                 *picker_cursor = len - 1;
-                *picker_scroll = picker_cursor.saturating_sub(VIS - 1);
+                *picker_scroll = picker_cursor.saturating_sub(vis.saturating_sub(1));
             }
         }
     }
     pub fn col_quick_add_screen_top(&mut self) {
-        const VIS: usize = 12;
+        let vis = self.list_view.rows();
         if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
+            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
         }
     }
     pub fn col_quick_add_screen_mid(&mut self) {
-        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
         if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
-            *picker_cursor = (start + VIS / 2).min(len.saturating_sub(1));
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis / 2).min(len.saturating_sub(1));
         }
     }
     pub fn col_quick_add_screen_bot(&mut self) {
-        const VIS: usize = 12;
         let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
         if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
-            *picker_cursor = (start + VIS - 1).min(len.saturating_sub(1));
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis.saturating_sub(1)).min(len.saturating_sub(1));
         }
     }
 
@@ -4586,6 +4622,16 @@ impl App {
         }
     }
 
+    /// Rows in the Choices picker's list. 0 when that picker is not open, which
+    /// leaves every movement method a no-op, as the `if let` guards already ensure.
+    fn col_choices_len(&self) -> usize {
+        match &self.col_mode {
+            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
+            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
+            _ => 0,
+        }
+    }
+
     pub fn col_choices_up(&mut self) {
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if *picker_cursor > 0 {
@@ -4596,36 +4642,31 @@ impl App {
     }
 
     pub fn col_choices_down(&mut self) {
-        const VIS: usize = 12;
-        let list_len = match &self.col_mode {
-            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
-            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
-            _ => return,
-        };
+        let list_len = self.col_choices_len();
+        let vis = self.list_view.rows();
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if *picker_cursor + 1 < list_len {
                 *picker_cursor += 1;
-                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
             }
         }
     }
     pub fn col_choices_pgup(&mut self, page: usize) {
+        // A page is a screenful, so never more than what is actually visible.
+        let page = page.min(self.list_view.rows());
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = picker_cursor.saturating_sub(page);
             *picker_scroll = picker_scroll.saturating_sub(page);
         }
     }
     pub fn col_choices_pgdn(&mut self, page: usize) {
-        let list_len = match &self.col_mode {
-            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
-            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
-            _ => return,
-        };
-        const VIS: usize = 12;
+        let list_len = self.col_choices_len();
+        let vis = self.list_view.rows();
+        let page = page.min(vis);
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if list_len > 0 {
                 *picker_cursor = (*picker_cursor + page).min(list_len - 1);
-                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
             }
         }
     }
@@ -4636,47 +4677,35 @@ impl App {
         }
     }
     pub fn col_choices_end(&mut self) {
-        const VIS: usize = 12;
-        let list_len = match &self.col_mode {
-            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
-            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
-            _ => return,
-        };
+        let list_len = self.col_choices_len();
+        let vis = self.list_view.rows();
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if list_len > 0 {
                 *picker_cursor = list_len - 1;
-                *picker_scroll = picker_cursor.saturating_sub(VIS - 1);
+                *picker_scroll = picker_cursor.saturating_sub(vis.saturating_sub(1));
             }
         }
     }
     pub fn col_choices_screen_top(&mut self) {
-        const VIS: usize = 12;
+        let vis = self.list_view.rows();
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
+            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
         }
     }
     pub fn col_choices_screen_mid(&mut self) {
-        const VIS: usize = 12;
-        let list_len = match &self.col_mode {
-            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
-            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
-            _ => return,
-        };
+        let list_len = self.col_choices_len();
+        let vis = self.list_view.rows();
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
-            *picker_cursor = (start + VIS / 2).min(list_len.saturating_sub(1));
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis / 2).min(list_len.saturating_sub(1));
         }
     }
     pub fn col_choices_screen_bot(&mut self) {
-        const VIS: usize = 12;
-        let list_len = match &self.col_mode {
-            ColMode::Choices { kind: ChoicesKind::Category, .. } => flatten_cats(&self.categories).len(),
-            ColMode::Choices { kind: ChoicesKind::Position, .. } => 2,
-            _ => return,
-        };
+        let list_len = self.col_choices_len();
+        let vis = self.list_view.rows();
         if let ColMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
-            *picker_cursor = (start + VIS - 1).min(list_len.saturating_sub(1));
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis.saturating_sub(1)).min(list_len.saturating_sub(1));
         }
     }
 
@@ -4995,7 +5024,7 @@ impl App {
     }
 
     pub fn assign_cursor_down(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let gi = match &self.assign_mode {
             AssignMode::Profile { gi, .. } => *gi,
             AssignMode::Normal => return,
@@ -5004,7 +5033,7 @@ impl App {
         if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
             if *cursor + 1 < len {
                 *cursor += 1;
-                if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+                if *cursor >= *scroll + vis { *scroll = *cursor + 1 - vis; }
             }
         }
     }
@@ -5017,7 +5046,7 @@ impl App {
     }
 
     pub fn assign_cursor_pgdn(&mut self, page: usize) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let gi = match &self.assign_mode {
             AssignMode::Profile { gi, .. } => *gi,
             AssignMode::Normal => return,
@@ -5025,7 +5054,7 @@ impl App {
         let len = Self::assign_visual_rows(&self.categories, &self.items, gi).len();
         if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
             if len > 0 { *cursor = (*cursor + page).min(len - 1); }
-            if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+            if *cursor >= *scroll + vis { *scroll = *cursor + 1 - vis; }
         }
     }
 
@@ -5037,7 +5066,7 @@ impl App {
     }
 
     pub fn assign_cursor_end(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let gi = match &self.assign_mode {
             AssignMode::Profile { gi, .. } => *gi,
             AssignMode::Normal => return,
@@ -5046,39 +5075,39 @@ impl App {
         if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
             if len > 0 {
                 *cursor = len - 1;
-                *scroll = cursor.saturating_sub(VIS - 1);
+                *scroll = cursor.saturating_sub(vis.saturating_sub(1));
             }
         }
     }
 
     pub fn assign_cursor_screen_top(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
-            *cursor = stored_scroll_start(*scroll, *cursor, VIS);
+            *cursor = stored_scroll_start(*scroll, *cursor, vis);
         }
     }
     pub fn assign_cursor_screen_mid(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let gi = match &self.assign_mode {
             AssignMode::Profile { gi, .. } => *gi,
             AssignMode::Normal => return,
         };
         let len = Self::assign_visual_rows(&self.categories, &self.items, gi).len();
         if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
-            let start = stored_scroll_start(*scroll, *cursor, VIS);
-            *cursor = (start + VIS / 2).min(len.saturating_sub(1));
+            let start = stored_scroll_start(*scroll, *cursor, vis);
+            *cursor = (start + vis / 2).min(len.saturating_sub(1));
         }
     }
     pub fn assign_cursor_screen_bot(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let gi = match &self.assign_mode {
             AssignMode::Profile { gi, .. } => *gi,
             AssignMode::Normal => return,
         };
         let len = Self::assign_visual_rows(&self.categories, &self.items, gi).len();
         if let AssignMode::Profile { cursor, scroll, .. } = &mut self.assign_mode {
-            let start = stored_scroll_start(*scroll, *cursor, VIS);
-            *cursor = (start + VIS - 1).min(len.saturating_sub(1));
+            let start = stored_scroll_start(*scroll, *cursor, vis);
+            *cursor = (start + vis.saturating_sub(1)).min(len.saturating_sub(1));
         }
     }
 
@@ -5127,6 +5156,38 @@ impl App {
             item.values.insert(cat_id, String::new());
         }
         self.sort_after_item_change();
+    }
+
+    /// Adopt the scroll offset the renderer actually drew, for whichever list is
+    /// open. Called once before each key is dispatched, so every movement method
+    /// starts from what is on screen rather than from a value it guessed earlier.
+    pub fn sync_list_scroll(&mut self) {
+        let off = self.list_view.offset();
+        match &mut self.col_mode {
+            ColMode::Choices  { picker_scroll, .. } => { *picker_scroll = off; return; }
+            ColMode::QuickAdd { picker_scroll, .. } => { *picker_scroll = off; return; }
+            ColMode::SubPick  { picker_scroll, .. } => { *picker_scroll = off; return; }
+            _ => {}
+        }
+        if let AssignMode::Profile { scroll, .. } = &mut self.assign_mode {
+            *scroll = off;
+            return;
+        }
+        match &mut self.sec_mode {
+            SectionMode::Choices { picker_scroll, .. } => { *picker_scroll = off; return; }
+            SectionMode::Props { filter_state: FilterState::Open { scroll, .. }, .. } => {
+                *scroll = off; return;
+            }
+            SectionMode::Props { sort_state: SortState::Dialog { picker: Some(p), .. }, .. } => {
+                p.scroll = off; return;
+            }
+            _ => {}
+        }
+        if let ViewMgrMode::Props { filter_state, sec_add_picker, sort_state, .. } = &mut self.vmgr_state.mode {
+            if let FilterState::Open { scroll, .. } = filter_state { *scroll = off; return; }
+            if let Some((_, scroll)) = sec_add_picker { *scroll = off; return; }
+            if let SortState::Dialog { picker: Some(p), .. } = sort_state { p.scroll = off; return; }
+        }
     }
 
     // ── Item search ───────────────────────────────────────────────────────────
@@ -5342,9 +5403,9 @@ impl App {
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = idx;
             // Keep the stored scroll honest, or the next arrow key jumps a page.
-            const VIS: usize = 16;
+            let vis = self.list_view.rows();
             if idx < *picker_scroll { *picker_scroll = idx; }
-            else if idx >= *picker_scroll + VIS { *picker_scroll = idx + 1 - VIS; }
+            else if idx >= *picker_scroll + vis { *picker_scroll = idx + 1 - vis; }
             return;
         }
         self.cat_state.cursor = idx;
@@ -5580,12 +5641,12 @@ impl App {
     }
 
     pub fn sec_choices_down(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             if *picker_cursor + 1 < len {
                 *picker_cursor += 1;
-                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
             }
         }
     }
@@ -5596,12 +5657,12 @@ impl App {
         }
     }
     pub fn sec_choices_pgdn(&mut self, page: usize) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             if len > 0 {
                 *picker_cursor = (*picker_cursor + page).min(len - 1);
-                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
             }
         }
     }
@@ -5612,35 +5673,35 @@ impl App {
         }
     }
     pub fn sec_choices_end(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
             if len > 0 {
                 *picker_cursor = len - 1;
-                *picker_scroll = picker_cursor.saturating_sub(VIS - 1);
+                *picker_scroll = picker_cursor.saturating_sub(vis.saturating_sub(1));
             }
         }
     }
     pub fn sec_choices_screen_top(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
-            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
+            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
         }
     }
     pub fn sec_choices_screen_mid(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
-            *picker_cursor = (start + VIS / 2).min(len.saturating_sub(1));
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis / 2).min(len.saturating_sub(1));
         }
     }
     pub fn sec_choices_screen_bot(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let len = flatten_cats(&self.categories).len();
         if let SectionMode::Choices { picker_cursor, picker_scroll, .. } = &mut self.sec_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
-            *picker_cursor = (start + VIS - 1).min(len.saturating_sub(1));
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis.saturating_sub(1)).min(len.saturating_sub(1));
         }
     }
 
@@ -5806,12 +5867,12 @@ impl App {
     }
 
     pub fn sec_filter_picker_down(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             if *cursor + 1 < count {
                 *cursor += 1;
-                if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+                if *cursor >= *scroll + vis { *scroll = *cursor + 1 - vis; }
             }
         }
     }
@@ -5824,11 +5885,11 @@ impl App {
     }
 
     pub fn sec_filter_picker_pgdn(&mut self, n: usize) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             *cursor = (*cursor + n).min(count.saturating_sub(1));
-            if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+            if *cursor >= *scroll + vis { *scroll = *cursor + 1 - vis; }
         }
     }
 
@@ -5839,33 +5900,33 @@ impl App {
         }
     }
     pub fn sec_filter_picker_end(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
             *cursor = count.saturating_sub(1);
-            *scroll = cursor.saturating_sub(VIS - 1);
+            *scroll = cursor.saturating_sub(vis.saturating_sub(1));
         }
     }
     pub fn sec_filter_picker_screen_top(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
-            *cursor = stored_scroll_start(*scroll, *cursor, VIS);
+            *cursor = stored_scroll_start(*scroll, *cursor, vis);
         }
     }
     pub fn sec_filter_picker_screen_mid(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
-            let start = stored_scroll_start(*scroll, *cursor, VIS);
-            *cursor = (start + VIS / 2).min(count.saturating_sub(1));
+            let start = stored_scroll_start(*scroll, *cursor, vis);
+            *cursor = (start + vis / 2).min(count.saturating_sub(1));
         }
     }
     pub fn sec_filter_picker_screen_bot(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let SectionMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.sec_mode {
-            let start = stored_scroll_start(*scroll, *cursor, VIS);
-            *cursor = (start + VIS - 1).min(count.saturating_sub(1));
+            let start = stored_scroll_start(*scroll, *cursor, vis);
+            *cursor = (start + vis.saturating_sub(1)).min(count.saturating_sub(1));
         }
     }
 
@@ -5959,12 +6020,12 @@ impl App {
     }
 
     pub fn vmgr_filter_picker_down(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             if *cursor + 1 < count {
                 *cursor += 1;
-                if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+                if *cursor >= *scroll + vis { *scroll = *cursor + 1 - vis; }
             }
         }
     }
@@ -5977,11 +6038,11 @@ impl App {
     }
 
     pub fn vmgr_filter_picker_pgdn(&mut self, n: usize) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             *cursor = (*cursor + n).min(count.saturating_sub(1));
-            if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+            if *cursor >= *scroll + vis { *scroll = *cursor + 1 - vis; }
         }
     }
 
@@ -5993,34 +6054,34 @@ impl App {
     }
 
     pub fn vmgr_filter_picker_end(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
             *cursor = count.saturating_sub(1);
-            *scroll = cursor.saturating_sub(VIS - 1);
+            *scroll = cursor.saturating_sub(vis.saturating_sub(1));
         }
     }
 
     pub fn vmgr_filter_picker_screen_top(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
-            *cursor = stored_scroll_start(*scroll, *cursor, VIS);
+            *cursor = stored_scroll_start(*scroll, *cursor, vis);
         }
     }
     pub fn vmgr_filter_picker_screen_mid(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
-            let start = stored_scroll_start(*scroll, *cursor, VIS);
-            *cursor = (start + VIS / 2).min(count.saturating_sub(1));
+            let start = stored_scroll_start(*scroll, *cursor, vis);
+            *cursor = (start + vis / 2).min(count.saturating_sub(1));
         }
     }
     pub fn vmgr_filter_picker_screen_bot(&mut self) {
-        const VIS: usize = 20;
+        let vis = self.list_view.rows();
         let count = flatten_cats(&self.categories).len();
         if let ViewMgrMode::Props { filter_state: FilterState::Open { cursor, scroll, .. }, .. } = &mut self.vmgr_state.mode {
-            let start = stored_scroll_start(*scroll, *cursor, VIS);
-            *cursor = (start + VIS - 1).min(count.saturating_sub(1));
+            let start = stored_scroll_start(*scroll, *cursor, vis);
+            *cursor = (start + vis.saturating_sub(1)).min(count.saturating_sub(1));
         }
     }
 
@@ -6708,7 +6769,7 @@ impl App {
     }
 
     pub fn sec_sort_picker_down(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
@@ -6716,7 +6777,7 @@ impl App {
             if let Some(p) = picker {
                 if p.cursor + 1 < max {
                     p.cursor += 1;
-                    if p.cursor >= p.scroll + VIS { p.scroll = p.cursor + 1 - VIS; }
+                    if p.cursor >= p.scroll + vis { p.scroll = p.cursor + 1 - vis; }
                 }
             }
         }
@@ -6732,7 +6793,7 @@ impl App {
         }
     }
     pub fn sec_sort_picker_pgdn(&mut self, page: usize) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
@@ -6740,7 +6801,7 @@ impl App {
             if let Some(p) = picker {
                 if max > 0 {
                     p.cursor = (p.cursor + page).min(max - 1);
-                    if p.cursor >= p.scroll + VIS { p.scroll = p.cursor + 1 - VIS; }
+                    if p.cursor >= p.scroll + vis { p.scroll = p.cursor + 1 - vis; }
                 }
             }
         }
@@ -6753,7 +6814,7 @@ impl App {
         }
     }
     pub fn sec_sort_picker_end(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
@@ -6761,42 +6822,42 @@ impl App {
             if let Some(p) = picker {
                 if max > 0 {
                     p.cursor = max - 1;
-                    p.scroll = p.cursor.saturating_sub(VIS - 1);
+                    p.scroll = p.cursor.saturating_sub(vis.saturating_sub(1));
                 }
             }
         }
     }
     pub fn sec_sort_picker_screen_top(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
             if let Some(p) = picker {
-                p.cursor = stored_scroll_start(p.scroll, p.cursor, VIS);
+                p.cursor = stored_scroll_start(p.scroll, p.cursor, vis);
             }
         }
     }
     pub fn sec_sort_picker_screen_mid(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
             if let Some(p) = picker {
-                let start = stored_scroll_start(p.scroll, p.cursor, VIS);
-                p.cursor = (start + VIS / 2).min(max.saturating_sub(1));
+                let start = stored_scroll_start(p.scroll, p.cursor, vis);
+                p.cursor = (start + vis / 2).min(max.saturating_sub(1));
             }
         }
     }
     pub fn sec_sort_picker_screen_bot(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.sec_sort_picker_len();
         if let SectionMode::Props {
             sort_state: SortState::Dialog { ref mut picker, .. }, ..
         } = self.sec_mode {
             if let Some(p) = picker {
-                let start = stored_scroll_start(p.scroll, p.cursor, VIS);
-                p.cursor = (start + VIS - 1).min(max.saturating_sub(1));
+                let start = stored_scroll_start(p.scroll, p.cursor, vis);
+                p.cursor = (start + vis.saturating_sub(1)).min(max.saturating_sub(1));
             }
         }
     }
@@ -7445,7 +7506,7 @@ impl App {
     }
 
     pub fn col_sub_pick_down(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let len = match &self.col_mode {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
@@ -7453,7 +7514,7 @@ impl App {
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if *picker_cursor + 1 < len {
                 *picker_cursor += 1;
-                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
             }
         }
     }
@@ -7468,11 +7529,11 @@ impl App {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
         };
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if len > 0 {
                 *picker_cursor = (*picker_cursor + page).min(len - 1);
-                if *picker_cursor >= *picker_scroll + VIS { *picker_scroll = *picker_cursor + 1 - VIS; }
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
             }
         }
     }
@@ -7483,7 +7544,7 @@ impl App {
         }
     }
     pub fn col_sub_pick_end(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let len = match &self.col_mode {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
@@ -7491,36 +7552,36 @@ impl App {
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             if len > 0 {
                 *picker_cursor = len - 1;
-                *picker_scroll = picker_cursor.saturating_sub(VIS - 1);
+                *picker_scroll = picker_cursor.saturating_sub(vis.saturating_sub(1));
             }
         }
     }
     pub fn col_sub_pick_screen_top(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
+            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
         }
     }
     pub fn col_sub_pick_screen_mid(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let len = match &self.col_mode {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
         };
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
-            *picker_cursor = (start + VIS / 2).min(len.saturating_sub(1));
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis / 2).min(len.saturating_sub(1));
         }
     }
     pub fn col_sub_pick_screen_bot(&mut self) {
-        const VIS: usize = 16;
+        let vis = self.list_view.rows();
         let len = match &self.col_mode {
             ColMode::SubPick { col_idx, .. } => self.col_sub_cat_list(*col_idx).len(),
             _ => return,
         };
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, VIS);
-            *picker_cursor = (start + VIS - 1).min(len.saturating_sub(1));
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis.saturating_sub(1)).min(len.saturating_sub(1));
         }
     }
 
@@ -8176,7 +8237,7 @@ impl App {
                 if n_vis == 0 {
                     CursorPos::SectionHead(sec)
                 } else {
-                    CursorPos::Item { section: sec, item: item.min(n_vis - 1) }
+                    CursorPos::Item { section: sec, item: item.min(n_vis.saturating_sub(1)) }
                 }
             }
         };
@@ -8611,17 +8672,20 @@ impl App {
     }
 
     pub fn vmgr_sec_pick_down(&mut self) {
-        const VIS: usize = 16;
-        let max = flatten_cats(&self.categories).len().saturating_sub(1);
+        let cats_len = flatten_cats(&self.categories).len();
+        let max = cats_len.saturating_sub(1);
+        let vis = self.list_view.rows();
         if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             if *cursor < max {
                 *cursor += 1;
-                if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+                if *cursor >= *scroll + vis { *scroll = *cursor + 1 - vis; }
             }
         }
     }
 
     pub fn vmgr_sec_pick_pgup(&mut self, page: usize) {
+        // A page is a screenful, so never more than what is actually visible.
+        let page = page.min(self.list_view.rows());
         if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             *cursor = cursor.saturating_sub(page);
             *scroll = scroll.saturating_sub(page);
@@ -8629,11 +8693,13 @@ impl App {
     }
 
     pub fn vmgr_sec_pick_pgdn(&mut self, page: usize) {
-        const VIS: usize = 12;
-        let max = flatten_cats(&self.categories).len().saturating_sub(1);
+        let cats_len = flatten_cats(&self.categories).len();
+        let max = cats_len.saturating_sub(1);
+        let vis = self.list_view.rows();
+        let page = page.min(vis);
         if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             *cursor = (*cursor + page).min(max);
-            if *cursor >= *scroll + VIS { *scroll = *cursor + 1 - VIS; }
+            if *cursor >= *scroll + vis { *scroll = *cursor + 1 - vis; }
         }
     }
 
@@ -8645,19 +8711,19 @@ impl App {
     }
 
     pub fn vmgr_sec_pick_end(&mut self) {
-        const VIS: usize = 16;
-        let max = flatten_cats(&self.categories).len().saturating_sub(1);
+        let cats_len = flatten_cats(&self.categories).len();
+        let max = cats_len.saturating_sub(1);
+        let vis = self.list_view.rows();
         if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             *cursor = max;
-            *scroll = max.saturating_sub(VIS - 1);
+            *scroll = max.saturating_sub(vis.saturating_sub(1));
         }
     }
 
     pub fn vmgr_sec_pick_screen_top(&mut self) {
-        const VIS: usize = 16;
         let n = flatten_cats(&self.categories).len();
         if n == 0 { return; }
-        let visible = n.min(VIS);
+        let visible = self.list_view.rows();
         if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             let start = stored_scroll_start(*scroll, *cursor, visible);
             *cursor = start;
@@ -8666,10 +8732,9 @@ impl App {
     }
 
     pub fn vmgr_sec_pick_screen_mid(&mut self) {
-        const VIS: usize = 16;
         let n = flatten_cats(&self.categories).len();
         if n == 0 { return; }
-        let visible = n.min(VIS);
+        let visible = self.list_view.rows();
         if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             let start = stored_scroll_start(*scroll, *cursor, visible);
             *cursor = (start + visible / 2).min(n - 1);
@@ -8677,10 +8742,9 @@ impl App {
     }
 
     pub fn vmgr_sec_pick_screen_bot(&mut self) {
-        const VIS: usize = 16;
         let n = flatten_cats(&self.categories).len();
         if n == 0 { return; }
-        let visible = n.min(VIS);
+        let visible = self.list_view.rows();
         if let ViewMgrMode::Props { sec_add_picker: Some((cursor, scroll)), .. } = &mut self.vmgr_state.mode {
             let start = stored_scroll_start(*scroll, *cursor, visible);
             *cursor = (start + visible - 1).min(n - 1);
@@ -9030,13 +9094,13 @@ impl App {
         }
     }
     pub fn vmgr_sort_picker_down(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
             if let Some(p) = picker {
                 if p.cursor + 1 < max {
                     p.cursor += 1;
-                    if p.cursor >= p.scroll + VIS { p.scroll = p.cursor + 1 - VIS; }
+                    if p.cursor >= p.scroll + vis { p.scroll = p.cursor + 1 - vis; }
                 }
             }
         }
@@ -9050,13 +9114,13 @@ impl App {
         }
     }
     pub fn vmgr_sort_picker_pgdn(&mut self, n: usize) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
             if let Some(p) = picker {
                 if max > 0 {
                     p.cursor = (p.cursor + n).min(max - 1);
-                    if p.cursor >= p.scroll + VIS { p.scroll = p.cursor + 1 - VIS; }
+                    if p.cursor >= p.scroll + vis { p.scroll = p.cursor + 1 - vis; }
                 }
             }
         }
@@ -9067,42 +9131,42 @@ impl App {
         }
     }
     pub fn vmgr_sort_picker_end(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
             if let Some(p) = picker {
                 if max > 0 {
                     p.cursor = max - 1;
-                    p.scroll = p.cursor.saturating_sub(VIS - 1);
+                    p.scroll = p.cursor.saturating_sub(vis.saturating_sub(1));
                 }
             }
         }
     }
     pub fn vmgr_sort_picker_screen_top(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
             if let Some(p) = picker {
-                p.cursor = stored_scroll_start(p.scroll, p.cursor, VIS);
+                p.cursor = stored_scroll_start(p.scroll, p.cursor, vis);
             }
         }
     }
     pub fn vmgr_sort_picker_screen_mid(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
             if let Some(p) = picker {
-                let start = stored_scroll_start(p.scroll, p.cursor, VIS);
-                p.cursor = (start + VIS / 2).min(max.saturating_sub(1));
+                let start = stored_scroll_start(p.scroll, p.cursor, vis);
+                p.cursor = (start + vis / 2).min(max.saturating_sub(1));
             }
         }
     }
     pub fn vmgr_sort_picker_screen_bot(&mut self) {
-        const VIS: usize = 10;
+        let vis = self.list_view.rows();
         let max = self.vmgr_sort_picker_len();
         if let ViewMgrMode::Props { sort_state: SortState::Dialog { ref mut picker, .. }, .. } = self.vmgr_state.mode {
             if let Some(p) = picker {
-                let start = stored_scroll_start(p.scroll, p.cursor, VIS);
-                p.cursor = (start + VIS - 1).min(max.saturating_sub(1));
+                let start = stored_scroll_start(p.scroll, p.cursor, vis);
+                p.cursor = (start + vis.saturating_sub(1)).min(max.saturating_sub(1));
             }
         }
     }

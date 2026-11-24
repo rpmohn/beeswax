@@ -691,6 +691,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Scroll so picker_cursor is visible (lazy scroll)
         let visible = inner.height as usize;
         let offset  = stored_scroll_start(stored_scroll, *picker_cursor, visible);
+        app.list_view.publish(visible, offset);
 
         let visible_lines: Vec<Line> = lines.into_iter()
             .skip(offset)
@@ -763,9 +764,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         }
 
-        // Box sizing: +3 = 2 borders + 1 header line
+        // Box sizing: +3 = 2 borders + 1 header line.
+        const MAX_ROWS: usize = 20;
         let n = cat_lines.len();
-        let picker_h = (n as u16 + 3).min(area.height.saturating_sub(4)).max(5);
+        let picker_h = (n.min(MAX_ROWS) as u16 + 3).min(area.height.saturating_sub(4)).max(5);
         let picker_rect = centered_rect(44, picker_h, area);
         frame.render_widget(Clear, picker_rect);
 
@@ -778,12 +780,15 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(block.clone(), picker_rect);
         let inner = block.inner(picker_rect);
 
-        // Scrollable list area is inner minus the header row
         let list_h  = inner.height.saturating_sub(1) as usize;
         // If a create row follows cursor, need to keep it visible too; use as the bottom anchor.
         let bottom  = if in_create { pc + 1 } else { pc };
-        // Lazy scroll: start from stored_scroll, clamped so bottom (and cursor) stay visible.
-        let offset  = stored_scroll.min(pc).max(bottom.saturating_sub(list_h - 1));
+        // Lazy scroll: start from stored_scroll, clamped so bottom (and cursor) stay
+        // visible, and never past the last page so a short list cannot scroll at all.
+        let offset  = stored_scroll.min(pc)
+            .max(bottom.saturating_sub(list_h.saturating_sub(1)))
+            .min(n.saturating_sub(list_h));
+        app.list_view.publish(list_h, offset);
 
         let mut all_lines = vec![Line::from(Span::raw(header_text))];
         all_lines.extend(cat_lines.into_iter().skip(offset).take(list_h));
@@ -1078,6 +1083,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         // Scroll window: same 16-row limit as Assignment Profile.
         let visible = flat_subs.len().min(16);
         let start   = stored_scroll_start(stored_scroll, picker_cursor, visible);
+        app.list_view.publish(visible, start);
 
         let in_create = matches!(app.cat_state.mode, CatMode::Create { .. });
         let box_h    = (visible + 3 + if in_create { 1 } else { 0 }) as u16;
@@ -1416,10 +1422,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         // that has an assigned value. Scroll and cursor are visual-row indices.
         let rows = App::assign_visual_rows(&app.categories, &app.items, gi);
         let total_rows = rows.len();
-        let start = stored_scroll_start(stored_scroll, prof_cur, VIS);
-
-        // Box height: VIS rows + 2 borders + 1 title, +1 if create row active.
-        let box_h  = (VIS + 3 + if in_create { 1 } else { 0 }) as u16;
+        // Box height: up to VIS rows + 2 borders + 1 title, +1 if create row active.
+        let extra  = if in_create { 1 } else { 0 };
+        let box_h  = (VIS + 3 + extra) as u16;
         let box_w  = 50u16;
         let dlg_rect = centered_rect(box_w, box_h, area);
         frame.render_widget(Clear, dlg_rect);
@@ -1432,6 +1437,11 @@ pub fn render(frame: &mut Frame, app: &App) {
             .style(app.theme.dialog_border);
         frame.render_widget(block.clone(), dlg_rect);
         let inner = block.inner(dlg_rect);
+        // centered_rect clamps to the terminal, so the real window can be shorter
+        // than VIS; derive it from the box we actually got and publish that.
+        let vis   = (inner.height as usize).saturating_sub(1 + extra).max(1);
+        let start = stored_scroll_start(stored_scroll, prof_cur, vis);
+        app.list_view.publish(vis, start);
 
         // Title line: "Search for: ..." during search, else "Profile for ..."
         let item_text = item.map(|it| it.text.as_str()).unwrap_or("");
@@ -1443,7 +1453,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         let title_line = Line::from(Span::styled(title_text, bold));
 
         let mut cat_lines: Vec<Line<'static>> = vec![title_line];
-        for (vis_idx, &(cat_idx, is_sub)) in rows.iter().enumerate().skip(start).take(VIS) {
+        for (vis_idx, &(cat_idx, is_sub)) in rows.iter().enumerate().skip(start).take(vis) {
             let e = &cats[cat_idx];
             let highlighted = vis_idx == prof_cur;
             if is_sub {
@@ -1596,6 +1606,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             let vis = pi.height as usize;
             let bottom = if in_edit_create { picker_cur + 1 } else { picker_cur };
             let start = scroll_stored.min(picker_cur).max(bottom.saturating_sub(vis.saturating_sub(1)));
+            app.list_view.publish(vis, start);
             let mut pick_lines: Vec<Line<'static>> = Vec::new();
             if cats.is_empty() {
                 if let CatMode::Create { buffer, cursor: buf_cur, .. } = &app.cat_state.mode {
@@ -2243,6 +2254,7 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
         let max_vis  = 20usize;
         let visible  = all_cats.len().min(max_vis);
         let start    = stored_scroll_start(stored_scroll, cursor, visible);
+        app.list_view.publish(visible, start);
 
         let box_h = (visible + 2) as u16;
         let box_w = 62u16;
@@ -2482,6 +2494,7 @@ pub fn render_sort_dialog(
                 let pick_inner = pick_block.inner(pick_rect);
                 let vis = pick_inner.height as usize;
                 let start = p.scroll.min(p.cursor).max(p.cursor.saturating_sub(vis - 1));
+                app.list_view.publish(vis, start);
                 let pick_lines: Vec<Line> = flat_cats.iter().enumerate()
                     .skip(start).take(vis)
                     .map(|(i, e)| {
