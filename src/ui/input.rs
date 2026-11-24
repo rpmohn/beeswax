@@ -434,6 +434,8 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Down     => app.cursor_down(),
         KeyCode::PageUp   => app.cursor_pgup(app.body_height.get().max(1)),
         KeyCode::PageDown => app.cursor_pgdn(app.body_height.get().max(1)),
+        KeyCode::Home if modifiers.contains(KeyModifiers::CONTROL) => app.cursor_view_top(),
+        KeyCode::End  if modifiers.contains(KeyModifiers::CONTROL) => app.cursor_view_bottom(),
         KeyCode::Home     => app.cursor_home(),
         KeyCode::End      => app.cursor_end(),
         KeyCode::Left  | KeyCode::BackTab => app.cursor_col_left(),

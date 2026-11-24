@@ -3384,6 +3384,32 @@ impl App {
         }
     }
 
+    /// Ctrl+Home: the first row of the view, i.e. the head of the first section
+    /// that is not hidden by `hide_empty_sections`.
+    pub fn cursor_view_top(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        if let Some(s) = self.next_visible_section_fwd(0) {
+            self.sub_row = 0;
+            self.cursor = CursorPos::SectionHead(s);
+        }
+    }
+
+    /// Ctrl+End: the last row of the view, i.e. the last item of the last visible
+    /// section, or that section's head when it has no items.
+    pub fn cursor_view_bottom(&mut self) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        let last = self.view.sections.len().saturating_sub(1);
+        if let Some(s) = self.next_visible_section_bwd(last) {
+            let n = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
+            self.sub_row = 0;
+            self.cursor = if n > 0 {
+                CursorPos::Item { section: s, item: n - 1 }
+            } else {
+                CursorPos::SectionHead(s)
+            };
+        }
+    }
+
     fn end_next_section_last(&mut self, from: usize) {
         if let Some(s) = self.next_visible_section_fwd(from + 1) {
             let n = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
