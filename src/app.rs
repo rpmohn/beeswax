@@ -3549,12 +3549,21 @@ impl App {
             }
         }
         // Default: start creating a new main-column item
-        self.mode = Mode::Create { buffer: ch.to_string(), cursor: 1 };
+        self.enter_create_mode(ch.to_string(), 1);
+    }
+
+    /// Enter Create mode for a new main item. The create row is always in the items
+    /// column, so focus moves there: otherwise ENTER and TAB would act on whichever
+    /// column the cursor happened to be in when the item was started.
+    fn enter_create_mode(&mut self, buffer: String, cursor: usize) {
+        self.col_cursor = 0;
+        self.sub_row    = 0;
+        self.mode = Mode::Create { buffer, cursor };
     }
 
     pub fn begin_create_blank(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
-        self.mode = Mode::Create { buffer: String::new(), cursor: 0 };
+        self.enter_create_mode(String::new(), 0);
     }
 
     /// Vi-mode `O`: open a new item above the cursor row.
@@ -3577,7 +3586,7 @@ impl App {
                 }
             }
         }
-        self.mode = Mode::Create { buffer: String::new(), cursor: 0 };
+        self.enter_create_mode(String::new(), 0);
     }
 
     pub fn begin_edit(&mut self) {
