@@ -345,6 +345,39 @@ def main():
     checks.check("Alt+Right moves a column right",
                  columns(["h", "\x1b[1;3C"]), ["When", "Entry"])
 
+    # `O` anchors the cursor one row up so confirm() inserts before it. Backing
+    # out of the create has to undo that anchor, on both exit paths, or the
+    # cursor creeps upward every time.
+    checks.section("View screen -- O leaves the cursor where it was")
+
+    THREE = (["o"] + list("AAA") + [ENTER] + ["o"] + list("BBB") + [ENTER]
+             + ["o"] + list("CCC") + [ENTER])
+
+    def cursor_after(keys):
+        target = path("above.bwx")
+        app.run(target, THREE + keys)
+        view = read_save(target)["views"][0]
+        return (view["cursor_section"], view["cursor_item"])
+
+    def items_after(keys):
+        target = path("above.bwx")
+        app.run(target, THREE + keys)
+        return [i["text"] for i in read_save(target)["items"]]
+
+    checks.check("k puts the cursor on the middle item", cursor_after(["k"]), (0, 1))
+    checks.check("O then Esc restores it", cursor_after(["k", "O", ESC]), (0, 1))
+    checks.check("O then Enter on an empty buffer restores it",
+                 cursor_after(["k", "O", ENTER]), (0, 1))
+    # The first item anchors on the section head rather than an item.
+    checks.check("O then Esc restores it on the first item",
+                 cursor_after(["k", "k", "O", ESC]), (0, 0))
+    # Confirming still inserts above and lands on the new item.
+    checks.check("O then text inserts above",
+                 items_after(["k", "O"] + list("NEW") + [ENTER]),
+                 ["AAA", "NEW", "BBB", "CCC"])
+    checks.check("O then text leaves the cursor on the new item",
+                 cursor_after(["k", "O"] + list("NEW") + [ENTER]), (0, 1))
+
     # The column-head picker is the Choices overlay on the Column Add form. It
     # carries the affordances the retired quick-add picker had: search, inline
     # create, rename, properties, delete.

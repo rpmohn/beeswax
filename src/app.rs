@@ -637,6 +637,10 @@ pub struct App {
     /// Index of `view` (the active view) in the combined ordered list [inactive[..voi], view, inactive[voi..]].
     pub view_order_idx:   usize,
     pub cursor:      CursorPos,
+    /// Where the cursor sat before `O` anchored it one row up so that
+    /// `confirm` would insert before it. `None` unless an anchored create is
+    /// in progress; restored if that create is abandoned.
+    pub create_origin: Option<CursorPos>,
     pub mode:        Mode,
     // CatMgr
     pub categories:  Vec<Category>,
@@ -2574,6 +2578,7 @@ impl App {
             inactive_views: vec![],
             view_order_idx: 0,
             cursor:     CursorPos::SectionHead(0),
+            create_origin: None,
             mode:       Mode::Normal,
             categories: vec![main_cat],
             cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal, scroll_offset: std::cell::Cell::new(0), body_height: std::cell::Cell::new(0) },
@@ -2630,6 +2635,7 @@ impl App {
             inactive_views,
             view_order_idx: idx,
             cursor:     CursorPos::SectionHead(0),
+            create_origin: None,
             mode:       Mode::Normal,
             categories: data.categories,
             cat_state:  CatMgrState { cursor: 0, mode: CatMode::Normal, scroll_offset: std::cell::Cell::new(0), body_height: std::cell::Cell::new(0) },
@@ -3558,6 +3564,7 @@ impl App {
     fn enter_create_mode(&mut self, buffer: String, cursor: usize) {
         self.col_cursor = 0;
         self.sub_row    = 0;
+        self.create_origin = None;
         self.mode = Mode::Create { buffer, cursor };
     }
 
@@ -3571,22 +3578,27 @@ impl App {
     /// original position, then enters Create mode.
     pub fn begin_create_above(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
-        match self.cursor {
+        let origin = self.cursor;
+        let anchored = match self.cursor {
             CursorPos::SectionHead(_) => {
                 // Already at section head — insert at start of section, same as 'o'.
+                false
             }
             CursorPos::Item { section, item } => {
-                if item == 0 {
+                self.cursor = if item == 0 {
                     // First item in section: anchor at the section head so the new item
                     // is inserted at position 0 (i.e., before the existing first item).
-                    self.cursor = CursorPos::SectionHead(section);
+                    CursorPos::SectionHead(section)
                 } else {
                     // Anchor one item above so the new item lands before the current one.
-                    self.cursor = CursorPos::Item { section, item: item - 1 };
-                }
+                    CursorPos::Item { section, item: item - 1 }
+                };
+                true
             }
-        }
+        };
         self.enter_create_mode(String::new(), 0);
+        // enter_create_mode clears the anchor, so record it afterwards.
+        if anchored { self.create_origin = Some(origin); }
     }
 
     pub fn begin_edit(&mut self) {
@@ -3684,7 +3696,10 @@ impl App {
         match std::mem::replace(&mut self.mode, Mode::Normal) {
             Mode::Create { buffer, .. } => {
                 let text = buffer.clone();
-                if text.is_empty() { return; }
+                if text.is_empty() {
+                    if let Some(origin) = self.create_origin.take() { self.cursor = origin; }
+                    return;
+                }
                 let id = self.alloc_id();
                 let (sec_idx, insert_after) = match &self.cursor {
                     CursorPos::SectionHead(s)         => (*s, None),
@@ -3712,6 +3727,7 @@ impl App {
                 let new_local = visible_item_indices(&self.items, &self.view, sec_idx, &self.categories)
                     .iter().position(|&g| g == global_pos).unwrap_or(0);
                 self.cursor = CursorPos::Item { section: sec_idx, item: new_local };
+                self.create_origin = None;
             }
             Mode::Edit { buffer, col, .. } => {
                 let text = buffer.clone();
@@ -3788,6 +3804,11 @@ impl App {
     }
 
     pub fn cancel(&mut self) {
+        // `O` anchors the cursor a row above where it really was; abandoning the
+        // create has to undo that, or the cursor creeps upward.
+        if matches!(self.mode, Mode::Create { .. }) {
+            if let Some(origin) = self.create_origin.take() { self.cursor = origin; }
+        }
         self.mode = Mode::Normal;
     }
 
