@@ -46,6 +46,20 @@ pub enum CatPropsField {
     ExclChildren, MatchCatName, MatchShortName,
 }
 
+/// Where a newly created category goes, relative to the cursor.
+///
+/// `Above`/`Below` make a sibling; `FirstChild`/`LastChild` make a child one
+/// level deeper.  Mirrors `SectionInsert`, which does the same job for sections.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CatInsert { Above, Below, FirstChild, LastChild }
+
+impl CatInsert {
+    /// True when the new category sits one level deeper than the cursor.
+    pub fn is_child(self) -> bool {
+        matches!(self, CatInsert::FirstChild | CatInsert::LastChild)
+    }
+}
+
 pub enum CatMode {
     Normal,
     /// Category reorder mode (Alt+F10): Up/Down swap with adjacent siblings.
@@ -55,8 +69,8 @@ pub enum CatMode {
     /// Warning shown when Del is pressed on a protected system category.
     ProtectedWarning { message: String },
     Edit   { buffer: String, cursor: usize },
-    /// `as_child`: insert as child vs sibling. `first_child`: insert at position 0 vs append.
-    Create { buffer: String, cursor: usize, as_child: bool, first_child: bool },
+    /// `insert`: where the new category goes relative to the cursor.
+    Create { buffer: String, cursor: usize, insert: CatInsert },
     /// Category Properties modal (F6).
     Props {
         name_buf:         String,
@@ -5127,7 +5141,7 @@ impl App {
     }
 
     pub fn assign_begin_create(&mut self) {
-        if self.assign_sync_cursor() { self.cat_begin_create(false); }
+        if self.assign_sync_cursor() { self.cat_begin_create(CatInsert::Below); }
     }
 
     pub fn assign_open_confirm_delete(&mut self) {
@@ -7004,16 +7018,25 @@ impl App {
         self.cat_state.mode = CatMode::Edit { buffer: name, cursor: 0 };
     }
 
-    /// `as_child = false` → sibling below (INS / Alt-j), `true` → child (Alt-l).
-    /// On a depth-0 (root) category a sibling is impossible, so always creates a child.
-    pub fn cat_begin_create(&mut self, as_child: bool) {
+    /// Begin creating a category at `insert` relative to the cursor: `Below`
+    /// (o / Ins), `Above` (O), or a child (pickers, on a head row).
+    ///
+    /// A depth-0 (root) category can have no sibling, so there both `Below` and
+    /// `Above` become `FirstChild`.
+    pub fn cat_begin_create(&mut self, insert: CatInsert) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }
         let flat = flatten_cats(&self.categories);
         let at_root = !flat.is_empty()
             && flat[self.cat_state.cursor.min(flat.len() - 1)].depth == 0;
-        let first_child = at_root && !as_child;  // Ins on root → first child
-        let as_child    = as_child || at_root;
-        self.cat_state.mode = CatMode::Create { buffer: String::new(), cursor: 0, as_child, first_child };
+        let insert = if at_root {
+            match insert {
+                CatInsert::Above | CatInsert::Below => CatInsert::FirstChild,
+                child => child,
+            }
+        } else {
+            insert
+        };
+        self.cat_state.mode = CatMode::Create { buffer: String::new(), cursor: 0, insert };
     }
 
     pub fn cat_confirm(&mut self) {
@@ -7027,7 +7050,7 @@ impl App {
                 let idx = self.cat_state.cursor.min(flat.len() - 1);
                 rename_cat(&mut self.categories, &flat[idx].path.clone(), text);
             }
-            CatMode::Create { buffer, as_child, first_child, .. } => {
+            CatMode::Create { buffer, insert, .. } => {
                 let text = buffer.trim().to_string();
                 if text.is_empty() { return; }
                 let id  = self.alloc_id();
@@ -7041,13 +7064,18 @@ impl App {
                 } else {
                     let idx  = self.cat_state.cursor.min(flat.len() - 1);
                     let path = flat[idx].path.clone();
-                    if as_child {
-                        let pos = if first_child { 0 } else { children_count(&self.categories, &path) };
-                        insert_at(&mut self.categories, &path, pos, cat);
-                    } else {
-                        let my_idx     = *path.last().unwrap();
-                        let parent     = &path[..path.len() - 1];
-                        insert_at(&mut self.categories, parent, my_idx + 1, cat);
+                    match insert {
+                        CatInsert::FirstChild => insert_at(&mut self.categories, &path, 0, cat),
+                        CatInsert::LastChild  => {
+                            let pos = children_count(&self.categories, &path);
+                            insert_at(&mut self.categories, &path, pos, cat);
+                        }
+                        CatInsert::Below | CatInsert::Above => {
+                            let my_idx = *path.last().unwrap();
+                            let pos    = if insert == CatInsert::Below { my_idx + 1 } else { my_idx };
+                            let parent = &path[..path.len() - 1];
+                            insert_at(&mut self.categories, parent, pos, cat);
+                        }
                     }
                     let new_flat = flatten_cats(&self.categories);
                     if let Some(pos) = new_flat.iter().position(|e| e.id == id) {
@@ -7616,7 +7644,8 @@ impl App {
         if self.col_sub_pick_sync_cursor() {
             // picker_cursor == 0 is the column head; creating a sibling would leave the subtree,
             // so create as child instead.
-            self.cat_begin_create(picker_cursor == 0);
+            self.cat_begin_create(
+                if picker_cursor == 0 { CatInsert::LastChild } else { CatInsert::Below });
         }
     }
 

@@ -701,7 +701,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(visible_lines).style(app.theme.dialog), inner);
     }
 
-    // ── Quick-add category picker (Alt-l / Alt-h) ────────────────────────────
+    // ── Quick-add category picker (Alt-c / Alt-C) ────────────────────────────
     if let ColMode::QuickAdd { position, picker_cursor, picker_scroll, confirm_delete } = &app.col_mode {
         let rev  = app.theme.item_selected_field;
         let dim  = Style::default().add_modifier(Modifier::DIM);
@@ -751,8 +751,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
                 // Inline create row appears after the cursor row
                 if is_cur {
-                    if let CatMode::Create { buffer, cursor: buf_cur, as_child, .. } = &app.cat_state.mode {
-                        let d = if *as_child { cat.depth + 1 } else { cat.depth };
+                    if let CatMode::Create { buffer, cursor: buf_cur, insert, .. } = &app.cat_state.mode {
+                        let d = if insert.is_child() { cat.depth + 1 } else { cat.depth };
                         let cr_indent = " ".repeat(d * 2 + 1);
                         let (left, hi, right) = cursor_split(buffer, *buf_cur);
                         cat_lines.push(Line::from(vec![
@@ -1633,9 +1633,9 @@ pub fn render(frame: &mut Frame, app: &App) {
                             let style = if is_cur { rev } else { Style::default() };
                             pick_lines.push(Line::from(Span::styled(label, style)));
                             if is_cur {
-                                if let CatMode::Create { buffer, cursor: buf_cur, as_child, .. } = &app.cat_state.mode {
+                                if let CatMode::Create { buffer, cursor: buf_cur, insert, .. } = &app.cat_state.mode {
                                     if pick_lines.len() < vis {
-                                        let d = if *as_child { e.depth + 1 } else { e.depth };
+                                        let d = if insert.is_child() { e.depth + 1 } else { e.depth };
                                         let cr_indent = "  ".repeat(d);
                                         let (left, hi, right) = cursor_split(buffer, *buf_cur);
                                         pick_lines.push(Line::from(vec![

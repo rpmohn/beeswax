@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, PAGE_FULL, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, PAGE_FULL, CatInsert, CatMode, CatPropsField, ColMode, ColFormField, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
 
 // ── Shared single-line text-field editor ─────────────────────────────────────
 
@@ -413,10 +413,23 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     }
     if modifiers.contains(KeyModifiers::ALT) {
         match code {
-            KeyCode::Char('l') => app.col_quick_add(ColPos::Right),
-            KeyCode::Char('h') => app.col_quick_add(ColPos::Left),
-            KeyCode::Char('j') => app.sec_open_add(SectionInsert::Below),
-            KeyCode::Char('k') => app.sec_open_add(SectionInsert::Above),
+            // Create.  Bare o/O create items; Alt lifts the verb to the container.
+            // Each opens the same Add dialog the F10 menu does, then opens its
+            // category picker straight away, so one keystroke reaches the choice
+            // that has to be made first.  Direction is a field in the dialog
+            // (Insert for sections, Position for columns) rather than a key.
+            KeyCode::Char('o') => {
+                app.sec_open_add(SectionInsert::Below);
+                app.sec_open_choices();
+            }
+            KeyCode::Char('c') => {
+                app.col_open_form(true, ColFormField::Head);
+                app.col_open_choices();
+            }
+            // Move the column under the cursor.  Alt+j/k are left free for
+            // section reordering, still to be decided.
+            KeyCode::Char('h') | KeyCode::Left  => app.col_move_left(),
+            KeyCode::Char('l') | KeyCode::Right => app.col_move_right(),
             KeyCode::Char('s') => app.sec_sort_now(),
             KeyCode::F(4)      => app.item_remove(),   // discard without confirmation
             _ => {}
@@ -489,9 +502,19 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(9)   => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => handle_view_normal_vi(app, ch),
+                          && !modifiers.contains(KeyModifiers::ALT) =>
+            handle_view_normal_vi(app, shift_char(ch, modifiers)),
         _ => {}
     }
+}
+
+/// Fold SHIFT into the character itself.
+///
+/// Without the keyboard-enhancement protocol the terminal does the shifting and
+/// sends 'O' outright.  With it, a terminal may instead send the base key plus a
+/// SHIFT modifier, which would otherwise match the lower-case arm.
+fn shift_char(ch: char, modifiers: KeyModifiers) -> char {
+    if modifiers.contains(KeyModifiers::SHIFT) { ch.to_ascii_uppercase() } else { ch }
 }
 
 /// Vi-mode character handler for Normal mode.
@@ -634,8 +657,12 @@ fn handle_catmgr_confirm_delete(app: &mut App, code: KeyCode) {
 fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::ALT) {
         match code {
-            KeyCode::Char('l') => app.cat_begin_create(true),    // child (one level right)
-            KeyCode::Char('j') => app.cat_begin_create(false),   // sibling below
+            // Promote / demote — also bound to << and >> further down.
+            KeyCode::Char('h') | KeyCode::Left  => app.cat_promote(),
+            KeyCode::Char('l') | KeyCode::Right => app.cat_demote(),
+            // Reorder among siblings.
+            KeyCode::Char('k') | KeyCode::Up    => app.cat_move_up(),
+            KeyCode::Char('j') | KeyCode::Down  => app.cat_move_down(),
             KeyCode::F(10)     => app.cat_begin_move(),
             _ => {}
         }
@@ -672,6 +699,17 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             _ => { app.cat_search_clear(); }  // navigation key: cancel search, then handle
         }
     }
+    // vi >> / << — demote / promote, as in VimOutliner.  Must come before
+    // handle_vi_list, which clears vi_pending to resolve its own gg.
+    if !modifiers.contains(KeyModifiers::CONTROL) && !modifiers.contains(KeyModifiers::ALT) {
+        match (app.vi_pending, code) {
+            (Some('>'), KeyCode::Char('>')) => { app.vi_pending = None; app.cat_demote();  return; }
+            (Some('<'), KeyCode::Char('<')) => { app.vi_pending = None; app.cat_promote(); return; }
+            (_, KeyCode::Char('>')) => { app.vi_pending = Some('>'); return; }
+            (_, KeyCode::Char('<')) => { app.vi_pending = Some('<'); return; }
+            _ => {}
+        }
+    }
     if handle_vi_list(app, code, modifiers,
         &|a| a.cat_cursor_down(),   &|a| a.cat_cursor_up(),
         &|a| a.cat_cursor_end(),    &|a| a.cat_cursor_home(),
@@ -683,7 +721,7 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::PageDown => app.cat_cursor_pgdn(app.cat_state.body_height.get().max(1)),
         KeyCode::Home     => app.cat_cursor_home(),
         KeyCode::End      => app.cat_cursor_end(),
-        KeyCode::Insert   => app.cat_begin_create(false),
+        KeyCode::Insert   => app.cat_begin_create(CatInsert::Below),
         KeyCode::F(2) | KeyCode::Enter => app.cat_begin_edit(),
         KeyCode::F(5)   => app.open_note(),
         KeyCode::F(6)   => app.cat_open_props(),
@@ -692,9 +730,10 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Delete => app.cat_open_confirm_delete(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
                           && !modifiers.contains(KeyModifiers::ALT) => {
-            match ch {
+            match shift_char(ch, modifiers) {
                 'i' => app.cat_begin_edit(),
-                'o' => app.cat_begin_create(false),
+                'o' => app.cat_begin_create(CatInsert::Below),
+                'O' => app.cat_begin_create(CatInsert::Above),
                 '/' => app.cat_search_open(),
                 'x' => app.cat_open_confirm_delete(),
                 'u' => app.undo(),
@@ -981,7 +1020,7 @@ fn handle_col_quick_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             if let ColMode::QuickAdd { picker_cursor, .. } = &app.col_mode {
                 app.cat_state.cursor = *picker_cursor;
             }
-            app.cat_begin_create(false);
+            app.cat_begin_create(CatInsert::Below);
         }
         KeyCode::Delete   => app.col_quick_add_begin_delete(),
         KeyCode::F(2)     => {
@@ -1286,7 +1325,7 @@ fn handle_sec_choices(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             if let SectionMode::Choices { picker_cursor, .. } = &app.sec_mode {
                 app.cat_state.cursor = *picker_cursor;
             }
-            app.cat_begin_create(false);
+            app.cat_begin_create(CatInsert::Below);
         }
         KeyCode::Delete => app.sec_choices_begin_delete(),
         KeyCode::F(2)   => {
@@ -1365,6 +1404,14 @@ fn handle_vmgr(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if modifiers.contains(KeyModifiers::ALT) {
+        match code {
+            KeyCode::Char('k') | KeyCode::Up   => app.vmgr_move_up(),
+            KeyCode::Char('j') | KeyCode::Down => app.vmgr_move_down(),
+            _ => {}
+        }
+        return;
+    }
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Up    => { app.vmgr_move_up();   return; }
@@ -1452,6 +1499,14 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 // Don't let Ctrl keys leak to the section-reorder block below.
                 if modifiers.contains(KeyModifiers::CONTROL) { return; }
             }
+        }
+    }
+    // Alt+k/j or Alt+Up/Down: reorder sections (only when not editing the name).
+    if !name_editing && modifiers.contains(KeyModifiers::ALT) {
+        match code {
+            KeyCode::Char('k') | KeyCode::Up   => { app.vmgr_props_sec_move_up();   return; }
+            KeyCode::Char('j') | KeyCode::Down => { app.vmgr_props_sec_move_down(); return; }
+            _ => {}
         }
     }
     // Ctrl+Up/Down: reorder sections (only when not editing the name).

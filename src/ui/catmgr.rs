@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use crate::app::{App, CatMode, CatPropsField, FlatCat, MenuState, cat_note_for_id, cat_note_indicator, flatten_cats};
+use crate::app::{App, CatInsert, CatMode, CatPropsField, FlatCat, MenuState, cat_note_for_id, cat_note_indicator, flatten_cats};
 use ratatui::layout::Alignment;
 use ratatui::widgets::BorderType;
 use crate::model::CategoryKind;
@@ -112,22 +112,56 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         }
     } else {
-        // For sibling-create (Ins): input row appears after all descendants of cursor.
-        // For child-create (Alt+l): input row appears immediately after cursor.
+        // Sibling-below (o / Ins): input row appears after all descendants of cursor.
+        // Child-create (pickers):   input row appears immediately after cursor.
+        // Sibling-above (O):        input row appears just before the cursor row.
         let create_show_after: Option<usize> = match &app.cat_state.mode {
-            CatMode::Create { as_child: false, .. } => {
+            CatMode::Create { insert: CatInsert::Below, .. } => {
                 let cursor_path = &flat[cursor].path;
                 Some(flat.iter().enumerate().rev()
                     .find(|(_, e)| e.path.starts_with(cursor_path.as_slice()))
                     .map(|(i, _)| i)
                     .unwrap_or(cursor))
             }
-            CatMode::Create { as_child: true, .. } => Some(cursor),
+            CatMode::Create { insert, .. } if insert.is_child() => Some(cursor),
+            _ => None,
+        };
+        let create_show_before: Option<usize> = match &app.cat_state.mode {
+            CatMode::Create { insert: CatInsert::Above, .. } => Some(cursor),
+            _ => None,
+        };
+        // The input row is identical wherever it lands, so build it once.
+        let create_row: Option<Line> = match &app.cat_state.mode {
+            CatMode::Create { buffer, cursor: buf_cur, insert } => {
+                let create_depth = if insert.is_child() {
+                    flat[cursor].depth + 1
+                } else {
+                    flat[cursor].depth
+                };
+                let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                Some(Line::from(vec![
+                    Span::raw(base_indent(create_depth)),
+                    Span::raw(" "),  // blank indicator — new cats are Standard
+                    Span::raw(" "),  // separator
+                    Span::raw(left),
+                    Span::styled(hi, app.theme.item_selected_field),
+                    Span::raw(right),
+                ]))
+            }
             _ => None,
         };
 
         for (row, entry) in flat.iter().enumerate() {
             let cursor_here = row == cursor;
+
+            // ── Create-mode input row, sibling-above (O) ──────────────────
+            let mut before_idx: Option<usize> = None;
+            if Some(row) == create_show_before {
+                if let Some(l) = create_row.clone() {
+                    before_idx = Some(lines.len());
+                    lines.push(l);
+                }
+            }
             let note_ind     = cat_note_indicator(&app.categories, entry.id);
             let (ind, kchar) = leading(entry, note_ind);
 
@@ -185,25 +219,17 @@ pub fn render(frame: &mut Frame, app: &App) {
                 cursor_last_line = lines.len() - 1;
             }
 
-            // ── Create-mode input row ─────────────────────────────────────
+            // The create input row is the cursor row for scrolling purposes.
+            if let Some(idx) = before_idx {
+                cursor_first_line = idx;
+                cursor_last_line  = idx;
+            }
+
+            // ── Create-mode input row, sibling-below / child ──────────────
             if Some(row) == create_show_after {
-                if let CatMode::Create { buffer, cursor: buf_cur, as_child, .. } = &app.cat_state.mode {
-                    let create_depth = if *as_child {
-                        flat[cursor].depth + 1
-                    } else {
-                        flat[cursor].depth
-                    };
-                    let (left, hi, right) = cursor_split(buffer, *buf_cur);
+                if let Some(l) = create_row.clone() {
                     let create_line_idx = lines.len();
-                    lines.push(Line::from(vec![
-                        Span::raw(base_indent(create_depth)),
-                        Span::raw(" "),  // blank indicator — new cats are Standard
-                        Span::raw(" "),  // separator
-                        Span::raw(left),
-                        Span::styled(hi, app.theme.item_selected_field),
-                        Span::raw(right),
-                    ]));
-                    // The create input row is the cursor row for scrolling purposes
+                    lines.push(l);
                     cursor_first_line = create_line_idx;
                     cursor_last_line  = create_line_idx;
                 }

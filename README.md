@@ -58,6 +58,15 @@ Navigation is vi-style throughout: `hjkl` movement, `i`/`o`/`O` to start
 editing, and `/` to search. Arrow keys, Home/End/PgUp/PgDn and all F-keys work
 everywhere as well, so nothing requires the vi bindings.
 
+The modifiers divide up as follows. Unprefixed keys are vi verbs and motions
+acting on the item under the cursor. **Shift** gives the reverse or the larger
+version of the unshifted key. **Ctrl** is for whole-file and whole-view
+commands. **Alt** acts on the structure around the items — sections, columns
+and the category tree. Structural editing follows VimOutliner, which leaves it
+to plain vim: `o`/`O` to make a sibling, `>>`/`<<` to change its level.
+
+[KEYS.md](KEYS.md) is the same material condensed onto one printable page.
+
 ### View screen — moving around
 
 | Key | Action |
@@ -90,7 +99,8 @@ everywhere as well, so nothing requires the vi bindings.
 | O | New item above the cursor |
 | x or Delete | Main column — remove item from the section's category (on a section head: remove the section). Data column — clear the item's value for that column (on the column head: remove the column) |
 | Shift+Delete | Discard item from all categories permanently |
-| u / r or Ctrl+Z / Ctrl+Y | Undo / redo |
+| u or Ctrl+Z | Undo |
+| Ctrl+R or Ctrl+Y | Redo |
 | F3 | Assign categories (main column) / pick value (data column) |
 | F4 | Mark item done |
 | F5 | Open note in `$EDITOR` |
@@ -101,11 +111,22 @@ everywhere as well, so nothing requires the vi bindings.
 
 ### Alt commands (View screen)
 
+Bare `o`/`O` create an item; Alt lifts the same verb to the structure holding
+the items.
+
 | Key | Action |
 |-----|--------|
-| Alt+l / Alt+h | Add column to the right / left |
-| Alt+j / Alt+k | Add section below / above |
+| Alt+o | New section — opens the Section Add dialog with the category picker already open |
+| Alt+c | New column — opens the Column Add dialog with the column-head picker already open |
+| Alt+h / Alt+l or Alt+← / Alt+→ | Move the current column left / right |
 | Alt+s | Sort current section now |
+
+Alt+o and Alt+c reach the same dialogs as Menu › View › Section › Add and
+Menu › View › Column › Add, and open the picker for the choice that has to be
+made first. Neither has an "above" or "left" variant key: the direction is a
+field in the dialog. Press Down to reach the Insert field (Below / Above) or
+the Position field (Right / Left) and Left/Right to set it; F3 reopens a
+field's picker.
 
 ### Lists and pickers
 
@@ -219,18 +240,29 @@ to this screen:
 
 | Key | Action |
 |-----|--------|
-| Alt+l | Create a child of the current category |
-| Alt+j or Insert or `o` | Create a sibling below the current category |
+| Insert or `o` | Create a sibling below the current category |
+| `O` | Create a sibling above the current category |
+| `>>` or Alt+l or Alt+→ | Demote one level |
+| `<<` or Alt+h or Alt+← | Promote one level |
+| Alt+j / Alt+k or Alt+↓ / Alt+↑ | Move the category down / up among its siblings |
 | Enter or F2 or `i` | Rename the current category |
-| Ctrl+↑ / Ctrl+↓ | Move the category up / down among its siblings |
-| Ctrl+← / Ctrl+→ | Promote / demote one level |
 | Alt+F10 | Enter move mode |
 | Delete or `x` | Delete the current category |
 | F6 | Category properties |
 
+There is no "create a child" key: make a sibling with `o` and demote it with
+`>>`, as you would in VimOutliner. On a root category `o` and `O` both create a
+first child, since a root category cannot have a sibling. Ctrl+arrows are
+accepted as aliases for the Alt keys above.
+
 ### View Manager (F8)
 
-Lists all views. Enter switches to the selected view, F2 renames inline, F4 deletes with confirmation, F6 opens the view properties dialog.
+Lists all views. Enter switches to the selected view, F2 renames inline, F4
+deletes with confirmation, F6 opens the view properties dialog. Insert or
+`o` adds a view, and Alt+j / Alt+k (or Alt+↓ / Alt+↑) reorder the list.
+
+In View Properties, Alt+j / Alt+k reorder the Sections list while that field is
+active.
 
 **View Properties (F6) — Section Select**
 
