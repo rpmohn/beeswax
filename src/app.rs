@@ -4,20 +4,6 @@ use crate::persist;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-// ── Navigation mode ───────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum NavMode {
-    Agenda,  // default: printable keys start a new item
-    Vi,      // hjkl navigation; i/o/O to enter insert
-}
-
-impl NavMode {
-    pub fn from_str(s: &str) -> Self {
-        if s.eq_ignore_ascii_case("vi") { NavMode::Vi } else { NavMode::Agenda }
-    }
-}
-
 // ── F-key modifier state ──────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq)]
@@ -542,38 +528,42 @@ pub struct FlatCat {
 
 pub const CUSTOMIZE_COLOR_COUNT: usize = 18;
 
+/// Cursor index of the first color field in the Customize dialog.
+/// Cursor 0 is Color Theme; the color fields follow it.
+pub const CUSTOMIZE_FIRST_COLOR: usize = 1;
+
 /// Up/Down arrow navigation order for the Customize dialog.
-/// Sequence: Nav Mode → Color Theme → left column (top→bottom) →
-///           right column (top→bottom) → wraps back to Nav Mode.
-pub const CUSTOMIZE_NAV_SEQ: [usize; 2 + CUSTOMIZE_COLOR_COUNT] = [
-    0, 1,
+/// Sequence: Color Theme → left column (top→bottom) →
+///           right column (top→bottom) → wraps back to Color Theme.
+pub const CUSTOMIZE_NAV_SEQ: [usize; CUSTOMIZE_FIRST_COLOR + CUSTOMIZE_COLOR_COUNT] = [
+    0,
     // Left column (top → bottom), skipping blank rows
-    2, 4, 6, 7, 9, 11, 13, 15, 18, 19,
+    1, 3, 5, 6, 8, 10, 12, 14, 17, 18,
     // Right column (top → bottom), skipping blank rows
-    3, 5, 8, 10, 12, 14, 16, 17,
+    2, 4, 7, 9, 11, 13, 15, 16,
 ];
 
-/// Maps (cursor - 2) → field index for color fields in the Customize dialog.
-/// Cursor 0 = Nav Mode, 1 = Color Theme, 2..19 = color fields in display order.
+/// Maps (cursor - CUSTOMIZE_FIRST_COLOR) → field index for color fields.
+/// Cursor 0 = Color Theme, 1..=18 = color fields in display order.
 pub const CURSOR_TO_FIELD: [usize; CUSTOMIZE_COLOR_COUNT] = [
-    12, // cursor 2  → view_bg
-     2, // cursor 3  → selected_item_fg
-    13, // cursor 4  → view_item
-     3, // cursor 5  → selected_item_bg
-    17, // cursor 6  → view_head_bg
-    16, // cursor 7  → view_sec_head
-     6, // cursor 8  → dialog_bg
-    15, // cursor 9  → view_col_head
-     7, // cursor 10 → dialog_item
-    14, // cursor 11 → view_col_entry
-     8, // cursor 12 → dialog_label
-     4, // cursor 13 → view_selected_fg
-     9, // cursor 14 → dialog_label_sel_fg
-     5, // cursor 15 → view_selected_bg
-    10, // cursor 16 → dialog_border_fg
-    11, // cursor 17 → dialog_border_bg
-     0, // cursor 18 → bar_fg
-     1, // cursor 19 → bar_bg
+    12, // cursor 1  → view_bg
+     2, // cursor 2  → selected_item_fg
+    13, // cursor 3  → view_item
+     3, // cursor 4  → selected_item_bg
+    17, // cursor 5  → view_head_bg
+    16, // cursor 6  → view_sec_head
+     6, // cursor 7  → dialog_bg
+    15, // cursor 8  → view_col_head
+     7, // cursor 9  → dialog_item
+    14, // cursor 10 → view_col_entry
+     8, // cursor 11 → dialog_label
+     4, // cursor 12 → view_selected_fg
+     9, // cursor 13 → dialog_label_sel_fg
+     5, // cursor 14 → view_selected_bg
+    10, // cursor 15 → dialog_border_fg
+    11, // cursor 16 → dialog_border_bg
+     0, // cursor 17 → bar_fg
+     1, // cursor 18 → bar_bg
 ];
 
 pub const CUSTOMIZE_COLOR_LABELS: [&str; CUSTOMIZE_COLOR_COUNT] = [
@@ -599,20 +589,17 @@ pub const CUSTOMIZE_COLOR_LABELS: [&str; CUSTOMIZE_COLOR_COUNT] = [
 
 pub enum CustomizeSubMode {
     Normal,
-    NavPicker    { cursor: usize },
     SchemePicker { cursor: usize },
     EditHex { field_idx: usize, buf: String, char_cur: usize },
 }
 
 pub struct CustomizeState {
-    /// 0 = Nav Mode, 1 = Color Theme, 2..=24 = color fields (field_idx = cursor - 2).
+    /// 0 = Color Theme, 1..=18 = color fields (field_idx = cursor - CUSTOMIZE_FIRST_COLOR).
     pub cursor:     usize,
-    pub nav_idx:    usize,    // index into [Agenda, Vi]
     pub scheme_idx: usize,    // index into ColorScheme::ALL
     pub custom:     crate::config::CustomTheme,
     pub sub_mode:   CustomizeSubMode,
     orig_theme:     crate::theme::Theme,
-    orig_nav:       NavMode,
 }
 
 // ── Undo / Redo ───────────────────────────────────────────────────────────────
@@ -667,8 +654,6 @@ pub struct App {
     pub menu:        MenuState,
     // F-key bar
     pub fkey_mod:    FKeyMod,
-    // Navigation mode (set from config at startup)
-    pub nav_mode:    NavMode,
     // Note
     pub pending_note: Option<NoteTarget>,
     // Persistence
@@ -2595,7 +2580,6 @@ impl App {
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
-            nav_mode:     NavMode::Agenda,
             pending_note: None,
             file_path:        None,
             session_password: None,
@@ -2652,7 +2636,6 @@ impl App {
             sec_mode:    SectionMode::Normal,
             menu:         MenuState::Closed,
             fkey_mod:     FKeyMod::Normal,
-            nav_mode:     NavMode::Agenda,
             pending_note: None,
             file_path:        path,
             session_password: password,
@@ -3359,7 +3342,8 @@ impl App {
         }
     }
 
-    /// gg — move to the first section head of the first visible section (col unchanged).
+    /// Ctrl+Home / gg — the first row of the view: the head of the first section
+    /// not hidden by `hide_empty_sections` (col unchanged).
     pub fn cursor_first(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
         self.sub_row = 0;
@@ -3368,7 +3352,8 @@ impl App {
         }
     }
 
-    /// G — move to the last item of the last visible section (col unchanged).
+    /// Ctrl+End / G — the last row of the view: the last item of the last visible
+    /// section, or that section's head when it has no items (col unchanged).
     pub fn cursor_last(&mut self) {
         if !matches!(self.mode, Mode::Normal) { return; }
         self.sub_row = 0;
@@ -3410,32 +3395,6 @@ impl App {
         if let Some(p) = self.next_visible_section_bwd(s - 1) {
             self.sub_row = 0;
             self.cursor = CursorPos::SectionHead(p);
-        }
-    }
-
-    /// Ctrl+Home: the first row of the view, i.e. the head of the first section
-    /// that is not hidden by `hide_empty_sections`.
-    pub fn cursor_view_top(&mut self) {
-        if !matches!(self.mode, Mode::Normal) { return; }
-        if let Some(s) = self.next_visible_section_fwd(0) {
-            self.sub_row = 0;
-            self.cursor = CursorPos::SectionHead(s);
-        }
-    }
-
-    /// Ctrl+End: the last row of the view, i.e. the last item of the last visible
-    /// section, or that section's head when it has no items.
-    pub fn cursor_view_bottom(&mut self) {
-        if !matches!(self.mode, Mode::Normal) { return; }
-        let last = self.view.sections.len().saturating_sub(1);
-        if let Some(s) = self.next_visible_section_bwd(last) {
-            let n = visible_item_indices(&self.items, &self.view, s, &self.categories).len();
-            self.sub_row = 0;
-            self.cursor = if n > 0 {
-                CursorPos::Item { section: s, item: n - 1 }
-            } else {
-                CursorPos::SectionHead(s)
-            };
         }
     }
 
@@ -3583,29 +3542,6 @@ impl App {
     }
 
     // ── View mode transitions ─────────────────────────────────────────────────
-
-    /// Typing a printable character in Normal mode:
-    /// - On a non-main column item cell → begin editing that cell with `ch` as the first character.
-    /// - Otherwise → begin creating a new item (existing behaviour).
-    pub fn begin_char_input(&mut self, ch: char) {
-        if !matches!(self.mode, Mode::Normal) { return; }
-        if self.col_cursor > 0 {
-            if let CursorPos::Item { .. } = &self.cursor {
-                let col     = self.col_cursor;
-                let col_idx = col - 1;
-                if col_idx < self.view.columns.len() {
-                    self.mode = Mode::Edit {
-                        buffer: ch.to_string(),
-                        cursor: 1,
-                        col,
-                    };
-                    return;
-                }
-            }
-        }
-        // Default: start creating a new main-column item
-        self.enter_create_mode(ch.to_string(), 1);
-    }
 
     /// Enter Create mode for a new main item. The create row is always in the items
     /// column, so focus moves there: otherwise ENTER and TAB would act on whichever
@@ -9331,22 +9267,18 @@ impl App {
         let cfg   = crate::config::load();
         let scheme = ColorScheme::from_str(&cfg.colorscheme);
         let scheme_idx = ColorScheme::ALL.iter().position(|&s| s == scheme).unwrap_or(0);
-        let nav_idx = match self.nav_mode { NavMode::Vi => 1, _ => 0 };
         self.customize_state = Some(CustomizeState {
             cursor:     0,
-            nav_idx,
             scheme_idx,
             custom:     cfg.custom_theme,
             sub_mode:   CustomizeSubMode::Normal,
             orig_theme: self.theme.clone(),
-            orig_nav:   self.nav_mode,
         });
     }
 
     pub fn close_customize(&mut self) {
         if let Some(ref st) = self.customize_state {
-            self.theme    = st.orig_theme.clone();
-            self.nav_mode = st.orig_nav;
+            self.theme = st.orig_theme.clone();
         }
         self.customize_state = None;
     }
@@ -9354,17 +9286,13 @@ impl App {
     pub fn customize_confirm(&mut self) {
         use crate::theme::ColorScheme;
         let Some(st) = self.customize_state.take() else { return };
-        let new_nav = if st.nav_idx == 1 { NavMode::Vi } else { NavMode::Agenda };
-        self.nav_mode = new_nav;
         let scheme = ColorScheme::ALL[st.scheme_idx];
         self.theme = if scheme == ColorScheme::Custom {
             crate::theme::Theme::from_custom(&st.custom)
         } else {
             crate::theme::Theme::for_scheme(scheme)
         };
-        let nav_str = if new_nav == NavMode::Vi { "vi" } else { "Agenda" };
         let cfg = crate::config::Config {
-            nav_mode:    nav_str.to_string(),
             colorscheme: scheme.to_str().to_string(),
             custom_theme: st.custom,
         };
@@ -9379,11 +9307,11 @@ impl App {
 
     pub fn customize_cursor_down(&mut self) {
         let Some(ref mut st) = self.customize_state else { return };
-        if st.cursor + 1 < 2 + CUSTOMIZE_COLOR_COUNT { st.cursor += 1; }
+        if st.cursor + 1 < CUSTOMIZE_FIRST_COLOR + CUSTOMIZE_COLOR_COUNT { st.cursor += 1; }
         self.customize_apply_live_theme();
     }
 
-    /// Move up one step in column order: left col → Color Theme → Nav Mode →
+    /// Move up one step in column order: left col → Color Theme →
     /// right col bottom → right col → left col bottom (wraps).
     pub fn customize_col_up(&mut self) {
         if let Some(ref mut st) = self.customize_state {
@@ -9395,8 +9323,8 @@ impl App {
         self.customize_apply_live_theme();
     }
 
-    /// Move down one step in column order: Nav Mode → Color Theme → left col →
-    /// right col → Nav Mode (wraps).
+    /// Move down one step in column order: Color Theme → left col →
+    /// right col → Color Theme (wraps).
     pub fn customize_col_down(&mut self) {
         if let Some(ref mut st) = self.customize_state {
             if let Some(i) = CUSTOMIZE_NAV_SEQ.iter().position(|&c| c == st.cursor) {
@@ -9404,16 +9332,6 @@ impl App {
             }
         }
         self.customize_apply_live_theme();
-    }
-
-    pub fn customize_nav_prev(&mut self) {
-        let Some(ref mut st) = self.customize_state else { return };
-        st.nav_idx = if st.nav_idx == 0 { 1 } else { st.nav_idx - 1 };
-    }
-
-    pub fn customize_nav_next(&mut self) {
-        let Some(ref mut st) = self.customize_state else { return };
-        st.nav_idx = (st.nav_idx + 1) % 2;
     }
 
     pub fn customize_scheme_prev(&mut self) {
@@ -9432,14 +9350,6 @@ impl App {
         self.customize_apply_live_theme();
     }
 
-    pub fn customize_open_nav_picker(&mut self) {
-        let Some(ref st) = self.customize_state else { return };
-        let cur = st.nav_idx;
-        if let Some(ref mut st) = self.customize_state {
-            st.sub_mode = CustomizeSubMode::NavPicker { cursor: cur };
-        }
-    }
-
     pub fn customize_open_scheme_picker(&mut self) {
         let Some(ref st) = self.customize_state else { return };
         let cur = st.scheme_idx;
@@ -9450,48 +9360,30 @@ impl App {
 
     pub fn customize_picker_up(&mut self) {
         let Some(ref mut st) = self.customize_state else { return };
-        match st.sub_mode {
-            CustomizeSubMode::NavPicker { ref mut cursor } => {
-                if *cursor > 0 { *cursor -= 1; }
-            }
-            CustomizeSubMode::SchemePicker { ref mut cursor } => {
-                if *cursor > 0 { *cursor -= 1; }
-            }
-            _ => {}
+        if let CustomizeSubMode::SchemePicker { ref mut cursor } = st.sub_mode {
+            if *cursor > 0 { *cursor -= 1; }
         }
     }
 
     pub fn customize_picker_down(&mut self) {
         use crate::theme::ColorScheme;
         let Some(ref mut st) = self.customize_state else { return };
-        match st.sub_mode {
-            CustomizeSubMode::NavPicker { ref mut cursor } => {
-                if *cursor + 1 < 2 { *cursor += 1; }
-            }
-            CustomizeSubMode::SchemePicker { ref mut cursor } => {
-                if *cursor + 1 < ColorScheme::ALL.len() { *cursor += 1; }
-            }
-            _ => {}
+        if let CustomizeSubMode::SchemePicker { ref mut cursor } = st.sub_mode {
+            if *cursor + 1 < ColorScheme::ALL.len() { *cursor += 1; }
         }
     }
 
     pub fn customize_picker_confirm(&mut self) {
         use crate::theme::ColorScheme;
         let Some(ref mut st) = self.customize_state else { return };
-        match st.sub_mode {
-            CustomizeSubMode::NavPicker { cursor } => {
-                st.nav_idx  = cursor;
-                st.sub_mode = CustomizeSubMode::Normal;
+        if let CustomizeSubMode::SchemePicker { cursor } = st.sub_mode {
+            st.scheme_idx = cursor;
+            st.sub_mode   = CustomizeSubMode::Normal;
+            // If switching away from Custom while cursor is in color fields, pull back
+            if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom
+                && st.cursor >= CUSTOMIZE_FIRST_COLOR {
+                st.cursor = 0;
             }
-            CustomizeSubMode::SchemePicker { cursor } => {
-                st.scheme_idx = cursor;
-                st.sub_mode   = CustomizeSubMode::Normal;
-                // If switching away from Custom while cursor is in color fields, pull back
-                if ColorScheme::ALL[st.scheme_idx] != ColorScheme::Custom && st.cursor >= 2 {
-                    st.cursor = 1;
-                }
-            }
-            _ => {}
         }
         self.customize_apply_live_theme();
     }
@@ -9529,8 +9421,8 @@ impl App {
     pub fn customize_begin_edit_hex(&mut self) {
         let (field_idx, _) = {
             let Some(ref st) = self.customize_state else { return };
-            if st.cursor < 2 { return; }
-            let vi = st.cursor - 2;
+            if st.cursor < CUSTOMIZE_FIRST_COLOR { return; }
+            let vi = st.cursor - CUSTOMIZE_FIRST_COLOR;
             if vi >= CUSTOMIZE_COLOR_COUNT { return; }
             (CURSOR_TO_FIELD[vi], ())
         };

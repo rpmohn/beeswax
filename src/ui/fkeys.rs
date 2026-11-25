@@ -163,7 +163,7 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         let sub = app.customize_state.as_ref().map(|s| &s.sub_mode);
         if matches!(sub, Some(CustomizeSubMode::EditHex { .. })) {
             &EDIT_FKEYS
-        } else if matches!(sub, Some(CustomizeSubMode::NavPicker { .. } | CustomizeSubMode::SchemePicker { .. })) {
+        } else if matches!(sub, Some(CustomizeSubMode::SchemePicker { .. })) {
             &MENU_FKEYS
         } else {
             &CUSTOMIZE_FKEYS

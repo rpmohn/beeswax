@@ -15,11 +15,10 @@ There's still a huge amount of work to do, but I am now using Beeswax at both ho
 - **Category Manager** — hierarchical category tree with rename, create, delete, reorder
 - **View Manager** — switch view, rename, create, delete
 - **Notes** — per-item notes opened in `$EDITOR` (defaults to `notepad.exe` on Windows)
-- **Search** — `/` searches forward, `?` searches backward (vi mode), Ctrl+F opens the search bar in either mode; matches both item text and section heads; `n`/`N` repeat in same/opposite direction with wrap-around
+- **Search** — `/` searches forward, `?` searches backward; matches both item text and section heads; `n`/`N` repeat in same/opposite direction with wrap-around
 - **Undo / Redo** — session-length undo / redo
 - **Encryption** — optional AES-256-GCM file encryption with Argon2id key derivation
 - **Color schemes** — eight built-in themes plus a fully custom, editable, hex-color scheme
-- **Navigation modes** — Agenda (classic) or vi
 
 ## Installation
 
@@ -55,75 +54,73 @@ When opening an encrypted file beeswax prompts for the password before entering 
 
 ## Key Reference
 
-### View screen — Normal mode
+Navigation is vi-style throughout: `hjkl` movement, `i`/`o`/`O` to start
+editing, and `/` to search. Arrow keys, Home/End/PgUp/PgDn and all F-keys work
+everywhere as well, so nothing requires the vi bindings.
+
+### View screen — moving around
 
 | Key | Action |
 |-----|--------|
-| ↑ / ↓ | Move up / down |
-| ← / → or Tab / Shift+Tab | Move left / right across columns |
-| PgUp / PgDn | Move up / down one screenful |
-| Ctrl+PgUp / Ctrl+PgDn | Cycle to previous / next view |
-| Ctrl+F | Open search bar |
-| Home / End | Move to current section head / last item in current section (press again for the previous / next section) |
-| Shift+Home / Shift+End | Move to the head of the previous / next section |
-| Ctrl+Home / Ctrl+End | Move to the very top / bottom of the view |
-| Enter | Move down |
-| F2 | Edit item text or cell value |
+| ↑ / ↓ or k / j | Move up / down |
+| ← / → or h / l or Tab / Shift+Tab | Move left / right across columns |
+| Enter / Shift+Enter | Move down / up |
+| PgDn / PgUp or Ctrl+F / Ctrl+B | Move down / up one screenful |
+| Home / End or { / } | Current section head / last item in section (press again for the previous / next section) |
+| Shift+Home / Shift+End | Head of the previous / next section |
+| Ctrl+Home / Ctrl+End or gg / G | Very top / bottom of the view |
+| H / M / L | First / middle / last visible row on screen |
+| zz | Re-centre scroll so the cursor is in the middle |
+| z Enter / z- | Scroll so the cursor is at the top / bottom |
+| Ctrl+PgUp / Ctrl+PgDn | Cycle to the previous / next view |
+
+### View screen — searching
+
+| Key | Action |
+|-----|--------|
+| / / ? | Open forward / backward search bar |
+| n / N | Repeat last search in the same / opposite direction (wraps) |
+
+### View screen — editing
+
+| Key | Action |
+|-----|--------|
+| i or F2 | Edit item text or cell value |
+| o or Insert | New item below the cursor |
+| O | New item above the cursor |
+| x or Delete | Main column — remove item from the section's category (on a section head: remove the section). Data column — clear the item's value for that column (on the column head: remove the column) |
+| Shift+Delete | Discard item from all categories permanently |
+| u / r or Ctrl+Z / Ctrl+Y | Undo / redo |
 | F3 | Assign categories (main column) / pick value (data column) |
 | F4 | Mark item done |
 | F5 | Open note in `$EDITOR` |
 | F6 | Item / section / column properties |
-| F8 | View Manager |
-| F9 | Category Manager |
-| F10 | Menu |
-| Insert | Create new blank item below cursor |
-| Delete | Main column — remove item from the section's category (on a section head: remove the section). Data column — clear the item's value for that column (on the column head: remove the column) |
-| Shift+Delete | Discard item from all categories permanently |
+| F8 / F9 / F10 | View Manager / Category Manager / Menu |
 | Ctrl+S | Save file |
-| Ctrl+Z | Undo |
-| Ctrl+Y | Redo |
 | Alt+Q | Quit |
 
 ### Alt commands (View screen)
 
 | Key | Action |
 |-----|--------|
-| Alt+R | Add column to the right |
-| Alt+L | Add column to the left |
-| Alt+D | Add section below |
-| Alt+U | Add section above |
+| Alt+R / Alt+L | Add column to the right / left |
+| Alt+D / Alt+U | Add section below / above |
 | Alt+S | Sort current section now |
 
-### vi navigation mode
+### Lists and pickers
 
-Set `nav_mode = "vi"` in `config.toml` (or via F10 → Utilities → Customize) to enable. Printable keys no longer start a new item; use the bindings below instead. Arrow keys and all F-keys continue to work.
+Every scrolling list — Category Manager, View Manager, the F3 pickers, Quick
+Add, Section Select, and the sort and filter dialogs — takes the same keys:
 
 | Key | Action |
 |-----|--------|
-| j / k | Down / up |
-| h / l | Column left / right |
-| H | First visible row on screen |
-| M | Middle visible row on screen |
-| L | Last visible row on screen |
-| { | Section head of current section (like Home) |
-| } | Last item of current section (like End) |
-| gg | First section head of the first section |
-| G | Last item of the last section |
-| zz | Re-centre scroll so cursor is in the middle of the screen |
-| z Enter | Scroll so cursor is at the top of the screen |
-| z- | Scroll so cursor is at the bottom of the screen |
-| Ctrl+F | Page down |
-| Ctrl+B | Page up |
-| / | Open forward search bar |
-| ? | Open backward search bar |
-| n | Repeat last search in same direction (wrap) |
-| N | Repeat last search in opposite direction (wrap) |
-| i | Edit current item / cell |
-| o | New item below cursor |
-| O | New item above cursor |
-| x | Delete (remove from section category) |
-| u | Undo |
-| r | Redo |
+| ↑ / ↓ or k / j | Move up / down |
+| PgUp / PgDn or Ctrl+B / Ctrl+F | Page up / down |
+| Home / End or gg / G | First / last entry |
+| H / M / L | Top / middle / bottom of the visible window |
+| / | Search within the list |
+| i / o / x / u | Rename / create / delete / undo, where the list supports it |
+| Enter / Esc | Confirm / cancel |
 
 ## Configuration
 
@@ -137,9 +134,6 @@ Config file location:
 The directory is created automatically on first run if it does not exist. All settings are optional; omit any line to keep the default.
 
 ```toml
-# Navigation mode: "Agenda" (default) or "vi"
-nav_mode = "Agenda"
-
 # Color scheme (see below)
 colorscheme = "AgendaColor"
 ```
@@ -240,7 +234,7 @@ Press F3 on the Sections field to open the Section Select picker. Space cycles e
 
 ### Customize (F10 → Utilities → Customize)
 
-Live color and navigation-mode editor. Navigate with arrow keys (or hjkl in vi mode). On any color field, press F2 or type a hex character to begin editing, Space to reset to terminal default. Selecting a built-in theme and then editing a color automatically switches to the Custom scheme with all other colors pre-filled from the chosen theme.
+Live color editor. Navigate with arrow keys or hjkl. On any color field, press F2 or type a hex character to begin editing, Space to reset to terminal default. Selecting a built-in theme and then editing a color automatically switches to the Custom scheme with all other colors pre-filled from the chosen theme.
 
 ## License
 

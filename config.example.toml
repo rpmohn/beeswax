@@ -15,12 +15,6 @@
 #   "Custom"        Use the [custom_theme] section below
 colorscheme = "GruvboxDark"
 
-# ── Navigation mode ───────────────────────────────────────────────────────────
-# Available values:
-#   "Agenda"   Original Agenda-style (typing a character begins a new item)
-#   "vi"       Vi-style (hjkl movement, i/o/O to insert, no auto-create)
-nav_mode = "Agenda"
-
 # ── Custom color scheme ───────────────────────────────────────────────────────
 # Only applied when colorscheme = "Custom".
 # All fields are optional hex color strings ("#rrggbb").

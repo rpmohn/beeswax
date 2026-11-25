@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use crate::app::{App, CustomizeSubMode, CUSTOMIZE_COLOR_COUNT, CUSTOMIZE_COLOR_LABELS, CURSOR_TO_FIELD, get_custom_field};
+use crate::app::{App, CustomizeSubMode, CUSTOMIZE_COLOR_COUNT, CUSTOMIZE_COLOR_LABELS, CUSTOMIZE_FIRST_COLOR, CURSOR_TO_FIELD, get_custom_field};
 use crate::theme::{color_to_hex, theme_color_for_field, ColorScheme, parse_hex};
 use super::{centered_rect, cursor_split};
 
@@ -25,9 +25,9 @@ const DIALOG_W: usize = INNER_W + 2;
 /// Total display rows in the color section (includes blank-cell rows).
 const COLOR_ROWS: usize = 11;
 
-/// Dialog height: border(1) + blank(1) + nav(1) + scheme(1) + blank(1) +
-///                header(1) + color_rows(11) + blank(1) + hint(1) + blank(1) + border(1) = 21
-const DIALOG_H: usize = 21;
+/// Dialog height: border(1) + blank(1) + scheme(1) + blank(1) +
+///                header(1) + color_rows(11) + blank(1) + hint(1) + blank(1) + border(1) = 20
+const DIALOG_H: usize = 20;
 
 /// Row layout: (left_field_idx, right_field_idx), None = blank cell.
 /// Indices refer to CUSTOMIZE_COLOR_LABELS / get_custom_field positions.
@@ -48,24 +48,24 @@ const LAYOUT: [(Option<usize>, Option<usize>); COLOR_ROWS] = [
 /// Maps field index → cursor position in the Customize dialog.
 /// Inverse of CURSOR_TO_FIELD.
 const FIELD_TO_CURSOR: [usize; CUSTOMIZE_COLOR_COUNT] = [
-    18, // 0:  bar_fg
-    19, // 1:  bar_bg
-     3, // 2:  selected_item_fg
-     5, // 3:  selected_item_bg
-    13, // 4:  view_selected_fg
-    15, // 5:  view_selected_bg
-     8, // 6:  dialog_bg
-    10, // 7:  dialog_item
-    12, // 8:  dialog_label
-    14, // 9:  dialog_label_sel_fg
-    16, // 10: dialog_border_fg
-    17, // 11: dialog_border_bg
-     2, // 12: view_bg
-     4, // 13: view_item
-    11, // 14: view_col_entry
-     9, // 15: view_col_head
-     7, // 16: view_sec_head
-     6, // 17: view_head_bg
+    17, // 0:  bar_fg
+    18, // 1:  bar_bg
+     2, // 2:  selected_item_fg
+     4, // 3:  selected_item_bg
+    12, // 4:  view_selected_fg
+    14, // 5:  view_selected_bg
+     7, // 6:  dialog_bg
+     9, // 7:  dialog_item
+    11, // 8:  dialog_label
+    13, // 9:  dialog_label_sel_fg
+    15, // 10: dialog_border_fg
+    16, // 11: dialog_border_bg
+     1, // 12: view_bg
+     3, // 13: view_item
+    10, // 14: view_col_entry
+     8, // 15: view_col_head
+     6, // 16: view_sec_head
+     5, // 17: view_head_bg
 ];
 
 pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
@@ -75,7 +75,7 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Clear, dlg);
 
     let is_custom = ColorScheme::ALL[st.scheme_idx] == ColorScheme::Custom;
-    let in_picker = matches!(st.sub_mode, CustomizeSubMode::NavPicker { .. } | CustomizeSubMode::SchemePicker { .. });
+    let in_picker = matches!(st.sub_mode, CustomizeSubMode::SchemePicker { .. });
     let in_hex_edit = matches!(st.sub_mode, CustomizeSubMode::EditHex { .. });
 
     let border_style = app.theme.dialog_border;
@@ -100,23 +100,10 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
     // Blank line
     lines.push(Line::from(""));
 
-    // Nav Mode field (cursor 0)
-    {
-        let nav_labels = ["Agenda", "Vi"];
-        let val = nav_labels[st.nav_idx];
-        let on_field = st.cursor == 0 && !in_picker && !in_hex_edit;
-        let label_s = if on_field { label_sel } else { label_style };
-        let val_s   = if on_field { sel_style  } else { content_style };
-        lines.push(Line::from(vec![
-            Span::styled("  Navigation Mode:".to_string(), label_s),
-            Span::styled(format!("{:<20}", val), val_s),
-        ]));
-    }
-
-    // Color Theme field (cursor 1)
+    // Color Theme field (cursor 0)
     {
         let val = ColorScheme::ALL[st.scheme_idx].label();
-        let on_field = st.cursor == 1 && !in_picker && !in_hex_edit;
+        let on_field = st.cursor == 0 && !in_picker && !in_hex_edit;
         let label_s = if on_field { label_sel } else { label_style };
         let val_s   = if on_field { sel_style  } else { content_style };
         lines.push(Line::from(vec![
@@ -277,12 +264,6 @@ pub fn render_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(Paragraph::new(lines).style(content_style), inner);
 
-    // ── Nav picker overlay ────────────────────────────────────────────────────
-    if let CustomizeSubMode::NavPicker { cursor } = &st.sub_mode {
-        let items = ["Agenda", "Vi"];
-        render_picker(frame, dlg, "Navigation Mode", &items, *cursor, app);
-    }
-
     // ── Scheme picker overlay ─────────────────────────────────────────────────
     if let CustomizeSubMode::SchemePicker { cursor } = &st.sub_mode {
         let items: Vec<&str> = ColorScheme::ALL.iter().map(|s| s.label()).collect();
@@ -327,8 +308,8 @@ const _: () = {
     let mut i = 0;
     while i < CUSTOMIZE_COLOR_COUNT {
         let cursor = FIELD_TO_CURSOR[i];
-        assert!(cursor >= 2);
-        let field = CURSOR_TO_FIELD[cursor - 2];
+        assert!(cursor >= CUSTOMIZE_FIRST_COLOR);
+        let field = CURSOR_TO_FIELD[cursor - CUSTOMIZE_FIRST_COLOR];
         assert!(field == i, "FIELD_TO_CURSOR / CURSOR_TO_FIELD mismatch");
         i += 1;
     }

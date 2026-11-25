@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, PAGE_FULL, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, NavMode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, PAGE_FULL, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
 
 // ── Shared single-line text-field editor ─────────────────────────────────────
 
@@ -286,14 +286,14 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
-    // Undo / Redo — Ctrl+Z / Ctrl+Y (universal); Ctrl+R in vi mode
+    // Undo / Redo — Ctrl+Z / Ctrl+Y (universal); also u / r
     // Ctrl+Y is only redo when NOT in an editing field (otherwise it yanks).
     // Ctrl+PgDn/PgUp — cycle through views (universal, not in edit fields).
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('z') if !app.is_editing() => { app.undo(); return; }
             KeyCode::Char('y') if !app.is_editing() => { app.redo(); return; }
-            KeyCode::Char('r') if !app.is_editing() && app.nav_mode == NavMode::Vi => { app.redo(); return; }
+            KeyCode::Char('r') if !app.is_editing() => { app.redo(); return; }
             KeyCode::PageDown  if !app.is_editing() => { app.cycle_view_next(); return; }
             KeyCode::PageUp    if !app.is_editing() => { app.cycle_view_prev(); return; }
             _ => {}
@@ -380,22 +380,20 @@ fn handle_ask_save(app: &mut App, code: KeyCode) {
 // ── View handlers ─────────────────────────────────────────────────────────────
 
 fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    // In vi mode, non-char keys can complete a pending sequence.
-    if app.nav_mode == NavMode::Vi {
-        if let Some(pending) = app.vi_pending {
-            match (pending, code) {
-                ('z', KeyCode::Enter) => {
-                    app.vi_pending = None;
-                    app.scroll_to_top();
-                    return;
-                }
-                (_, KeyCode::Char(_)) => {
-                    // Char keys reach handle_view_normal_vi via the Char arm below — do nothing here.
-                }
-                _ => {
-                    // Unknown sequence: discard pending, fall through to process the key normally.
-                    app.vi_pending = None;
-                }
+    // Non-char keys can complete a pending two-key sequence.
+    if let Some(pending) = app.vi_pending {
+        match (pending, code) {
+            ('z', KeyCode::Enter) => {
+                app.vi_pending = None;
+                app.scroll_to_top();
+                return;
+            }
+            (_, KeyCode::Char(_)) => {
+                // Char keys reach handle_view_normal_vi via the Char arm below — do nothing here.
+            }
+            _ => {
+                // Unknown sequence: discard pending, fall through to process the key normally.
+                app.vi_pending = None;
             }
         }
     }
@@ -403,14 +401,10 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('f') | KeyCode::Char('F') => {
-                if app.nav_mode == NavMode::Vi {
-                    app.cursor_pgdn(app.body_height.get().max(1));
-                } else {
-                    app.search_open();
-                }
+                app.cursor_pgdn(app.body_height.get().max(1));
                 return;
             }
-            KeyCode::Char('b') | KeyCode::Char('B') if app.nav_mode == NavMode::Vi => {
+            KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.cursor_pgup(app.body_height.get().max(1));
                 return;
             }
@@ -434,8 +428,8 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Down     => app.cursor_down(),
         KeyCode::PageUp   => app.cursor_pgup(app.body_height.get().max(1)),
         KeyCode::PageDown => app.cursor_pgdn(app.body_height.get().max(1)),
-        KeyCode::Home if modifiers.contains(KeyModifiers::CONTROL) => app.cursor_view_top(),
-        KeyCode::End  if modifiers.contains(KeyModifiers::CONTROL) => app.cursor_view_bottom(),
+        KeyCode::Home if modifiers.contains(KeyModifiers::CONTROL) => app.cursor_first(),
+        KeyCode::End  if modifiers.contains(KeyModifiers::CONTROL) => app.cursor_last(),
         KeyCode::Home if modifiers.contains(KeyModifiers::SHIFT)   => app.cursor_section_prev(),
         KeyCode::End  if modifiers.contains(KeyModifiers::SHIFT)   => app.cursor_section_next(),
         KeyCode::Home     => app.cursor_home(),
@@ -444,7 +438,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Right | KeyCode::Tab    => app.cursor_col_right(),
         KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => app.cursor_up(),
         KeyCode::Enter  => app.cursor_down(),
-        KeyCode::Char('/') if app.nav_mode == NavMode::Vi => app.search_open(),
+        KeyCode::Char('/') => app.search_open(),
         KeyCode::Insert => app.begin_create_blank(),
         KeyCode::F(2)   => app.begin_edit(),
         KeyCode::F(4)   => app.item_mark_done(),
@@ -495,12 +489,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(9)   => app.toggle_catmgr(),
         KeyCode::F(10)  => app.open_menu(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
-                          && !modifiers.contains(KeyModifiers::ALT) => {
-            match app.nav_mode {
-                NavMode::Vi => handle_view_normal_vi(app, ch),
-                NavMode::Agenda => app.begin_char_input(ch),
-            }
-        }
+                          && !modifiers.contains(KeyModifiers::ALT) => handle_view_normal_vi(app, ch),
         _ => {}
     }
 }
@@ -589,7 +578,6 @@ fn handle_view_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 
 /// Handles vi navigation keys (j/k/G/gg/H/M/L) for list-style pickers.
 /// Returns `true` if `code` was consumed so the caller can return early.
-/// No-ops and returns `false` when nav_mode != Vi.
 /// Always clears `vi_pending` so stale state doesn't leak across handlers.
 fn handle_vi_list(
     app:        &mut App,
@@ -603,7 +591,6 @@ fn handle_vi_list(
     screen_mid: &dyn Fn(&mut App),   // M  — middle of visible window
     screen_bot: &dyn Fn(&mut App),   // L  — bottom of visible window
 ) -> bool {
-    if app.nav_mode != NavMode::Vi { return false; }
     let pending = app.vi_pending.take();   // always clear stale state
     if let Some('g') = pending {
         if code == KeyCode::Char('g') { list_home(app); return true; }
@@ -704,16 +691,13 @@ fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Delete => app.cat_open_confirm_delete(),
         KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL)
                           && !modifiers.contains(KeyModifiers::ALT) => {
-            match app.nav_mode {
-                NavMode::Vi => match ch {
-                    'i' => app.cat_begin_edit(),
-                    'o' => app.cat_begin_create(false),
-                    '/' => app.cat_search_open(),
-                    'x' => app.cat_open_confirm_delete(),
-                    'u' => app.undo(),
-                    _   => {}
-                },
-                NavMode::Agenda => app.cat_search_char(ch),
+            match ch {
+                'i' => app.cat_begin_edit(),
+                'o' => app.cat_begin_create(false),
+                '/' => app.cat_search_open(),
+                'x' => app.cat_open_confirm_delete(),
+                'u' => app.undo(),
+                _   => {}
             }
         }
         _ => {}
@@ -805,13 +789,11 @@ fn handle_catmgr_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn handle_catmgr_move(app: &mut App, code: KeyCode) {
-    if app.nav_mode == NavMode::Vi {
-        app.vi_pending = None;   // clear any stale pending
-        match code {
-            KeyCode::Char('j') => { app.cat_move_down(); return; }
-            KeyCode::Char('k') => { app.cat_move_up();   return; }
-            _ => {}
-        }
+    app.vi_pending = None;   // clear any stale pending
+    match code {
+        KeyCode::Char('j') => { app.cat_move_down(); return; }
+        KeyCode::Char('k') => { app.cat_move_up();   return; }
+        _ => {}
     }
     match code {
         KeyCode::Up           => app.cat_move_up(),
@@ -1013,8 +995,8 @@ fn handle_col_quick_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             }
             app.cat_open_props();
         }
-        // Vi mode reserves letters for movement, so search opens explicitly with /.
-        KeyCode::Char('/') if app.nav_mode == NavMode::Vi => app.cat_search_open(),
+        // Letters are reserved for movement, so search opens explicitly with /.
+        KeyCode::Char('/') => app.cat_search_open(),
         KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
         _ => {}
     }
@@ -1123,8 +1105,8 @@ fn handle_item_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::PageUp                     => app.item_props_cursor_pgup(10),
         KeyCode::PageDown                   => app.item_props_cursor_pgdn(10),
         KeyCode::Delete                     => app.item_props_remove(),
-        KeyCode::Char('i') if app.nav_mode == NavMode::Vi => app.item_props_edit(),
-        KeyCode::Char('x') if app.nav_mode == NavMode::Vi => app.item_props_remove(),
+        KeyCode::Char('i') => app.item_props_edit(),
+        KeyCode::Char('x') => app.item_props_remove(),
         _ => {}
     }
 }
@@ -1213,9 +1195,9 @@ fn handle_col_sub_pick(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(7)            => app.cat_search_prev(),
         KeyCode::F(8)            => app.cat_search_next(),
         KeyCode::Backspace       => app.cat_search_backspace(),
-        // Vi mode reserves letters for movement, so search opens explicitly with /,
-        // as in the Category Manager. Agenda mode starts it with any letter.
-        KeyCode::Char('/') if app.nav_mode == NavMode::Vi => app.cat_search_open(),
+        // Letters are reserved for movement, so search opens explicitly with /,
+        // as in the Category Manager.
+        KeyCode::Char('/') => app.cat_search_open(),
         KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
         _ => {}
     }
@@ -1412,10 +1394,10 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(8) | KeyCode::Esc => app.close_view_mgr(),
         KeyCode::F(9)  => { app.close_view_mgr(); app.toggle_catmgr(); }
         KeyCode::F(10) => app.open_menu(),
-        KeyCode::Char('i') if app.nav_mode == NavMode::Vi => app.vmgr_begin_rename(),
-        KeyCode::Char('o') | KeyCode::Char('O') if app.nav_mode == NavMode::Vi => app.view_add_open(),
-        KeyCode::Char('x') if app.nav_mode == NavMode::Vi => app.vmgr_open_confirm_delete(),
-        KeyCode::Char('u') if app.nav_mode == NavMode::Vi => app.undo(),
+        KeyCode::Char('i') => app.vmgr_begin_rename(),
+        KeyCode::Char('o') | KeyCode::Char('O') => app.view_add_open(),
+        KeyCode::Char('x') => app.vmgr_open_confirm_delete(),
+        KeyCode::Char('u') => app.undo(),
         _ => {}
     }
 }
@@ -1704,13 +1686,11 @@ fn handle_vmgr_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers
 }
 
 fn handle_vmgr_sec_sort_picker(app: &mut App, code: KeyCode) {
-    if app.nav_mode == NavMode::Vi {
-        app.vi_pending = None;
-        match code {
-            KeyCode::Char('j') => { app.vmgr_sec_sort_picker_down(); return; }
-            KeyCode::Char('k') => { app.vmgr_sec_sort_picker_up();   return; }
-            _ => {}
-        }
+    app.vi_pending = None;
+    match code {
+        KeyCode::Char('j') => { app.vmgr_sec_sort_picker_down(); return; }
+        KeyCode::Char('k') => { app.vmgr_sec_sort_picker_up();   return; }
+        _ => {}
     }
     match code {
         KeyCode::Up    => app.vmgr_sec_sort_picker_up(),
@@ -1948,7 +1928,6 @@ fn handle_customize(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     let sub = app.customize_state.as_ref().map(|s| {
         match &s.sub_mode {
             CustomizeSubMode::Normal    => 0u8,
-            CustomizeSubMode::NavPicker    { .. } => 1,
             CustomizeSubMode::SchemePicker { .. } => 2,
             CustomizeSubMode::EditHex      { .. } => 3,
         }
@@ -1962,82 +1941,52 @@ fn handle_customize(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn handle_customize_normal(app: &mut App, code: KeyCode) {
-    let cursor = app.customize_state.as_ref().map(|s| s.cursor).unwrap_or(0);
-    let vi = app.nav_mode == NavMode::Vi;
+    use crate::app::{CUSTOMIZE_COLOR_COUNT, CUSTOMIZE_FIRST_COLOR};
+    let cursor   = app.customize_state.as_ref().map(|s| s.cursor).unwrap_or(0);
+    let on_color = cursor >= CUSTOMIZE_FIRST_COLOR
+                && cursor <  CUSTOMIZE_FIRST_COLOR + CUSTOMIZE_COLOR_COUNT;
 
-    // Vi navigation keys take priority over hex-edit character input.
-    if vi {
-        match code {
-            KeyCode::Char('j') => { app.customize_col_down(); return; }
-            KeyCode::Char('k') => { app.customize_col_up();   return; }
-            KeyCode::Char('h') => {
-                match cursor {
-                    0 => app.customize_nav_prev(),
-                    1 => app.customize_scheme_prev(),
-                    _ => app.customize_cursor_up(),
-                }
-                return;
-            }
-            KeyCode::Char('l') => {
-                match cursor {
-                    0 => app.customize_nav_next(),
-                    1 => app.customize_scheme_next(),
-                    _ => app.customize_cursor_down(),
-                }
-                return;
-            }
-            _ => {}
+    // Vi navigation keys take priority over hex-edit character input. None of
+    // hjkl is a hex digit, so no color value becomes unreachable.
+    match code {
+        KeyCode::Char('j') => { app.customize_col_down(); return; }
+        KeyCode::Char('k') => { app.customize_col_up();   return; }
+        KeyCode::Char('h') => {
+            if cursor == 0 { app.customize_scheme_prev(); } else { app.customize_cursor_up(); }
+            return;
         }
+        KeyCode::Char('l') => {
+            if cursor == 0 { app.customize_scheme_next(); } else { app.customize_cursor_down(); }
+            return;
+        }
+        _ => {}
     }
 
     match code {
         KeyCode::Up   => app.customize_col_up(),
         KeyCode::Down => app.customize_col_down(),
-        KeyCode::Left => match cursor {
-            0 => app.customize_nav_prev(),
-            1 => app.customize_scheme_prev(),
-            _ => app.customize_cursor_up(),
-        },
-        KeyCode::Right => match cursor {
-            0 => app.customize_nav_next(),
-            1 => app.customize_scheme_next(),
-            _ => app.customize_cursor_down(),
-        },
-        KeyCode::Char(' ') => match cursor {
-            0 => app.customize_nav_next(),
-            1 => app.customize_scheme_next(),
-            _ => {
-                // Clear the color field to terminal default (None) for Custom scheme.
-                // Auto-switches to Custom first if needed.
-                use crate::app::CUSTOMIZE_COLOR_COUNT;
-                if cursor >= 2 && cursor < 2 + CUSTOMIZE_COLOR_COUNT {
-                    app.customize_ensure_custom();
-                    let fi = crate::app::CURSOR_TO_FIELD[cursor - 2];
-                    if let Some(ref mut st) = app.customize_state {
-                        crate::app::set_custom_field(&mut st.custom, fi, None);
-                    }
-                    app.customize_apply_live_theme_pub();
-                }
+        KeyCode::Left  if cursor == 0 => app.customize_scheme_prev(),
+        KeyCode::Left                 => app.customize_cursor_up(),
+        KeyCode::Right if cursor == 0 => app.customize_scheme_next(),
+        KeyCode::Right                => app.customize_cursor_down(),
+        KeyCode::Char(' ') if cursor == 0 => app.customize_scheme_next(),
+        KeyCode::Char(' ') if on_color => {
+            // Clear the color field to terminal default (None) for Custom scheme.
+            // Auto-switches to Custom first if needed.
+            app.customize_ensure_custom();
+            let fi = crate::app::CURSOR_TO_FIELD[cursor - CUSTOMIZE_FIRST_COLOR];
+            if let Some(ref mut st) = app.customize_state {
+                crate::app::set_custom_field(&mut st.custom, fi, None);
             }
-        },
-        KeyCode::F(3) => match cursor {
-            0 => app.customize_open_nav_picker(),
-            1 => app.customize_open_scheme_picker(),
-            _ => {}
-        },
-        KeyCode::Enter => app.customize_confirm(),
-        KeyCode::F(2)  => {
-            if cursor >= 2 {
-                app.customize_begin_edit_hex();
-            }
+            app.customize_apply_live_theme_pub();
         }
-        KeyCode::Char(ch) if cursor >= 2 => {
+        KeyCode::F(3) if cursor == 0 => app.customize_open_scheme_picker(),
+        KeyCode::Enter => app.customize_confirm(),
+        KeyCode::F(2) if on_color => app.customize_begin_edit_hex(),
+        KeyCode::Char(ch) if on_color => {
             // Typing on a color field auto-starts hex editing (auto-switches to Custom)
-            use crate::app::CUSTOMIZE_COLOR_COUNT;
-            if cursor < 2 + CUSTOMIZE_COLOR_COUNT {
-                app.customize_begin_edit_hex();
-                app.customize_hex_char(ch);
-            }
+            app.customize_begin_edit_hex();
+            app.customize_hex_char(ch);
         }
         KeyCode::Esc => app.close_customize(),
         _ => {}
@@ -2132,7 +2081,7 @@ fn handle_file_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             if !desc_active { app.file_props_open_password(); }
         }
         KeyCode::Char('i') if desc_active && !desc_editing
-                           && app.nav_mode == NavMode::Vi => app.file_props_desc_begin_edit(),
+                                                          => app.file_props_desc_begin_edit(),
         KeyCode::Char(' ') if !desc_active => app.file_props_open_password(),
         _ => {}
     }

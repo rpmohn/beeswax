@@ -23,7 +23,6 @@
 #   view_head_bg        = #1a1a00  dark OLIVE
 
 colorscheme = "Custom"
-nav_mode    = "Agenda"
 
 [custom_theme]
 bar_fg              = "#ff0000"   # bright RED        — bar text (fkey labels, menu items)

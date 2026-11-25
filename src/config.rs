@@ -8,10 +8,6 @@ pub struct Config {
     #[serde(default)]
     pub colorscheme: String,
 
-    /// Navigation mode: "Agenda" (default) or "vi".
-    #[serde(default)]
-    pub nav_mode: String,
-
     /// Custom color overrides — only used when colorscheme = "Custom".
     /// Each field is an optional hex color string, e.g. "#268bd2".
     /// Omitted fields fall back to the Default (terminal REVERSED) theme.
@@ -124,8 +120,10 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     }
 
     let root = doc.as_table_mut();
-    set_str(root, "nav_mode",    &cfg.nav_mode);
     set_str(root, "colorscheme", &cfg.colorscheme);
+
+    // Obsolete keys from earlier versions, dropped on the next save.
+    root.remove("nav_mode");
 
     // The 18 field names beeswax manages inside [custom_theme].
     const KNOWN: &[&str] = &[
