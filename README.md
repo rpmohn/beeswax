@@ -65,7 +65,8 @@ commands. **Alt** acts on the structure around the items — sections, columns
 and the category tree. Structural editing follows VimOutliner, which leaves it
 to plain vim: `o`/`O` to make a sibling, `>>`/`<<` to change its level.
 
-[KEYS.md](KEYS.md) is the same material condensed onto one printable page.
+[KEYS.pdf](KEYS.pdf) is the same material condensed onto one printable page.
+It is built from [KEYS.tex](KEYS.tex) with `pdflatex KEYS.tex`.
 
 ### View screen — moving around
 

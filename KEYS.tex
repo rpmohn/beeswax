@@ -1,0 +1,116 @@
+% Source for KEYS.pdf, the one-page printable key reference.
+% Build:  pdflatex -interaction=nonstopmode KEYS.tex
+\documentclass[10pt]{article}
+\usepackage[letterpaper,margin=0.5in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{array}
+\usepackage{textcomp}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.22}
+
+% Key names are set in monospace; arrows come from math mode.
+\newcommand{\key}[1]{\texttt{#1}}
+\newcommand{\up}{$\uparrow$}
+\newcommand{\dn}{$\downarrow$}
+\newcommand{\lft}{$\leftarrow$}
+\newcommand{\rgt}{$\rightarrow$}
+\newcommand{\sep}{\hspace{0.7em}}
+\newcommand{\heading}[1]{\par\vspace{5pt}\textbf{#1}\par\vspace{3pt}}
+
+% A two-column key table with a rule under the header and between every row.
+\newenvironment{keytable}[1]
+  {\begin{tabular}{|>{\raggedright\arraybackslash}p{5.4cm}|>{\raggedright\arraybackslash}p{#1}|}\hline
+   \textbf{Key} & \textbf{Action}\\\hline\hline}
+  {\end{tabular}}
+
+\begin{document}
+\footnotesize
+
+{\large\textbf{beeswax --- key reference}}\\[3pt]
+Navigation is vi-style; arrow keys, Home/End/PgUp/PgDn and the F-keys work
+everywhere too, so nothing requires the vi bindings.\\[3pt]
+\textbf{Unprefixed} --- vi verbs and motions, acting on the item under the cursor.
+\textbf{Shift} --- the reverse, or the larger version, of the unshifted key.
+\textbf{Ctrl} --- whole-file and whole-view commands.
+\textbf{Alt} --- the structure around the items: sections, columns, category tree.\\[3pt]
+In the Key column, \key{/} separates keys matching the parts of the Action in
+order; a wider gap separates keys that do the same thing.\\[3pt]
+Structural editing follows VimOutliner, which leaves it to plain vim:
+\key{o}/\key{O} makes a sibling, \key{>{}>}/\key{<{}<} changes its level, \key{u}
+and \key{Ctrl+R} undo and redo.
+
+\heading{Moving around}
+\begin{keytable}{12.6cm}
+\key{k} / \key{j} \sep \up\ / \dn & Up / down\\\hline
+\key{h} / \key{l} \sep \lft\ / \rgt \sep \key{Tab} / \key{Shift+Tab} & Left / right across columns\\\hline
+\key{Enter} / \key{Shift+Enter} & Down / up\\\hline
+\key{PgDn} / \key{PgUp} \sep \key{Ctrl+F} / \key{Ctrl+B} & One screenful down / up\\\hline
+\key{Home} / \key{End} \sep \key{\{} / \key{\}} & Section head / last item; again for the previous or next section\\\hline
+\key{Shift+Home} / \key{Shift+End} & Head of the previous / next section\\\hline
+\key{Ctrl+Home} / \key{Ctrl+End} \sep \key{gg} / \key{G} & Top / bottom of the view\\\hline
+\key{H} / \key{M} / \key{L} & First / middle / last visible row\\\hline
+\key{zz} / \key{z Enter} / \key{z-} & Put the cursor at center / top / bottom\\\hline
+\key{Ctrl+PgUp} / \key{Ctrl+PgDn} & Previous / next view\\\hline
+\key{/} & Open the search bar, forwards\\\hline
+\key{?} & Open the search bar, backwards\\\hline
+\key{n} / \key{N} & Repeat the search, same / opposite direction (wraps)\\\hline
+\end{keytable}
+
+\heading{Items}
+\begin{keytable}{12.6cm}
+\key{i} \sep \key{F2} & Edit item text or cell value\\\hline
+\key{o} / \key{O} \sep \key{Insert} & New item below / above\\\hline
+\key{x} \sep \key{Delete} & Remove from this section's category; on a head remove the section or column; in a data column clear the value\\\hline
+\key{Shift+Delete} & Discard from all categories, permanently\\\hline
+\key{u} / \key{Ctrl+R} \sep \key{Ctrl+Z} / \key{Ctrl+Y} & Undo / redo\\\hline
+\key{F3} / \key{F4} / \key{F5} & Assign categories or pick a value / mark done / note in \texttt{\$EDITOR}\\\hline
+\key{F6} & Item, section or column properties\\\hline
+\key{F8} / \key{F9} / \key{F10} & View Manager / Category Manager / Menu\\\hline
+\key{Ctrl+S} / \key{Alt+Q} / \key{F1} & Save / quit / help\\\hline
+\end{keytable}
+
+\heading{Structure --- View screen}
+\begin{keytable}{12.6cm}
+\key{Alt+o} & New section: the Add dialog, with the category picker already open\\\hline
+\key{Alt+c} & New column: the Add dialog, with the column-head picker already open\\\hline
+\key{Alt+h} / \key{Alt+l} \sep \key{Alt+}\lft\ / \key{Alt+}\rgt & Move this column left / right\\\hline
+\key{Alt+s} & Sort this section now\\\hline
+\end{keytable}
+
+Both dialogs carry the direction as a field rather than as a key: Down to the
+Insert field (section: Below / Above) or the Position field (column: Right /
+Left), then Left/Right to set it. \key{F3} reopens the picker for a field.
+
+\heading{Structure --- Category Manager (F9)}
+\begin{keytable}{12.6cm}
+\key{o} / \key{O} \sep \key{Insert} & New sibling below / above\\\hline
+\key{>{}>} \sep \key{Alt+l} \sep \key{Alt+}\rgt & Demote one level --- \key{o} then \key{>{}>} makes a child\\\hline
+\key{<{}<} \sep \key{Alt+h} \sep \key{Alt+}\lft & Promote one level\\\hline
+\key{Alt+j} / \key{Alt+k} \sep \key{Alt+}\dn\ / \key{Alt+}\up & Move down / up among siblings\\\hline
+\key{Enter} \sep \key{F2} \sep \key{i} & Rename\\\hline
+\key{Alt+F10} & Move mode: plain arrows, Enter when done\\\hline
+\key{Delete} \sep \key{x} & Delete\\\hline
+\key{F6} & Category properties\\\hline
+\end{keytable}
+
+On a root category \key{o} and \key{O} both create a first child, a root having
+no siblings. Ctrl+arrows are aliases for the Alt keys above.
+
+\heading{Lists and pickers}
+The Category Manager, View Manager, F3 pickers, Section Select and the sort and
+filter dialogs share one set: \key{k}/\key{j}, \key{PgUp}/\key{PgDn},
+\key{gg}/\key{G}, \key{H}/\key{M}/\key{L}, \key{/} to search,
+\key{i}/\key{o}/\key{x}/\key{u} to rename, create, delete and undo where
+supported, \key{Enter} to confirm, \key{Esc} to cancel. In the View Manager and
+in View Properties' Sections field, \key{Alt+j} / \key{Alt+k} reorder the list.\\[3pt]
+The category pickers inside the Section Add and Column Add dialogs manage
+categories in place: \key{/} searches (\key{F7} / \key{F8} step through
+matches), \key{Insert} adds, \key{F2} renames, \key{Delete} discards, \key{F6}
+opens properties. \key{Esc} there closes the picker and returns to the dialog
+rather than cancelling it. \key{Delete} is refused for a protected category and
+for the current section's head category.
+
+\end{document}
