@@ -277,7 +277,7 @@ pub enum ColMode {
         kind:          ChoicesKind,
     },
     Move,
-    /// Alt-R / Alt-L quick-add: category picker that inserts a column immediately.
+    /// Alt-l / Alt-h quick-add: category picker that inserts a column immediately.
     QuickAdd {
         position:       ColPos,
         picker_cursor:  usize,
@@ -4336,7 +4336,7 @@ impl App {
         }
     }
 
-    // ── Quick-add column (Alt-R / Alt-L) ─────────────────────────────────────
+    // ── Quick-add column (Alt-l / Alt-h) ─────────────────────────────────────
 
     pub fn col_quick_add(&mut self, position: ColPos) {
         if !matches!(self.mode, Mode::Normal) { return; }

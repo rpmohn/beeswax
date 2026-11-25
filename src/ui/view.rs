@@ -701,7 +701,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(visible_lines).style(app.theme.dialog), inner);
     }
 
-    // ── Quick-add category picker (Alt-R / Alt-L) ────────────────────────────
+    // ── Quick-add category picker (Alt-l / Alt-h) ────────────────────────────
     if let ColMode::QuickAdd { position, picker_cursor, picker_scroll, confirm_delete } = &app.col_mode {
         let rev  = app.theme.item_selected_field;
         let dim  = Style::default().add_modifier(Modifier::DIM);

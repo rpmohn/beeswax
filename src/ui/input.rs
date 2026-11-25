@@ -413,10 +413,10 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     }
     if modifiers.contains(KeyModifiers::ALT) {
         match code {
-            KeyCode::Char('r') => app.col_quick_add(ColPos::Right),
-            KeyCode::Char('l') => app.col_quick_add(ColPos::Left),
-            KeyCode::Char('d') => app.sec_open_add(SectionInsert::Below),
-            KeyCode::Char('u') => app.sec_open_add(SectionInsert::Above),
+            KeyCode::Char('l') => app.col_quick_add(ColPos::Right),
+            KeyCode::Char('h') => app.col_quick_add(ColPos::Left),
+            KeyCode::Char('j') => app.sec_open_add(SectionInsert::Below),
+            KeyCode::Char('k') => app.sec_open_add(SectionInsert::Above),
             KeyCode::Char('s') => app.sec_sort_now(),
             KeyCode::F(4)      => app.item_remove(),   // discard without confirmation
             _ => {}

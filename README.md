@@ -103,9 +103,9 @@ everywhere as well, so nothing requires the vi bindings.
 
 | Key | Action |
 |-----|--------|
-| Alt+R / Alt+L | Add column to the right / left |
-| Alt+D / Alt+U | Add section below / above |
-| Alt+S | Sort current section now |
+| Alt+l / Alt+h | Add column to the right / left |
+| Alt+j / Alt+k | Add section below / above |
+| Alt+s | Sort current section now |
 
 ### Lists and pickers
 
