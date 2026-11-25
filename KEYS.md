@@ -100,3 +100,9 @@ the sort and filter dialogs share one set: `k`/`j`, PgUp/PgDn, `gg`/`G`,
 `H`/`M`/`L`, `/` to search, `i`/`o`/`x`/`u` to rename, create, delete and undo
 where supported, Enter to confirm, Esc to cancel. In the View Manager and in
 View Properties' Sections field, Alt+j / Alt+k reorder the list.
+
+The category pickers inside the Section Add and Column Add dialogs manage
+categories in place: `/` searches (F7 / F8 step through matches), Ins adds,
+F2 renames, Del discards, F6 opens properties. Esc there closes the picker
+and returns to the dialog rather than cancelling it. Del is refused for a
+protected category and for the current section's head category.

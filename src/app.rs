@@ -289,15 +289,10 @@ pub enum ColMode {
         picker_cursor: usize,
         picker_scroll: usize,
         kind:          ChoicesKind,
+        /// True while the "Discard Category?" confirmation is shown over the picker.
+        confirm_delete: bool,
     },
     Move,
-    /// Alt-l / Alt-h quick-add: category picker that inserts a column immediately.
-    QuickAdd {
-        position:       ColPos,
-        picker_cursor:  usize,
-        picker_scroll:  usize,
-        confirm_delete: bool,   // true when "Discard this category?" dialog is shown
-    },
     Props {
         head_buf:      String,
         head_cur:      usize,
@@ -4350,191 +4345,6 @@ impl App {
         }
     }
 
-    // ── Quick-add column (Alt-l / Alt-h) ─────────────────────────────────────
-
-    pub fn col_quick_add(&mut self, position: ColPos) {
-        if !matches!(self.mode, Mode::Normal) { return; }
-        let flat = flatten_cats(&self.categories);
-        if flat.is_empty() { return; }
-        self.col_mode = ColMode::QuickAdd { position, picker_cursor: 0, picker_scroll: 0, confirm_delete: false };
-    }
-
-    pub fn col_quick_add_up(&mut self) {
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            if *picker_cursor > 0 {
-                *picker_cursor -= 1;
-                if *picker_cursor < *picker_scroll { *picker_scroll = *picker_cursor; }
-            }
-        }
-    }
-
-    pub fn col_quick_add_down(&mut self) {
-        let len = flatten_cats(&self.categories).len();
-        let vis = self.list_view.rows();
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            if *picker_cursor + 1 < len {
-                *picker_cursor += 1;
-                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
-            }
-        }
-    }
-
-    pub fn col_quick_add_pgup(&mut self, page: usize) {
-        // A page is a screenful, so never more than what is actually visible.
-        let page = page.min(self.list_view.rows());
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            *picker_cursor = picker_cursor.saturating_sub(page);
-            *picker_scroll = picker_scroll.saturating_sub(page);
-        }
-    }
-
-    pub fn col_quick_add_pgdn(&mut self, page: usize) {
-        let len = flatten_cats(&self.categories).len();
-        let vis = self.list_view.rows();
-        let page = page.min(vis);
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            if len > 0 {
-                *picker_cursor = (*picker_cursor + page).min(len - 1);
-                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
-            }
-        }
-    }
-
-    pub fn col_quick_add_home(&mut self) {
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            *picker_cursor = 0;
-            *picker_scroll = 0;
-        }
-    }
-    pub fn col_quick_add_end(&mut self) {
-        let len = flatten_cats(&self.categories).len();
-        let vis = self.list_view.rows();
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            if len > 0 {
-                *picker_cursor = len - 1;
-                *picker_scroll = picker_cursor.saturating_sub(vis.saturating_sub(1));
-            }
-        }
-    }
-    pub fn col_quick_add_screen_top(&mut self) {
-        let vis = self.list_view.rows();
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
-        }
-    }
-    pub fn col_quick_add_screen_mid(&mut self) {
-        let len = flatten_cats(&self.categories).len();
-        let vis = self.list_view.rows();
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
-            *picker_cursor = (start + vis / 2).min(len.saturating_sub(1));
-        }
-    }
-    pub fn col_quick_add_screen_bot(&mut self) {
-        let len = flatten_cats(&self.categories).len();
-        let vis = self.list_view.rows();
-        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
-            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
-            *picker_cursor = (start + vis.saturating_sub(1)).min(len.saturating_sub(1));
-        }
-    }
-
-    pub fn col_quick_add_confirm(&mut self) {
-        if !matches!(self.cat_state.mode, CatMode::Normal) { return; } // don't confirm mid-create
-        self.push_undo();
-        let (position, picker_cursor) = match &self.col_mode {
-            ColMode::QuickAdd { position, picker_cursor, .. } => (*position, *picker_cursor),
-            _ => return,
-        };
-        self.col_mode = ColMode::Normal;
-        self.cat_search = None;
-        let flat = flatten_cats(&self.categories);
-        let Some(entry) = flat.get(picker_cursor) else { return };
-        let name   = entry.name.clone();
-        let cat_id = entry.id;
-        let kind   = entry.kind;
-        let width  = 12usize;
-        let id     = self.alloc_id();
-        let lc     = self.view.left_count;
-        let (pos, new_lc) = if self.view.columns.is_empty() {
-            (0, if position == ColPos::Left { 1 } else { 0 })
-        } else if self.col_cursor == 0 {
-            match position {
-                ColPos::Left  => (lc, lc + 1),
-                ColPos::Right => (lc, lc),
-            }
-        } else {
-            let cur    = (self.col_cursor - 1).min(self.view.columns.len() - 1);
-            let in_left = cur < lc;
-            let p = match position { ColPos::Right => cur + 1, ColPos::Left => cur };
-            (p, if in_left { lc + 1 } else { lc })
-        };
-        self.view.left_count = new_lc;
-        let date_fmt = if kind == CategoryKind::Date { Some(DateFmt::default()) } else { None };
-        self.view.columns.insert(pos, Column { id, name, cat_id, width, format: ColFormat::NameOnly, date_fmt });
-        self.col_cursor = pos + 1;
-    }
-
-    pub fn col_quick_add_cancel(&mut self) {
-        self.col_mode = ColMode::Normal;
-        self.cat_state.mode = CatMode::Normal;
-        self.cat_search = None;
-    }
-
-    pub fn col_quick_add_begin_delete(&mut self) {
-        let flat = flatten_cats(&self.categories);
-        if flat.is_empty() { return; }
-        let pc = match &self.col_mode {
-            ColMode::QuickAdd { picker_cursor, .. } => *picker_cursor,
-            _ => return,
-        };
-        let entry = match flat.get(pc) {
-            Some(e) => e,
-            None => return,
-        };
-        // Guard: protected system categories and top-level category.
-        if cat_is_protected(entry) { return; }
-        let candidate_id = entry.id;
-        // Guard: cannot delete the current section head or any of its ancestors.
-        let section_head_cat_id = match &self.cursor {
-            CursorPos::SectionHead(si) => self.view.sections.get(*si).map(|s| s.cat_id),
-            CursorPos::Item { section, .. } => self.view.sections.get(*section).map(|s| s.cat_id),
-        };
-        if let Some(head_id) = section_head_cat_id {
-            if cat_is_ancestor_or_equal(&flat, candidate_id, head_id) {
-                return;
-            }
-        }
-        if let ColMode::QuickAdd { confirm_delete, .. } = &mut self.col_mode {
-            *confirm_delete = true;
-        }
-    }
-
-    pub fn col_quick_add_delete_confirm(&mut self) {
-        let pc = match &mut self.col_mode {
-            ColMode::QuickAdd { confirm_delete, picker_cursor, .. } => {
-                if !*confirm_delete { return; }
-                *confirm_delete = false;
-                *picker_cursor
-            }
-            _ => return,
-        };
-        // Sync so cat_delete operates on the picker's position.
-        self.cat_state.cursor = pc;
-        self.cat_delete();
-        // Sync picker_cursor back (cat_delete may have clamped it).
-        let new_cur = self.cat_state.cursor;
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
-            *picker_cursor = new_cur;
-        }
-    }
-
-    pub fn col_quick_add_delete_cancel(&mut self) {
-        if let ColMode::QuickAdd { confirm_delete, .. } = &mut self.col_mode {
-            *confirm_delete = false;
-        }
-    }
-
     pub fn col_form_confirm(&mut self) {
         // Column head may not be blank.
         if matches!(&self.col_mode, ColMode::Form { head_cat_idx: None, .. }) { return; }
@@ -4632,6 +4442,7 @@ impl App {
             self.col_mode = ColMode::Choices {
                 is_add, head_cat_idx, width_buf, width_cur, position, active_field,
                 picker_cursor, picker_scroll: picker_cursor.saturating_sub(11), kind,
+                confirm_delete: false,
             };
         }
     }
@@ -4745,6 +4556,58 @@ impl App {
         let old = std::mem::replace(&mut self.col_mode, ColMode::Normal);
         if let ColMode::Choices { is_add, head_cat_idx, width_buf, width_cur, position, active_field, .. } = old {
             self.col_mode = ColMode::Form { is_add, head_cat_idx, width_buf, width_cur, position, active_field };
+        }
+    }
+
+    /// Del in the Choices picker — ask before discarding the highlighted category.
+    /// Inert for categories that cannot be deleted, so nothing is asked in vain.
+    pub fn col_choices_begin_delete(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        if flat.is_empty() { return; }
+        let pc = match &self.col_mode {
+            ColMode::Choices { kind: ChoicesKind::Category, picker_cursor, .. } => *picker_cursor,
+            _ => return,
+        };
+        let Some(entry) = flat.get(pc) else { return };
+        // Guard: protected system categories.
+        if cat_is_protected(entry) { return; }
+        let candidate_id = entry.id;
+        // Guard: the current section's head category, and any of its ancestors,
+        // would pull the view out from under the cursor.
+        let section_head_cat_id = match &self.cursor {
+            CursorPos::SectionHead(si)      => self.view.sections.get(*si).map(|s| s.cat_id),
+            CursorPos::Item { section, .. } => self.view.sections.get(*section).map(|s| s.cat_id),
+        };
+        if let Some(head_id) = section_head_cat_id {
+            if cat_is_ancestor_or_equal(&flat, candidate_id, head_id) { return; }
+        }
+        if let ColMode::Choices { confirm_delete, .. } = &mut self.col_mode {
+            *confirm_delete = true;
+        }
+    }
+
+    pub fn col_choices_delete_confirm(&mut self) {
+        let pc = match &self.col_mode {
+            ColMode::Choices { confirm_delete, picker_cursor, .. } => {
+                if !*confirm_delete { return; }
+                *picker_cursor
+            }
+            _ => return,
+        };
+        if let ColMode::Choices { confirm_delete, .. } = &mut self.col_mode {
+            *confirm_delete = false;
+        }
+        self.cat_state.cursor = pc;
+        self.cat_delete();
+        let new_cur = self.cat_state.cursor;
+        if let ColMode::Choices { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = new_cur;
+        }
+    }
+
+    pub fn col_choices_delete_cancel(&mut self) {
+        if let ColMode::Choices { confirm_delete, .. } = &mut self.col_mode {
+            *confirm_delete = false;
         }
     }
 
@@ -5179,7 +5042,6 @@ impl App {
         let off = self.list_view.offset();
         match &mut self.col_mode {
             ColMode::Choices  { picker_scroll, .. } => { *picker_scroll = off; return; }
-            ColMode::QuickAdd { picker_scroll, .. } => { *picker_scroll = off; return; }
             ColMode::SubPick  { picker_scroll, .. } => { *picker_scroll = off; return; }
             _ => {}
         }
@@ -5391,7 +5253,6 @@ impl App {
             return rows.get(*cursor).map(|&(cat_idx, _)| cat_idx).unwrap_or(0);
         }
         match &self.col_mode {
-            ColMode::QuickAdd { picker_cursor, .. } => return *picker_cursor,
             ColMode::SubPick  { picker_cursor, .. } => return *picker_cursor,
             _ => {}
         }
@@ -5410,9 +5271,6 @@ impl App {
                 }
             }
             return;
-        }
-        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
-            *picker_cursor = idx; return;
         }
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = idx;

@@ -47,7 +47,11 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENTER = "\r"
 ESC = "\x1b"
 TAB = "\t"
+F3 = "\x1b[13~"
 F6 = "\x1b[17~"
+INS = "\x1b[2~"
+DEL = "\x1b[3~"
+DOWN = "\x1b[B"
 F8 = "\x1b[19~"
 F9 = "\x1b[20~"
 CTRL_S = "\x13"
@@ -340,6 +344,39 @@ def main():
                  columns(["h", alt("l")]), ["When", "Entry"])
     checks.check("Alt+Right moves a column right",
                  columns(["h", "\x1b[1;3C"]), ["When", "Entry"])
+
+    # The column-head picker is the Choices overlay on the Column Add form. It
+    # carries the affordances the retired quick-add picker had: search, inline
+    # create, rename, properties, delete.
+    checks.section("Column-head picker (Alt+c, or F3 on the form)")
+
+    def picker(keys, enhanced=False):
+        return screen(app.run(path("pick.bwx"), keys, enhanced=enhanced))
+
+    def picker_cats(keys):
+        target = path("pick.bwx")
+        app.run(target, keys)
+        return flat_categories(read_save(target)["categories"])
+
+    checks.check("offers the category list",
+                 "Select category for column head" in picker([alt("c")]), True)
+    checks.check("/ opens a search prompt",
+                 "Search for: Wh" in picker([alt("c"), "/"] + list("Wh")), True)
+    checks.check("Ins creates a category inline",
+                 "  TMP" in picker_cats([alt("c"), "G", INS] + list("TMP") + [ENTER]), True)
+    checks.check("Del prompts for a deletable category",
+                 "Discard Category?" in picker(
+                     [alt("c"), "G", INS] + list("TMP") + [ENTER, DEL]), True)
+    # Deleting the current section's head category, or a protected one, would
+    # pull the view out from under the cursor, so Del is inert there.
+    checks.check("Del inert on the section's head category",
+                 "Discard Category?" in picker([alt("c"), "G", DEL]), False)
+    checks.check("Del inert on a protected category",
+                 "Discard Category?" in picker([alt("c"), "j", DEL]), False)
+    checks.check("Esc returns to the form, not out of the dialog",
+                 "Column Add" in picker([alt("c"), ESC]), True)
+    checks.check("F3 on the Position field opens the position chooser",
+                 "Right of current column" in picker([alt("c"), ESC, DOWN, F3]), True)
 
     checks.section("View Manager -- reorder")
 

@@ -643,40 +643,22 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Choices picker overlay ────────────────────────────────────────────
-    if let ColMode::Choices { picker_cursor, picker_scroll, kind, .. } = &app.col_mode {
+    // Position chooser: a fixed two-line list, so no header, search or create row.
+    if let ColMode::Choices { picker_cursor, picker_scroll,
+                              kind: ChoicesKind::Position, .. } = &app.col_mode {
         let rev = app.theme.item_selected_field;
         let stored_scroll = *picker_scroll;
 
-        let lines: Vec<Line> = match kind {
-            ChoicesKind::Category => {
-                let flat = flatten_cats(&app.categories);
-                flat.iter().enumerate().map(|(i, cat)| {
-                    let indent = " ".repeat(cat.depth * 2 + 1);
-                    let indicator = match cat.kind {
-                        CategoryKind::Standard  => " ",
-                        CategoryKind::Date      => "*",
-                        CategoryKind::Numeric   => "#",
-                        CategoryKind::Unindexed => "D",
-                    };
-                    let text = format!("{}{} {}", indent, indicator, cat.name);
-                    if i == *picker_cursor {
-                        Line::from(Span::styled(text, rev))
-                    } else {
-                        Line::from(Span::raw(text))
-                    }
-                }).collect()
-            }
-            ChoicesKind::Position => {
-                let opts = ["Right of current column", "Left of current column"];
-                opts.iter().enumerate().map(|(i, &label)| {
-                    let text = format!(" {}", label);
-                    if i == *picker_cursor {
-                        Line::from(Span::styled(text, rev))
-                    } else {
-                        Line::from(Span::raw(text))
-                    }
-                }).collect()
-            }
+        let lines: Vec<Line> = {
+            let opts = ["Right of current column", "Left of current column"];
+            opts.iter().enumerate().map(|(i, &label)| {
+                let text = format!(" {}", label);
+                if i == *picker_cursor {
+                    Line::from(Span::styled(text, rev))
+                } else {
+                    Line::from(Span::raw(text))
+                }
+            }).collect()
         };
 
         let picker_h = (lines.len() as u16 + 2).min(area.height.saturating_sub(4)).max(4);
@@ -701,8 +683,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(visible_lines).style(app.theme.dialog), inner);
     }
 
-    // ── Quick-add category picker (Alt-c / Alt-C) ────────────────────────────
-    if let ColMode::QuickAdd { position, picker_cursor, picker_scroll, confirm_delete } = &app.col_mode {
+    // ── Column-head category picker: F3 on the Column form Head field ────────
+    if let ColMode::Choices { kind: ChoicesKind::Category, picker_cursor, picker_scroll,
+                              confirm_delete, .. } = &app.col_mode {
         let rev  = app.theme.item_selected_field;
         let dim  = Style::default().add_modifier(Modifier::DIM);
         let flat = flatten_cats(&app.categories);
@@ -771,12 +754,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         let picker_rect = centered_rect(44, picker_h, area);
         frame.render_widget(Clear, picker_rect);
 
-        let box_title = match position {
-            ColPos::Right => " Add Column Right ",
-            ColPos::Left  => " Add Column Left ",
-        };
         let block = Block::default().borders(Borders::ALL)
-            .title(box_title).style(app.theme.dialog_border);
+            .title(" Choices ").style(app.theme.dialog_border);
         frame.render_widget(block.clone(), picker_rect);
         let inner = block.inner(picker_rect);
 

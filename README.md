@@ -143,6 +143,13 @@ Add, Section Select, and the sort and filter dialogs — takes the same keys:
 | i / o / x / u | Rename / create / delete / undo, where the list supports it |
 | Enter / Esc | Confirm / cancel |
 
+The category pickers inside the Section Add and Column Add dialogs manage
+categories in place: `/` searches (F7 / F8 step through the matches), Insert
+adds, F2 renames, Delete discards, and F6 opens category properties. Esc there
+closes the picker and returns to the dialog rather than cancelling it. Delete
+is refused for a protected category, and for the current section's head
+category, since removing it would pull the view out from under the cursor.
+
 ## Configuration
 
 Config file location:

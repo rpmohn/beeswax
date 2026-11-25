@@ -4,7 +4,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use crate::app::{App, AppScreen, AssignMode, CatMode, ColMode, CustomizeSubMode, FilterState, FKeyMod, MenuState, Mode, SecPropsField, SectionMode, SortState, ViewMgrMode};
+use crate::app::{App, AppScreen, AssignMode, CatMode, ChoicesKind, ColMode, CustomizeSubMode, FilterState, FKeyMod, MenuState, Mode, SecPropsField, SectionMode, SortState, ViewMgrMode};
 
 /// Action labels for F1–F10 (index 0 = F1, index 9 = F10).
 pub struct FKeyLabels {
@@ -86,7 +86,7 @@ static ASSIGN_FKEYS: FKeyLabels = FKeyLabels {
     alt:    ["",     "",     "", "", "", "",      "",        "", "", ""],
 };
 
-static QUICK_ADD_FKEYS: FKeyLabels = FKeyLabels {
+static CAT_PICKER_FKEYS: FKeyLabels = FKeyLabels {
     normal: ["Help", "Edit", "", "", "", "Props", "", "", "", ""],
     shift:  ["",     "",     "", "", "", "",      "", "", "", ""],
     ctrl:   ["",     "",     "", "", "", "",      "", "", "", ""],
@@ -200,8 +200,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &ITEM_PROPS_FKEYS
     } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. }) {
         &MENU_FKEYS   // item delete/discard dialog is self-describing
-    } else if matches!(app.col_mode, ColMode::QuickAdd { .. }) {
-        &QUICK_ADD_FKEYS
+    } else if matches!(app.col_mode, ColMode::Choices { kind: ChoicesKind::Category, .. }) {
+        &CAT_PICKER_FKEYS   // F2 renames, F6 opens properties, Ins adds, Del removes
     } else if matches!(app.col_mode, ColMode::ConfirmRemove { .. }) {
         &MENU_FKEYS
     } else if matches!(app.col_mode, ColMode::Calendar { .. }) {
