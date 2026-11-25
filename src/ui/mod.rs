@@ -9,7 +9,7 @@ pub mod viewmgr;
 
 use ratatui::layout::Rect;
 
-/// Compute a centred Rect of `width` × `height` inside `area`.
+/// Compute a centered Rect of `width` × `height` inside `area`.
 pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let w = width.min(area.width);
     let h = height.min(area.height);
@@ -34,7 +34,7 @@ pub fn pad_or_trunc(s: &str, w: usize) -> String {
     }
 }
 
-/// Build a centred Yes/No button line for confirmation dialogs.
+/// Build a centered Yes/No button line for confirmation dialogs.
 /// `inner_w` is the available inner width. `yes_active` selects which button is reversed.
 pub fn yes_no_line(inner_w: usize, yes_active: bool, rev: ratatui::style::Style) -> ratatui::text::Line<'static> {
     let yes_label = "[ Yes ]";

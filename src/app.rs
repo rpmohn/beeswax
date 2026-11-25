@@ -1270,7 +1270,7 @@ fn date_filter_block_exit(fs: &mut FilterState) -> bool {
 }
 
 /// Parse a user-typed date string into a `DateBound`.
-/// Recognises relative keywords (today, yesterday, tomorrow, weekday names)
+/// Recognizes relative keywords (today, yesterday, tomorrow, weekday names)
 /// and absolute dates in ISO or locale format.
 fn parse_date_bound(s: &str, fmt_code: DateFmtCode) -> Option<DateBound> {
     let lower = s.trim().to_lowercase();
@@ -3247,7 +3247,7 @@ impl App {
         for _ in 0..n { self.cursor_down(); }
     }
 
-    /// zz / z. — centre scroll so the cursor row is in the middle of the body.
+    /// zz / z. — center scroll so the cursor row is in the middle of the body.
     pub fn scroll_center(&mut self) {
         let half = self.body_height.get() / 2;
         self.scroll_offset.set(self.cursor_line.get().saturating_sub(half));
@@ -6475,7 +6475,7 @@ impl App {
             format_filter_term(&name_of(e.cat_id), e.op, df, code)
         }).collect();
         // A date filter whose category never made it into `filter` — the picker was
-        // cancelled after the date dialog wrote through — still gets shown.
+        // canceled after the date dialog wrote through — still gets shown.
         if let Some(df) = date_filter {
             if !filter.iter().any(|e| e.cat_id == df.cat_id) {
                 let code = find_date_fmt_code(&self.view, df.cat_id);

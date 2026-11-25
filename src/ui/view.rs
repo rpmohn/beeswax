@@ -1874,7 +1874,7 @@ pub fn render_calendar(
     let rev  = app.theme.item_selected_field;
     let bold = Style::default().add_modifier(Modifier::BOLD);
 
-    // Title: centre "Month YYYY" in iw chars
+    // Title: center "Month YYYY" in iw chars
     let title_str = format!("{} {}", mname, cal_year);
     let tpad = (iw.saturating_sub(title_str.chars().count())) / 2;
     let title_line = Line::from(Span::raw(format!("{}{}", " ".repeat(tpad), title_str)));

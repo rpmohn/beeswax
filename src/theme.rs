@@ -397,7 +397,7 @@ impl Theme {
     }
 
     fn dracula() -> Self {
-        // light fg on dark purple-grey bg; purple selection; cyan section heads
+        // light fg on dark purple-gray bg; purple selection; cyan section heads
         Theme {
             bar:                  Style::default().fg(D_FG).bg(D_CUR),
             bar_selected:         Style::default().fg(D_BG).bg(D_PURPLE),

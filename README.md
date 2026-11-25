@@ -70,7 +70,7 @@ everywhere as well, so nothing requires the vi bindings.
 | Shift+Home / Shift+End | Head of the previous / next section |
 | Ctrl+Home / Ctrl+End or gg / G | Very top / bottom of the view |
 | H / M / L | First / middle / last visible row on screen |
-| zz | Re-centre scroll so the cursor is in the middle |
+| zz | Re-center scroll so the cursor is in the middle |
 | z Enter / z- | Scroll so the cursor is at the top / bottom |
 | Ctrl+PgUp / Ctrl+PgDn | Cycle to the previous / next view |
 
@@ -150,7 +150,7 @@ An annotated example with all options is in [`config.example.toml`](config.examp
 | `GruvboxLight` | Gruvbox light — dark warm text on cream, teal selection |
 | `SolarizedDark` | Solarized dark palette |
 | `SolarizedLight` | Solarized light palette |
-| `Dracula` | Dracula — purple-grey background, purple selection, cyan sections |
+| `Dracula` | Dracula — purple-gray background, purple selection, cyan sections |
 | `Custom` | User-defined hex colors (see below) |
 
 ### Custom color scheme

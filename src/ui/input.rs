@@ -8,7 +8,7 @@ enum LineEditResult { Handled, Confirm, Cancel, Unhandled }
 
 /// Shared single-line text editor. Handles Ctrl+U/K/Y/A/E, Ctrl+Left/Right,
 /// Left/Right, Home/End, Backspace, Delete, and printable char insertion.
-/// Returns Confirm on Enter, Cancel on Esc, Unhandled for unrecognised keys,
+/// Returns Confirm on Enter, Cancel on Esc, Unhandled for unrecognized keys,
 /// and Handled for everything else — with buf/cursor/kill updated in place.
 fn line_edit(
     code:      KeyCode,
