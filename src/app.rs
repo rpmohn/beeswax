@@ -7004,7 +7004,7 @@ impl App {
         self.cat_state.mode = CatMode::Edit { buffer: name, cursor: 0 };
     }
 
-    /// `as_child = false` → sibling below (INS), `true` → child (Alt-R).
+    /// `as_child = false` → sibling below (INS / Alt-j), `true` → child (Alt-l).
     /// On a depth-0 (root) category a sibling is impossible, so always creates a child.
     pub fn cat_begin_create(&mut self, as_child: bool) {
         if !matches!(self.cat_state.mode, CatMode::Normal) { return; }

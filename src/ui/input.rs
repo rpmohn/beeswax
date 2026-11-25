@@ -634,7 +634,8 @@ fn handle_catmgr_confirm_delete(app: &mut App, code: KeyCode) {
 fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::ALT) {
         match code {
-            KeyCode::Char('r') => app.cat_begin_create(true),   // child
+            KeyCode::Char('l') => app.cat_begin_create(true),    // child (one level right)
+            KeyCode::Char('j') => app.cat_begin_create(false),   // sibling below
             KeyCode::F(10)     => app.cat_begin_move(),
             _ => {}
         }

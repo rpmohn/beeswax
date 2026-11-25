@@ -213,7 +213,20 @@ The main working area. Items are displayed under their section heads. Each view 
 
 ### Category Manager (F9)
 
-A hierarchical tree of all categories. Use arrow keys to navigate, F2 to rename, Enter to create a child, Ctrl+Arrow to reorder (move up/down, promote/demote).
+A hierarchical tree of all categories. Navigation and the shared list keys are
+as described under [Lists and pickers](#lists-and-pickers); these are specific
+to this screen:
+
+| Key | Action |
+|-----|--------|
+| Alt+l | Create a child of the current category |
+| Alt+j or Insert or `o` | Create a sibling below the current category |
+| Enter or F2 or `i` | Rename the current category |
+| Ctrl+↑ / Ctrl+↓ | Move the category up / down among its siblings |
+| Ctrl+← / Ctrl+→ | Promote / demote one level |
+| Alt+F10 | Enter move mode |
+| Delete or `x` | Delete the current category |
+| F6 | Category properties |
 
 ### View Manager (F8)
 

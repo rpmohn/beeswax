@@ -113,7 +113,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         }
     } else {
         // For sibling-create (Ins): input row appears after all descendants of cursor.
-        // For child-create (Alt+R): input row appears immediately after cursor.
+        // For child-create (Alt+l): input row appears immediately after cursor.
         let create_show_after: Option<usize> = match &app.cat_state.mode {
             CatMode::Create { as_child: false, .. } => {
                 let cursor_path = &flat[cursor].path;
