@@ -34,8 +34,8 @@ Navigation is vi-style; arrow keys, Home/End/PgUp/PgDn and the F-keys work
 everywhere too, so nothing requires the vi bindings.\\[3pt]
 \textbf{Unprefixed} --- vi verbs and motions, acting on the item under the cursor.
 \textbf{Shift} --- the reverse, or the larger version, of the unshifted key.
-\textbf{Ctrl} --- whole-file and whole-view commands.
-\textbf{Alt} --- the structure around the items: sections, columns, category tree.\\[3pt]
+\textbf{Ctrl} --- whole-file and whole-view commands, and moving structure.
+\textbf{Alt} --- adding structure around the items: sections and columns.\\[3pt]
 In the Key column, \key{/} separates keys matching the parts of the Action in
 order; a wider gap separates keys that do the same thing.\\[3pt]
 Structural editing follows VimOutliner, which leaves it to plain vim:
@@ -74,8 +74,8 @@ and \key{Ctrl+R} undo and redo.
 
 \heading{Structure --- View screen}
 \begin{keytable}{12.6cm}
-\key{Alt+j} / \key{Alt+k} & New section below / above\\\hline
-\key{Alt+h} / \key{Alt+l} & New column left / right\\\hline
+\key{Alt+j} / \key{Alt+k} \sep \key{Alt+}\dn\ / \key{Alt+}\up & New section below / above\\\hline
+\key{Alt+h} / \key{Alt+l} \sep \key{Alt+}\lft\ / \key{Alt+}\rgt & New column left / right\\\hline
 \key{Ctrl+h} / \key{Ctrl+l} \sep \key{Ctrl+}\lft\ / \key{Ctrl+}\rgt & Move this column left / right\\\hline
 \key{Alt+s} & Sort this section now\\\hline
 \end{keytable}
@@ -87,9 +87,9 @@ is chosen. The full Section Add and Column Add forms are on the F10 menu.
 \heading{Structure --- Category Manager (F9)}
 \begin{keytable}{12.6cm}
 \key{o} / \key{O} \sep \key{Insert} & New sibling below / above\\\hline
-\key{>{}>} \sep \key{Alt+l} \sep \key{Alt+}\rgt & Demote one level --- \key{o} then \key{>{}>} makes a child\\\hline
-\key{<{}<} \sep \key{Alt+h} \sep \key{Alt+}\lft & Promote one level\\\hline
-\key{Alt+j} / \key{Alt+k} \sep \key{Alt+}\dn\ / \key{Alt+}\up & Move down / up among siblings\\\hline
+\key{>{}>} \sep \key{Ctrl+l} \sep \key{Ctrl+}\rgt & Demote one level --- \key{o} then \key{>{}>} makes a child\\\hline
+\key{<{}<} \sep \key{Ctrl+h} \sep \key{Ctrl+}\lft & Promote one level\\\hline
+\key{Ctrl+j} / \key{Ctrl+k} \sep \key{Ctrl+}\dn\ / \key{Ctrl+}\up & Move down / up among siblings\\\hline
 \key{Enter} \sep \key{F2} \sep \key{i} & Rename\\\hline
 \key{Alt+F10} & Move mode: plain arrows, Enter when done\\\hline
 \key{Delete} \sep \key{x} & Delete\\\hline
@@ -97,7 +97,7 @@ is chosen. The full Section Add and Column Add forms are on the F10 menu.
 \end{keytable}
 
 On a root category \key{o} and \key{O} both create a first child, a root having
-no siblings. Ctrl+arrows are aliases for the Alt keys above.
+no siblings. \key{Alt+F10} is the only Alt key on this screen.
 
 \heading{Lists and pickers}
 The Category Manager, View Manager, F3 pickers, Section Select and the sort and

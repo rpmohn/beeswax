@@ -277,15 +277,23 @@ def main():
     checks.check(">> demote", cats([F9] + GG + ["j", "j", ">", ">"])[2], "    When")
     checks.check("<< after >> round trips",
                  cats([F9] + GG + ["j", "j", ">", ">", "<", "<"])[2], "  When")
-    checks.check("Alt+l demote", cats([F9] + GG + ["j", "j", alt("l")])[2], "    When")
-    checks.check("Alt+h after Alt+l round trips",
-                 cats([F9] + GG + ["j", "j", alt("l"), alt("h")])[2], "  When")
-    checks.check("Alt+Right demote",
-                 cats([F9] + GG + ["j", "j", "\x1b[1;3C"])[2], "    When")
-    checks.check("Alt+j move down", cats([F9] + GG + ["j", alt("j")])[1], "  When")
-    checks.check("Alt+k move up", cats([F9] + GG + ["j", "j", alt("k")])[1], "  When")
-    checks.check("Alt+k on the first sibling is inert",
-                 cats([F9] + GG + ["j", alt("k")])[1], "  Entry")
+    # Level and order are Ctrl+direction here, matching the View screen, where
+    # Ctrl moves a column. 0x0c / 0x08 / 0x0a / 0x0b are Ctrl+l/h/j/k.
+    checks.check("Ctrl+l demote", cats([F9] + GG + ["j", "j", "\x0c"])[2], "    When")
+    checks.check("Ctrl+h after Ctrl+l round trips",
+                 cats([F9] + GG + ["j", "j", "\x0c", "\x08"])[2], "  When")
+    checks.check("Ctrl+Right demote",
+                 cats([F9] + GG + ["j", "j", "\x1b[1;5C"])[2], "    When")
+    checks.check("Ctrl+j move down", cats([F9] + GG + ["j", "\x0a"])[1], "  When")
+    checks.check("Ctrl+k move up", cats([F9] + GG + ["j", "j", "\x0b"])[1], "  When")
+    checks.check("Ctrl+Down move down",
+                 cats([F9] + GG + ["j", "\x1b[1;5B"])[1], "  When")
+    checks.check("Ctrl+k on the first sibling is inert",
+                 cats([F9] + GG + ["j", "\x0b"])[1], "  Entry")
+    # Alt no longer reaches these verbs, and must not fall through to the bare
+    # keys either: Alt+l once demoted, so a stale habit should do nothing.
+    checks.check("Alt+l is inert here",
+                 cats([F9] + GG + ["j", "j", alt("l")])[2], "  When")
 
     # Terminals disagree on how a shifted letter is reported: the shifted
     # codepoint, the base codepoint plus a SHIFT flag, or base:shifted. All
@@ -332,6 +340,15 @@ def main():
                  titles([alt("l")]), ["Add Column Right"])
     checks.check("Alt+h opens the quick add, left",
                  titles([alt("h")]), ["Add Column Left"])
+    # Alt+arrow is an alias for each, for hands that reach for the arrows.
+    checks.check("Alt+Down adds a section below",
+                 titles(["\x1b[1;3B"]), ["Add Section Below"])
+    checks.check("Alt+Up adds a section above",
+                 titles(["\x1b[1;3A"]), ["Add Section Above"])
+    checks.check("Alt+Right adds a column right",
+                 titles(["\x1b[1;3C"]), ["Add Column Right"])
+    checks.check("Alt+Left adds a column left",
+                 titles(["\x1b[1;3D"]), ["Add Column Left"])
 
     def view_sections(keys):
         target = path("secs2.bwx")

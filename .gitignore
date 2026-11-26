@@ -4,3 +4,6 @@
 *.aux
 *.log
 *.out
+
+# Python bytecode from running scripts/ as a module
+__pycache__/

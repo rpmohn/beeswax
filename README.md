@@ -61,8 +61,9 @@ everywhere as well, so nothing requires the vi bindings.
 The modifiers divide up as follows. Unprefixed keys are vi verbs and motions
 acting on the item under the cursor. **Shift** gives the reverse or the larger
 version of the unshifted key. **Ctrl** is for whole-file and whole-view
-commands. **Alt** acts on the structure around the items — sections, columns
-and the category tree. Structural editing follows VimOutliner, which leaves it
+commands, and for moving a piece of structure: a column across the view, a
+category through the tree. **Alt** adds structure around the items — a section
+or a column. Structural editing follows VimOutliner, which leaves it
 to plain vim: `o`/`O` to make a sibling, `>>`/`<<` to change its level.
 
 [KEYS.pdf](KEYS.pdf) is the same material condensed onto one printable page.
@@ -117,8 +118,8 @@ the items. Alt plus a direction adds on that side, Ctrl plus a direction moves.
 
 | Key | Action |
 |-----|--------|
-| Alt+j / Alt+k | New section below / above |
-| Alt+h / Alt+l | New column to the left / right |
+| Alt+j / Alt+k or Alt+↓ / Alt+↑ | New section below / above |
+| Alt+h / Alt+l or Alt+← / Alt+→ | New column to the left / right |
 | Ctrl+h / Ctrl+l or Ctrl+← / Ctrl+→ | Move the current column left / right |
 | Alt+s | Sort current section now |
 
@@ -250,9 +251,9 @@ to this screen:
 |-----|--------|
 | Insert or `o` | Create a sibling below the current category |
 | `O` | Create a sibling above the current category |
-| `>>` or Alt+l or Alt+→ | Demote one level |
-| `<<` or Alt+h or Alt+← | Promote one level |
-| Alt+j / Alt+k or Alt+↓ / Alt+↑ | Move the category down / up among its siblings |
+| `>>` or Ctrl+l or Ctrl+→ | Demote one level |
+| `<<` or Ctrl+h or Ctrl+← | Promote one level |
+| Ctrl+j / Ctrl+k or Ctrl+↓ / Ctrl+↑ | Move the category down / up among its siblings |
 | Enter or F2 or `i` | Rename the current category |
 | Alt+F10 | Enter move mode |
 | Delete or `x` | Delete the current category |
@@ -260,8 +261,9 @@ to this screen:
 
 There is no "create a child" key: make a sibling with `o` and demote it with
 `>>`, as you would in VimOutliner. On a root category `o` and `O` both create a
-first child, since a root category cannot have a sibling. Ctrl+arrows are
-accepted as aliases for the Alt keys above.
+first child, since a root category cannot have a sibling. Alt+F10 is the only
+Alt key on this screen: level and order are Ctrl here, as they are on the View
+screen, where Ctrl+direction moves a column.
 
 ### View Manager (F8)
 

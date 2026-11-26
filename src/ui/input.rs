@@ -419,10 +419,10 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             // Alt+direction adds the structure on that side: a column to the
             // left or right, a section below or above.  Moving a column is
             // Ctrl+direction, handled further up.
-            KeyCode::Char('h') => app.col_quick_add(ColPos::Left),
-            KeyCode::Char('l') => app.col_quick_add(ColPos::Right),
-            KeyCode::Char('j') => app.sec_quick_add(SectionInsert::Below),
-            KeyCode::Char('k') => app.sec_quick_add(SectionInsert::Above),
+            KeyCode::Char('h') | KeyCode::Left  => app.col_quick_add(ColPos::Left),
+            KeyCode::Char('l') | KeyCode::Right => app.col_quick_add(ColPos::Right),
+            KeyCode::Char('j') | KeyCode::Down  => app.sec_quick_add(SectionInsert::Below),
+            KeyCode::Char('k') | KeyCode::Up    => app.sec_quick_add(SectionInsert::Above),
             KeyCode::Char('s') => app.sec_sort_now(),
             KeyCode::F(4)      => app.item_remove(),   // discard without confirmation
             _ => {}
@@ -649,30 +649,19 @@ fn handle_catmgr_confirm_delete(app: &mut App, code: KeyCode) {
 
 fn handle_catmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::ALT) {
-        match code {
-            // Promote / demote — also bound to << and >> further down.
-            KeyCode::Char('h') | KeyCode::Left  => app.cat_promote(),
-            KeyCode::Char('l') | KeyCode::Right => app.cat_demote(),
-            // Reorder among siblings.
-            KeyCode::Char('k') | KeyCode::Up    => app.cat_move_up(),
-            KeyCode::Char('j') | KeyCode::Down  => app.cat_move_down(),
-            KeyCode::F(10)     => app.cat_begin_move(),
-            _ => {}
-        }
+        // Alt+F10 is the only Alt chord here.  Alt still swallows everything
+        // else, so a stray chord cannot fall through to the bare-key verbs.
+        if code == KeyCode::F(10) { app.cat_begin_move(); }
         return;
     }
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
-            // Standard terminals: Ctrl+Arrow with CONTROL modifier
-            KeyCode::Up    => { app.cat_move_up();   return; }
-            KeyCode::Down  => { app.cat_move_down(); return; }
-            KeyCode::Left  => { app.cat_promote();   return; }
-            KeyCode::Right => { app.cat_demote();    return; }
-            // CSI-u terminals: Ctrl+Arrow encoded as Ctrl+U/D/L/R (codepoints 85/68/76/82)
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.cat_move_up();   return; }
-            KeyCode::Char('d') | KeyCode::Char('D') => { app.cat_move_down(); return; }
-            KeyCode::Char('l') | KeyCode::Char('L') => { app.cat_promote();   return; }
-            KeyCode::Char('r') | KeyCode::Char('R') => { app.cat_demote();    return; }
+            // Promote / demote — also bound to << and >> further down.
+            KeyCode::Char('h') | KeyCode::Left  => { app.cat_promote();   return; }
+            KeyCode::Char('l') | KeyCode::Right => { app.cat_demote();    return; }
+            // Reorder among siblings.
+            KeyCode::Char('k') | KeyCode::Up    => { app.cat_move_up();   return; }
+            KeyCode::Char('j') | KeyCode::Down  => { app.cat_move_down(); return; }
             _ => {}
         }
     }
