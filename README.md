@@ -119,7 +119,7 @@ the items.
 |-----|--------|
 | Alt+o | New section — opens the Section Add dialog with the category picker already open |
 | Alt+c | New column — opens the Column Add dialog with the column-head picker already open |
-| Alt+h / Alt+l or Alt+← / Alt+→ | Move the current column left / right |
+| Ctrl+h / Ctrl+l or Ctrl+← / Ctrl+→ | Move the current column left / right |
 | Alt+s | Sort current section now |
 
 Alt+o and Alt+c reach the same dialogs as Menu › View › Section › Add and

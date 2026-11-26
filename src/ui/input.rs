@@ -402,6 +402,9 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 app.cursor_pgup(app.body_height.get().max(1));
                 return;
             }
+            // Move the column under the cursor.
+            KeyCode::Char('h') | KeyCode::Left  => { app.col_move_left();  return; }
+            KeyCode::Char('l') | KeyCode::Right => { app.col_move_right(); return; }
             _ => {}
         }
     }
@@ -420,10 +423,6 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 app.col_open_form(true, ColFormField::Head);
                 app.col_open_choices();
             }
-            // Move the column under the cursor.  Alt+j/k are left free for
-            // section reordering, still to be decided.
-            KeyCode::Char('h') | KeyCode::Left  => app.col_move_left(),
-            KeyCode::Char('l') | KeyCode::Right => app.col_move_right(),
             KeyCode::Char('s') => app.sec_sort_now(),
             KeyCode::F(4)      => app.item_remove(),   // discard without confirmation
             _ => {}

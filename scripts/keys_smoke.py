@@ -336,14 +336,18 @@ def main():
         return [col["name"] for col in read_save(target)["views"][0]["columns"]]
 
     checks.check("Alt+c adds columns", columns([]), ["Entry", "When"])
-    checks.check("Alt+h moves a column left",
-                 columns(["l", "l", alt("h")]), ["When", "Entry"])
-    checks.check("Alt+Left moves a column left",
-                 columns(["l", "l", "\x1b[1;3D"]), ["When", "Entry"])
-    checks.check("Alt+l moves a column right",
-                 columns(["h", alt("l")]), ["When", "Entry"])
-    checks.check("Alt+Right moves a column right",
-                 columns(["h", "\x1b[1;3C"]), ["When", "Entry"])
+    # Moving is Ctrl+direction. Ctrl+H arrives as 0x08 in a plain terminal,
+    # which crossterm still reports as Ctrl+h rather than Backspace.
+    checks.check("Ctrl+h moves a column left",
+                 columns(["l", "l", "\x08"]), ["When", "Entry"])
+    checks.check("Ctrl+Left moves a column left",
+                 columns(["l", "l", "\x1b[1;5D"]), ["When", "Entry"])
+    checks.check("Ctrl+l moves a column right",
+                 columns(["h", "\x0c"]), ["When", "Entry"])
+    checks.check("Ctrl+Right moves a column right",
+                 columns(["h", "\x1b[1;5C"]), ["When", "Entry"])
+    checks.check("Backspace is not Ctrl+h and moves nothing",
+                 columns(["l", "l", "\x7f"]), ["Entry", "When"])
 
     # `O` anchors the cursor one row up so confirm() inserts before it. Backing
     # out of the create has to undo that anchor, on both exit paths, or the
