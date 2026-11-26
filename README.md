@@ -269,10 +269,11 @@ screen, where Ctrl+direction moves a column.
 
 Lists all views. Enter switches to the selected view, F2 renames inline, F4
 deletes with confirmation, F6 opens the view properties dialog. Insert or
-`o` adds a view, and Alt+j / Alt+k (or Alt+↓ / Alt+↑) reorder the list.
+`o` adds a view, and Ctrl+j / Ctrl+k (or Ctrl+↓ / Ctrl+↑) reorder the list.
 
-In View Properties, Alt+j / Alt+k reorder the Sections list while that field is
-active.
+In View Properties, Ctrl+j / Ctrl+k (or Ctrl+↓ / Ctrl+↑) reorder the Sections
+list while that field is active. Reordering is Ctrl on every screen that has
+it, matching the Category Manager.
 
 **View Properties (F6) — Section Select**
 

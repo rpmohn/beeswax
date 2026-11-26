@@ -1452,20 +1452,15 @@ fn handle_vmgr(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 
 fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     if modifiers.contains(KeyModifiers::ALT) {
-        match code {
-            KeyCode::Char('k') | KeyCode::Up   => app.vmgr_move_up(),
-            KeyCode::Char('j') | KeyCode::Down => app.vmgr_move_down(),
-            _ => {}
-        }
+        // Alt reorders nothing here any more, but it still swallows the chord
+        // so it cannot reach the bare-key verbs below.
         return;
     }
     if modifiers.contains(KeyModifiers::CONTROL) {
         match code {
-            KeyCode::Up    => { app.vmgr_move_up();   return; }
-            KeyCode::Down  => { app.vmgr_move_down(); return; }
-            // CSI-u: Ctrl+Up/Down encoded as Ctrl+U/D
-            KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_move_up();   return; }
-            KeyCode::Char('d') | KeyCode::Char('D') => { app.vmgr_move_down(); return; }
+            // Reorder the list, as Ctrl does in the Category Manager.
+            KeyCode::Char('k') | KeyCode::Up   => { app.vmgr_move_up();   return; }
+            KeyCode::Char('j') | KeyCode::Down => { app.vmgr_move_down(); return; }
             _ => {}
         }
     }
@@ -1489,10 +1484,15 @@ fn handle_vmgr_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::F(8) | KeyCode::Esc => app.close_view_mgr(),
         KeyCode::F(9)  => { app.close_view_mgr(); app.toggle_catmgr(); }
         KeyCode::F(10) => app.open_menu(),
-        KeyCode::Char('i') => app.vmgr_begin_rename(),
-        KeyCode::Char('o') | KeyCode::Char('O') => app.view_add_open(),
-        KeyCode::Char('x') => app.vmgr_open_confirm_delete(),
-        KeyCode::Char('u') => app.undo(),
+        // Guarded: an unclaimed Ctrl chord reaches this match, and Ctrl+x
+        // must not open the delete dialog.
+        KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => match ch {
+            'i' => app.vmgr_begin_rename(),
+            'o' | 'O' => app.view_add_open(),
+            'x' => app.vmgr_open_confirm_delete(),
+            'u' => app.undo(),
+            _   => {}
+        },
         _ => {}
     }
 }
@@ -1548,19 +1548,11 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             }
         }
     }
-    // Alt+k/j or Alt+Up/Down: reorder sections (only when not editing the name).
-    if !name_editing && modifiers.contains(KeyModifiers::ALT) {
+    // Ctrl+k/j or Ctrl+Up/Down: reorder sections (only when not editing the name).
+    if !name_editing && modifiers.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('k') | KeyCode::Up   => { app.vmgr_props_sec_move_up();   return; }
             KeyCode::Char('j') | KeyCode::Down => { app.vmgr_props_sec_move_down(); return; }
-            _ => {}
-        }
-    }
-    // Ctrl+Up/Down: reorder sections (only when not editing the name).
-    if !name_editing && modifiers.contains(KeyModifiers::CONTROL) {
-        match code {
-            KeyCode::Up   | KeyCode::Char('u') | KeyCode::Char('U') => { app.vmgr_props_sec_move_up();   return; }
-            KeyCode::Down | KeyCode::Char('d') | KeyCode::Char('D') => { app.vmgr_props_sec_move_down(); return; }
             _ => {}
         }
     }

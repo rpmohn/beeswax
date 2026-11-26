@@ -459,14 +459,26 @@ def main():
         return [view["name"] for view in read_save(target)["views"]]
 
     checks.check("baseline", views([]), ["Initial View", "View2", "View3"])
-    checks.check("Alt+j move down", views([alt("j")]),
+    checks.check("Ctrl+j move down", views(["\x0a"]),
                  ["View2", "Initial View", "View3"])
-    checks.check("Alt+Down move down", views(["\x1b[1;3B"]),
+    checks.check("Ctrl+Down move down", views(["\x1b[1;5B"]),
                  ["View2", "Initial View", "View3"])
-    checks.check("Alt+j then Alt+k round trips",
-                 views([alt("j"), alt("k")]), ["Initial View", "View2", "View3"])
-    checks.check("Ctrl+Down still works (legacy alias)",
-                 views(["\x1b[1;5B"]), ["View2", "Initial View", "View3"])
+    checks.check("Ctrl+j then Ctrl+k round trips",
+                 views(["\x0a", "\x0b"]), ["Initial View", "View2", "View3"])
+    checks.check("Alt+j is inert here", views([alt("j")]),
+                 ["Initial View", "View2", "View3"])
+    # Ctrl chords that nothing claims reach the bare-key match at the end, so
+    # Ctrl+x must not reach `x`.  The pair is the point: bare x opens the
+    # dialog, Ctrl+x does not.
+    def vm_screen(keys):
+        target = path("views.bwx")
+        fixtures.make(target, views=3)
+        return screen(app.run(target, [F8] + keys, keep=True))
+
+    checks.check("x opens the delete dialog",
+                 "Delete View" in vm_screen(["j", "x"]), True)
+    checks.check("Ctrl+x does not",
+                 "Delete View" in vm_screen(["j", "\x18"]), False)
 
     # vmgr_props_sec_move_* is inert unless the Sections field is active, which
     # is one Tab from the top of the View Properties dialog.
@@ -480,11 +492,13 @@ def main():
 
     checks.check("baseline", sections([]),
                  ["Initial Section", "Section2", "Section3"])
-    checks.check("Alt+j move down", sections([alt("j")]),
+    checks.check("Ctrl+j move down", sections(["\x0a"]),
                  ["Section2", "Initial Section", "Section3"])
-    checks.check("Alt+Down move down", sections(["\x1b[1;3B"]),
+    checks.check("Ctrl+Down move down", sections(["\x1b[1;5B"]),
                  ["Section2", "Initial Section", "Section3"])
-    checks.check("Alt+j then Alt+k round trips", sections([alt("j"), alt("k")]),
+    checks.check("Ctrl+j then Ctrl+k round trips", sections(["\x0a", "\x0b"]),
+                 ["Initial Section", "Section2", "Section3"])
+    checks.check("Alt+j is inert here", sections([alt("j")]),
                  ["Initial Section", "Section2", "Section3"])
 
     total = checks.passed + len(checks.failed)
