@@ -770,8 +770,10 @@ fn handle_catmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Esc       => app.cat_props_cancel(),
         KeyCode::F(2) | KeyCode::F(3) => app.cat_props_open_editor(),
         KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => app.cat_props_field_prev(),
-        KeyCode::Tab       | KeyCode::Down   => app.cat_props_field_next(),
-        KeyCode::BackTab   | KeyCode::Up     => app.cat_props_field_prev(),
+        // j / k navigate only when no text field is live: a text field runs
+        // line_edit above and returns Handled, so the letter never arrives.
+        KeyCode::Tab     | KeyCode::Down | KeyCode::Char('j') => app.cat_props_field_next(),
+        KeyCode::BackTab | KeyCode::Up   | KeyCode::Char('k') => app.cat_props_field_prev(),
         KeyCode::Left      => app.cat_props_cursor_left(),
         KeyCode::Right     => app.cat_props_cursor_right(),
         _ => {}
@@ -829,8 +831,13 @@ fn handle_catmgr_move(app: &mut App, code: KeyCode) {
 
 fn handle_col_form(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     let width_active = matches!(&app.col_mode, ColMode::Form { active_field: ColFormField::Width, .. });
-    if width_active {
-        // Width field only accepts ASCII digits; non-digit printable keys are no-ops.
+    // A letter is not text in a digits-only field, so j / k skip the width
+    // editor and reach the field navigation at the end, as on every other field.
+    let vi_nav = matches!(code, KeyCode::Char('j') | KeyCode::Char('k'))
+        && !modifiers.contains(KeyModifiers::CONTROL)
+        && !modifiers.contains(KeyModifiers::ALT);
+    if width_active && !vi_nav {
+        // Width field only accepts ASCII digits; other printable keys are no-ops.
         if matches!(code, KeyCode::Char(ch) if !ch.is_ascii_digit())
             && !modifiers.contains(KeyModifiers::CONTROL)
             && !modifiers.contains(KeyModifiers::ALT)
@@ -859,8 +866,8 @@ fn handle_col_form(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
         KeyCode::Enter => app.col_form_confirm(),
         KeyCode::Esc   => app.col_form_cancel(),
-        KeyCode::Up    => app.col_form_field_prev(),
-        KeyCode::Down  => app.col_form_field_next(),
+        KeyCode::Up   | KeyCode::Char('k') => app.col_form_field_prev(),
+        KeyCode::Down | KeyCode::Char('j') => app.col_form_field_next(),
         KeyCode::F(3) if matches!(&app.col_mode,
             ColMode::Form { active_field: ColFormField::Head, .. } |
             ColMode::Form { active_field: ColFormField::Position, .. }) => app.col_open_choices(),
@@ -963,6 +970,15 @@ fn handle_col_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             },
         _ => return,
     };
+    // A letter is not text in the digits-only Width field, so j / k leave the
+    // editor alone and reach the field navigation at the end.  h / l stay out
+    // of this: on Width they would move the text cursor, not a field.
+    let text_state = match text_state {
+        Some((true, _, _)) if matches!(code, KeyCode::Char('j') | KeyCode::Char('k'))
+            && !modifiers.contains(KeyModifiers::CONTROL)
+            && !modifiers.contains(KeyModifiers::ALT) => None,
+        other => other,
+    };
     if let Some((digits_only, mut buf, mut cursor)) = text_state {
         // Width field only accepts ASCII digits; non-digit printable keys are no-ops.
         if digits_only
@@ -994,10 +1010,10 @@ fn handle_col_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
         KeyCode::Enter => app.col_props_confirm(),
         KeyCode::Esc   => app.col_props_cancel(),
-        KeyCode::Up    => app.col_props_field_prev(),
-        KeyCode::Down  => app.col_props_field_next(),
-        KeyCode::Left  => app.col_props_left(),
-        KeyCode::Right => app.col_props_right(),
+        KeyCode::Up    | KeyCode::Char('k') => app.col_props_field_prev(),
+        KeyCode::Down  | KeyCode::Char('j') => app.col_props_field_next(),
+        KeyCode::Left  | KeyCode::Char('h') => app.col_props_left(),
+        KeyCode::Right | KeyCode::Char('l') => app.col_props_right(),
         _ => {}
     }
 }
@@ -1296,7 +1312,8 @@ fn handle_col_confirm_remove(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Enter                 => app.col_confirm_remove_confirm(),
         KeyCode::Esc                   => app.col_confirm_remove_cancel(),
-        KeyCode::Left | KeyCode::Right => app.col_confirm_remove_toggle(),
+        KeyCode::Left | KeyCode::Right
+            | KeyCode::Char('h') | KeyCode::Char('l') => app.col_confirm_remove_toggle(),
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             if let crate::app::ColMode::ConfirmRemove { yes } = &mut app.col_mode { *yes = true; }
             app.col_confirm_remove_confirm();
@@ -1310,7 +1327,8 @@ fn handle_col_confirm_remove(app: &mut App, code: KeyCode) {
 
 fn handle_sec_confirm_remove(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Left | KeyCode::Right => app.sec_confirm_remove_toggle(),
+        KeyCode::Left | KeyCode::Right
+            | KeyCode::Char('h') | KeyCode::Char('l') => app.sec_confirm_remove_toggle(),
         KeyCode::Enter                 => app.sec_confirm_remove_confirm(),
         KeyCode::Esc                   => app.sec_confirm_remove_cancel(),
         _ => {}
@@ -1323,10 +1341,10 @@ fn handle_sec_form(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Enter => app.sec_form_confirm(),
         KeyCode::Esc   => app.sec_form_cancel(),
-        KeyCode::Up    => app.sec_form_field_prev(),
-        KeyCode::Down  => app.sec_form_field_next(),
-        KeyCode::Left  => app.sec_form_left(),
-        KeyCode::Right => app.sec_form_right(),
+        KeyCode::Up    | KeyCode::Char('k') => app.sec_form_field_prev(),
+        KeyCode::Down  | KeyCode::Char('j') => app.sec_form_field_next(),
+        KeyCode::Left  | KeyCode::Char('h') => app.sec_form_left(),
+        KeyCode::Right | KeyCode::Char('l') => app.sec_form_right(),
         KeyCode::F(3)  => app.sec_open_choices(),
         _ => {}
     }
@@ -1670,14 +1688,17 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Esc                                                 => app.vmgr_props_cancel(),
         KeyCode::F(2) if is_name_inactive                            => app.vmgr_props_name_begin_edit(),
         KeyCode::Char('i') if is_name_inactive                       => app.vmgr_props_name_begin_edit(),
-        KeyCode::Up   if is_sections                                 => app.vmgr_sec_up_nav(),
-        KeyCode::Down if is_sections                                 => app.vmgr_sec_down_nav(),
-        KeyCode::Up   if is_filter                                   => app.vmgr_filter_up_nav(),
-        KeyCode::Down if is_filter                                   => app.vmgr_filter_down_nav(),
+        // h/j/k/l are twins of the four arrows.  A letter only reaches this
+        // match when no text field is live -- the name field runs line_edit
+        // above, and only after F2 or i -- so navigating never eats typing.
+        KeyCode::Up   | KeyCode::Char('k') if is_sections             => app.vmgr_sec_up_nav(),
+        KeyCode::Down | KeyCode::Char('j') if is_sections             => app.vmgr_sec_down_nav(),
+        KeyCode::Up   | KeyCode::Char('k') if is_filter               => app.vmgr_filter_up_nav(),
+        KeyCode::Down | KeyCode::Char('j') if is_filter               => app.vmgr_filter_down_nav(),
         KeyCode::Tab                                                 => app.vmgr_props_field_next(),
-        KeyCode::Down                                                => app.vmgr_props_field_next_left(),
+        KeyCode::Down | KeyCode::Char('j')                           => app.vmgr_props_field_next_left(),
         KeyCode::BackTab                                             => app.vmgr_props_field_prev(),
-        KeyCode::Up                                                  => app.vmgr_props_field_prev_left(),
+        KeyCode::Up   | KeyCode::Char('k')                           => app.vmgr_props_field_prev_left(),
         KeyCode::F(3) if is_sections                                 => app.vmgr_sec_pick_open(),
         KeyCode::F(3) | KeyCode::Char(' ') if is_item_sorting        => app.vmgr_open_item_sort(),
         KeyCode::F(3) if is_sec_sorting || is_sec_order              => app.vmgr_sec_sort_open_picker(),
@@ -1686,8 +1707,8 @@ fn handle_vmgr_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char(' ') if is_sec_sorting                         => app.vmgr_sec_sort_cycle(),
         KeyCode::Char(' ') if is_sec_order                           => app.vmgr_sec_order_cycle(),
         KeyCode::Char(' ') if is_bool                                => app.vmgr_props_toggle(),
-        KeyCode::Left                                                => app.vmgr_props_field_left(),
-        KeyCode::Right                                               => app.vmgr_props_field_right(),
+        KeyCode::Left  | KeyCode::Char('h')                          => app.vmgr_props_field_left(),
+        KeyCode::Right | KeyCode::Char('l')                          => app.vmgr_props_field_right(),
         _ => {}
     }
 }
@@ -1771,8 +1792,8 @@ fn handle_vmgr_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers
     match code {
         KeyCode::Enter              => app.vmgr_filter_date_confirm(),
         KeyCode::Esc                => app.vmgr_filter_date_cancel(),
-        KeyCode::Tab | KeyCode::Down   => app.vmgr_filter_date_tab(),
-        KeyCode::BackTab | KeyCode::Up => app.vmgr_filter_date_tab_back(),
+        KeyCode::Tab | KeyCode::Down | KeyCode::Char('j')   => app.vmgr_filter_date_tab(),
+        KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k') => app.vmgr_filter_date_tab_back(),
         KeyCode::Char(' ')          => app.vmgr_filter_date_toggle(),
         KeyCode::F(3)               => app.vmgr_filter_date_cal_open(),
         KeyCode::F(1)               => app.vmgr_filter_date_help_open(),
@@ -1800,8 +1821,8 @@ fn handle_vmgr_sort_dialog(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Enter  => app.vmgr_sort_confirm(),
         KeyCode::Esc    => app.vmgr_sort_cancel(),
-        KeyCode::Tab | KeyCode::Down   => app.vmgr_sort_tab(),
-        KeyCode::BackTab | KeyCode::Up => app.vmgr_sort_tab_back(),
+        KeyCode::Tab | KeyCode::Down | KeyCode::Char('j')   => app.vmgr_sort_tab(),
+        KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k') => app.vmgr_sort_tab_back(),
         KeyCode::F(3) => app.vmgr_sort_open_picker(),
         _ => {}
     }
@@ -1979,8 +2000,8 @@ fn handle_sec_date_filter(app: &mut App, code: KeyCode, modifiers: KeyModifiers)
     match code {
         KeyCode::Enter              => app.sec_filter_date_confirm(),
         KeyCode::Esc                => app.sec_filter_date_cancel(),
-        KeyCode::Tab | KeyCode::Down   => app.sec_filter_date_tab(),
-        KeyCode::BackTab | KeyCode::Up => app.sec_filter_date_tab_back(),
+        KeyCode::Tab | KeyCode::Down | KeyCode::Char('j')   => app.sec_filter_date_tab(),
+        KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k') => app.sec_filter_date_tab_back(),
         KeyCode::Char(' ')          => app.sec_filter_date_toggle(),
         KeyCode::F(3)               => app.sec_filter_date_cal_open(),
         KeyCode::F(1)               => app.sec_filter_date_help_open(),
@@ -1992,8 +2013,8 @@ fn handle_sec_sort_dialog(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Enter  => app.sec_sort_confirm(),
         KeyCode::Esc    => app.sec_sort_cancel(),
-        KeyCode::Tab | KeyCode::Down   => app.sec_sort_tab(),
-        KeyCode::BackTab | KeyCode::Up => app.sec_sort_tab_back(),
+        KeyCode::Tab | KeyCode::Down | KeyCode::Char('j')   => app.sec_sort_tab(),
+        KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k') => app.sec_sort_tab_back(),
         KeyCode::F(3) => app.sec_sort_open_picker(),
         _ => {}
     }
@@ -2090,8 +2111,8 @@ fn handle_customize_normal(app: &mut App, code: KeyCode) {
 
 fn handle_customize_picker(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Up    => app.customize_picker_up(),
-        KeyCode::Down  => app.customize_picker_down(),
+        KeyCode::Up   | KeyCode::Char('k') => app.customize_picker_up(),
+        KeyCode::Down | KeyCode::Char('j') => app.customize_picker_down(),
         KeyCode::Enter => app.customize_picker_confirm(),
         KeyCode::Esc   => app.customize_picker_cancel(),
         _ => {}
@@ -2169,7 +2190,8 @@ fn handle_file_props(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
         KeyCode::Esc   => app.file_props_cancel(),
         KeyCode::Enter => app.file_props_confirm(),
-        KeyCode::Tab | KeyCode::Up | KeyCode::Down => app.file_props_tab(),
+        KeyCode::Tab | KeyCode::Up | KeyCode::Down
+            | KeyCode::Char('j') | KeyCode::Char('k') => app.file_props_tab(),
         KeyCode::BackTab => app.file_props_tab(),
         KeyCode::F(2) if desc_active && !desc_editing => app.file_props_desc_begin_edit(),
         KeyCode::F(2) | KeyCode::F(3) => {

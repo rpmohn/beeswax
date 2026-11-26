@@ -501,6 +501,41 @@ def main():
     checks.check("Alt+j is inert here", sections([alt("j")]),
                  ["Initial Section", "Section2", "Section3"])
 
+    # h/j/k/l are twins of the arrows in every dialog where no text field is
+    # live.  A letter only reaches a dialog's navigation match when line_edit
+    # did not consume it, so navigating can never eat typing -- the two checks
+    # at the end of this section are the ones that prove it.
+    checks.section("vi navigation in dialogs")
+
+    # j moved the selection if the reorder that follows acts on a later row.
+    checks.check("j moves down the Sections list",
+                 sections(["j", "\x0a"]),
+                 ["Initial Section", "Section3", "Section2"])
+    checks.check("k moves back up",
+                 sections(["j", "k", "\x0a"]),
+                 ["Section2", "Initial Section", "Section3"])
+
+    # The safety property.  Category Properties opens with the Name field live,
+    # so j and k there are letters, not navigation.
+    checks.check("j/k type into a live text field",
+                 cats([F9] + GG + ["j", F6] + list("jk") + [ENTER])[1], "  Entryjk")
+
+    # Width takes digits only, so a letter is not text there either and j has
+    # to navigate out of it.  The quick add picks a Date category, so the field
+    # below Width is "Display date and/or time", whose value Right cycles from
+    # "Date and time" to "Date".  Head, above Width, IS a live text field, so
+    # the arrow gets us to Width and j has to carry on from there.
+    def col_props(keys):
+        return screen(app.run(path("cols.bwx"), [alt("l"), "j", ENTER, F6] + keys))
+
+    RIGHT = "\x1b[C"
+    checks.check("Down,Down,Right cycles the field below Width",
+                 "and/or time:  Date  " in col_props([DOWN, DOWN, RIGHT]), True)
+    checks.check("Down,j,Right does the same -- Width no longer eats j",
+                 "and/or time:  Date  " in col_props([DOWN, "j", RIGHT]), True)
+    checks.check("without the j it stays on Width and cycles nothing",
+                 "and/or time:  Date and time" in col_props([DOWN, RIGHT]), True)
+
     total = checks.passed + len(checks.failed)
     print("\n%d/%d passed" % (checks.passed, total))
     if checks.failed:

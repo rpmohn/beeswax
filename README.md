@@ -145,6 +145,18 @@ Add, Section Select, and the sort and filter dialogs — takes the same keys:
 | i / o / x / u | Rename / create / delete / undo, where the list supports it |
 | Enter / Esc | Confirm / cancel |
 
+In dialogs, `h`/`j`/`k`/`l` are twins of the four arrow keys — the same field
+or list navigation, no separate bindings to learn. The exception is a live text
+field that takes letters, where letters are text. The Category Manager's name
+fields and Column Properties' head field go live as soon as the field is
+reached, so vi keys type there; the View Properties and File Properties name
+and description fields need F2 or `i` first, and take vi navigation until then.
+A digits-only field such as Width is not an exception — a letter is never text
+there, so `j` / `k` navigate out of it as they would anywhere else.
+
+The menu bar (letters are mnemonics) and the colour hex field (letters are
+digits) have no vi keys.
+
 The category pickers — the quick adds, and F3 on the Section Add form —
 manage categories in place: `/` searches (F7 / F8 step through the matches), Insert
 adds, F2 renames, Delete discards, and F6 opens category properties. Esc there
