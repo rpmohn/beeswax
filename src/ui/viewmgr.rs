@@ -6,9 +6,9 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use crate::app::{App, DateFilterField, DateFilterShow, FilterState, SortPicker, ViewMgrMode, ViewPropsField, flatten_cats, section_item_indices, cat_note_indicator, stored_scroll_start};
-use crate::model::{CategoryKind, DateFilterRange, DateFmtCode, FilterOp};
+use crate::model::{DateFilterRange, DateFmtCode, FilterOp};
 use crate::app::SortState;
-use super::{centered_rect, cursor_split};
+use super::{catmgr, centered_rect, cursor_split};
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -573,16 +573,11 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
                 },
             };
             let note_ind = cat_note_indicator(&app.categories, cat.id);
-            let kind_ind = match cat.kind {
-                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
-                CategoryKind::Date      => "*",
-                CategoryKind::Numeric   => "#",
-                CategoryKind::Unindexed => "\u{25A1}",
-            };
-            let indent  = "  ".repeat(cat.depth);
-            let name_w  = inner_w.saturating_sub(6 + indent.len());
+            // chars(), not len(): the unindexed indicator is three bytes.
+            let prefix  = catmgr::picker_prefix(cat.depth, cat.kind, note_ind);
+            let name_w  = inner_w.saturating_sub(4 + prefix.chars().count());
             let name: String = cat.name.chars().take(name_w).collect();
-            let row_text = format!(" {} \u{2502}{}{} {}", marker, indent, kind_ind, name);
+            let row_text = format!(" {} \u{2502}{}{}", marker, prefix, name);
             if i == cursor {
                 cat_lines.push(Line::from(Span::styled(row_text, rev)));
             } else {
@@ -650,16 +645,10 @@ pub fn render_view_props_overlay(frame: &mut Frame, app: &App, area: Rect) {
             let is_sec   = used_ids.contains(&entry.id);
             let marker = if in_all { "A" } else if in_subs { "S" } else if is_sec { "*" } else { " " };
             let note_ind = cat_note_indicator(&app.categories, entry.id);
-            let type_ind = match entry.kind {
-                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
-                CategoryKind::Date      => "*",
-                CategoryKind::Numeric   => "#",
-                CategoryKind::Unindexed => "\u{25A1}",
-            };
-            let indent = "  ".repeat(entry.depth);
             let highlighted = i == *picker_cur;
             pick_lines.push(Line::from(vec![
-                Span::raw(format!(" {}\u{2502} {}{} ", marker, indent, type_ind)),
+                Span::raw(format!(" {}\u{2502}{}", marker,
+                    catmgr::picker_prefix(entry.depth, entry.kind, note_ind))),
                 if highlighted {
                     Span::styled(entry.name.clone(), rev)
                 } else {

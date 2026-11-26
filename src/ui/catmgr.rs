@@ -27,6 +27,14 @@ pub fn kind_indicator(kind: CategoryKind, note_ind: &'static str) -> &'static st
     }
 }
 
+/// Leading indent and type indicator for one row of a category *picker*.
+///
+/// Pickers indent one space further than the Category Manager tree, so the
+/// list clears the dialog border; the trailing space separates icon from name.
+pub fn picker_prefix(depth: usize, kind: CategoryKind, note_ind: &'static str) -> String {
+    format!("{}{} ", " ".repeat(depth * 2 + 1), kind_indicator(kind, note_ind))
+}
+
 /// Build the leading indent + indicator for a row.
 pub fn leading(entry: &FlatCat, note_ind: &'static str) -> (String, &'static str) {
     (base_indent(entry.depth), kind_indicator(entry.kind, note_ind))

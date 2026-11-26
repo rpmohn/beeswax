@@ -727,17 +727,10 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
         } else {
             for (i, cat) in flat.iter().enumerate() {
-                let indent   = " ".repeat(cat.depth * 2 + 1);
                 let note_ind = cat_note_indicator(&app.categories, cat.id);
-                let type_ind = match cat.kind {
-                    CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
-                    CategoryKind::Date      => "*",
-                    CategoryKind::Numeric   => "#",
-                    CategoryKind::Unindexed => "\u{25A1}",
-                };
                 let is_cur = i == pc;
                 cat_lines.push(Line::from(vec![
-                    Span::raw(format!("{}{} ", indent, type_ind)),
+                    Span::raw(catmgr::picker_prefix(cat.depth, cat.kind, note_ind)),
                     if is_cur { Span::styled(cat.name.clone(), rev) }
                     else      { Span::raw(cat.name.clone()) },
                 ]));
@@ -1105,12 +1098,11 @@ pub fn render(frame: &mut Frame, app: &App) {
                 (false, _)     => "  ",
             };
             let note_ind = cat_note_indicator(&app.categories, e.id);
-            let type_ind = catmgr::kind_indicator(e.kind, note_ind);
             // Indent relative to the column head (head = 0, children = 1, etc.).
             let rel_depth = e.depth.saturating_sub(head_depth);
-            let indent    = "  ".repeat(rel_depth);
             let highlighted = i == picker_cursor;
-            let pfx = Span::raw(format!(" {}\u{2502}{} {}", marker, type_ind, indent));
+            let pfx = Span::raw(format!(" {}\u{2502}{}", marker,
+                catmgr::picker_prefix(rel_depth, e.kind, note_ind)));
             if highlighted {
                 match &app.cat_state.mode {
                     CatMode::Edit { buffer, cursor: buf_cur } => {
@@ -1125,7 +1117,8 @@ pub fn render(frame: &mut Frame, app: &App) {
                         cat_lines.push(Line::from(vec![pfx, Span::raw(e.name.clone())]));
                         let (left, hi, right) = cursor_split(buffer, *buf_cur);
                         cat_lines.push(Line::from(vec![
-                            Span::raw(format!("   \u{2502}  {}", indent)),
+                            // Line the input row up under the names above it.
+                            Span::raw(format!("   \u{2502}{}", " ".repeat(rel_depth * 2 + 3))),
                             Span::raw(left), Span::styled(hi, rev), Span::raw(right),
                         ]));
                     }
@@ -1593,7 +1586,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             // header line, the way the column quick add does.
             let head = if quick { 1 } else { 0 };
             let picker_h = (visible.min(cats.len().max(1)) + extra + head + 2) as u16;
-            let picker_rect = centered_rect(36, picker_h, area);
+            let picker_rect = centered_rect(44, picker_h, area);
             frame.render_widget(Clear, picker_rect);
             let pb_title = if quick {
                 match insert {
@@ -1622,7 +1615,8 @@ pub fn render(frame: &mut Frame, app: &App) {
             } else {
                 for (i, e) in cats.iter().enumerate().skip(start) {
                     if pick_lines.len() >= vis { break; }
-                    let indent = "  ".repeat(e.depth);
+                    let note_ind = cat_note_indicator(&app.categories, e.id);
+                    let indent = catmgr::picker_prefix(e.depth, e.kind, note_ind);
                     let label  = format!("{}{}", indent, e.name);
                     let is_cur = i == picker_cur;
                     match &app.cat_state.mode {
@@ -1640,7 +1634,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                                 if let CatMode::Create { buffer, cursor: buf_cur, insert, .. } = &app.cat_state.mode {
                                     if pick_lines.len() < vis {
                                         let d = if insert.is_child() { e.depth + 1 } else { e.depth };
-                                        let cr_indent = "  ".repeat(d);
+                                        let cr_indent = " ".repeat(d * 2 + 3);
                                         let (left, hi, right) = cursor_split(buffer, *buf_cur);
                                         pick_lines.push(Line::from(vec![
                                             Span::raw(cr_indent),
@@ -2297,16 +2291,11 @@ pub fn render_sec_props_dialog(frame: &mut Frame, app: &App, area: Rect) {
                 },
             };
             let note_ind = cat_note_indicator(&app.categories, cat.id);
-            let kind_ind = match cat.kind {
-                CategoryKind::Standard  => if !note_ind.is_empty() { note_ind } else { " " },
-                CategoryKind::Date      => "*",
-                CategoryKind::Numeric   => "#",
-                CategoryKind::Unindexed => "\u{25A1}",
-            };
-            let indent  = "  ".repeat(cat.depth);
-            let name_w  = inner_w.saturating_sub(6 + indent.len());
+            // chars(), not len(): the unindexed indicator is three bytes.
+            let prefix  = catmgr::picker_prefix(cat.depth, cat.kind, note_ind);
+            let name_w  = inner_w.saturating_sub(4 + prefix.chars().count());
             let name: String = cat.name.chars().take(name_w).collect();
-            let row_text = format!(" {} \u{2502}{}{} {}", marker, indent, kind_ind, name);
+            let row_text = format!(" {} \u{2502}{}{}", marker, prefix, name);
             if i == cursor {
                 cat_lines.push(Line::from(Span::styled(row_text, rev)));
             } else {
@@ -2496,7 +2485,7 @@ pub fn render_sort_dialog(
                 // Category picker — scrollable flat list
                 let visible = 10usize;
                 let h = (visible.min(flat_cats.len()) + 2) as u16;
-                let w = 36u16;
+                let w = 44u16;
                 let pick_rect = centered_rect(w, h, area);
                 frame.render_widget(Clear, pick_rect);
                 let pick_block = Block::default().borders(Borders::ALL)
@@ -2509,8 +2498,9 @@ pub fn render_sort_dialog(
                 let pick_lines: Vec<Line> = flat_cats.iter().enumerate()
                     .skip(start).take(vis)
                     .map(|(i, e)| {
-                        let indent = "  ".repeat(e.depth);
-                        let label  = format!("{}{}", indent, e.name);
+                        let note_ind = cat_note_indicator(&app.categories, e.id);
+                        let label = format!("{}{}",
+                            catmgr::picker_prefix(e.depth, e.kind, note_ind), e.name);
                         let style  = if i == p.cursor { rev } else { Style::default() };
                         Line::from(Span::styled(label, style))
                     })
