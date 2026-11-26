@@ -311,31 +311,48 @@ def main():
         """Dialog frame titles currently on screen."""
         text = screen(app.run(path("view.bwx"), keys))
         found = []
-        for name in ("Section Add", "Choose Category", "Column Add", "Choices"):
+        for name in ("Section Add", "Choose Category", "Column Add", "Choices",
+                     "Add Column Right", "Add Column Left",
+                     "Add Section Below", "Add Section Above"):
             if name in text:
                 found.append(name)
         return found
 
-    checks.check("Alt+o opens Section Add + its category picker",
-                 titles([alt("o")]), ["Section Add", "Choose Category"])
-    checks.check("Alt+c opens Column Add + its head picker",
-                 titles([alt("c")]), ["Column Add", "Choices"])
-    # Esc closes the picker back to the form rather than cancelling the dialog,
-    # which is also what makes the Insert field readable again.
-    checks.check("Alt+o then Esc leaves Insert on Below",
-                 insert_field([alt("o"), ESC]), "Below")
-    checks.check("Alt+o then Esc,Down,Right sets Insert=Above",
-                 insert_field([alt("o"), ESC, "\x1b[B", "\x1b[C"]), "Above")
+    # Alt+direction is the quick add on that side: a category picker, and the
+    # structure appears as soon as a category is chosen. No form either way.
+    # Each quick add names its direction in the frame title.
+    checks.check("Alt+j opens only the section picker, titled Below",
+                 titles([alt("j")]), ["Add Section Below"])
+    checks.check("Alt+k opens only the section picker, titled Above",
+                 titles([alt("k")]), ["Add Section Above"])
+    checks.check("the section picker says what it is selecting",
+                 "Select category for section" in screen(
+                     app.run(path("view.bwx"), [alt("j")])), True)
+    checks.check("Alt+l opens the quick add, right",
+                 titles([alt("l")]), ["Add Column Right"])
+    checks.check("Alt+h opens the quick add, left",
+                 titles([alt("h")]), ["Add Column Left"])
+
+    def view_sections(keys):
+        target = path("secs2.bwx")
+        app.run(target, keys)
+        return [sec["name"] for sec in read_save(target)["views"][0]["sections"]]
+
+    checks.check("Alt+j adds a section below",
+                 view_sections([alt("j"), "j", ENTER]), ["Initial Section", "Entry"])
+    checks.check("Alt+k adds a section above",
+                 view_sections([alt("k"), "j", ENTER]), ["Entry", "Initial Section"])
+    checks.check("Esc adds nothing",
+                 view_sections([alt("j"), "j", ESC]), ["Initial Section"])
 
     def columns(keys):
         target = path("cols.bwx")
-        # Alt+c -> Column Add with the head picker open: pick a category, then
-        # Enter to confirm the dialog.
-        add = ([alt("c"), "j", ENTER, ENTER] + [alt("c"), "j", "j", ENTER, ENTER])
+        # Quick add inserts on Enter, with no form to confirm afterwards.
+        add = [alt("l"), "j", ENTER] + [alt("l"), "j", "j", ENTER]
         app.run(target, add + keys)
         return [col["name"] for col in read_save(target)["views"][0]["columns"]]
 
-    checks.check("Alt+c adds columns", columns([]), ["Entry", "When"])
+    checks.check("Alt+l adds columns", columns([]), ["Entry", "When"])
     # Moving is Ctrl+direction. Ctrl+H arrives as 0x08 in a plain terminal,
     # which crossterm still reports as Ctrl+h rather than Backspace.
     checks.check("Ctrl+h moves a column left",
@@ -385,7 +402,7 @@ def main():
     # The column-head picker is the Choices overlay on the Column Add form. It
     # carries the affordances the retired quick-add picker had: search, inline
     # create, rename, properties, delete.
-    checks.section("Column-head picker (Alt+c, or F3 on the form)")
+    checks.section("Column-head picker (Alt+l quick add)")
 
     def picker(keys, enhanced=False):
         return screen(app.run(path("pick.bwx"), keys, enhanced=enhanced))
@@ -396,24 +413,25 @@ def main():
         return flat_categories(read_save(target)["categories"])
 
     checks.check("offers the category list",
-                 "Select category for column head" in picker([alt("c")]), True)
+                 "Select category for column head" in picker([alt("l")]), True)
     checks.check("/ opens a search prompt",
-                 "Search for: Wh" in picker([alt("c"), "/"] + list("Wh")), True)
+                 "Search for: Wh" in picker([alt("l"), "/"] + list("Wh")), True)
     checks.check("Ins creates a category inline",
-                 "  TMP" in picker_cats([alt("c"), "G", INS] + list("TMP") + [ENTER]), True)
+                 "  TMP" in picker_cats([alt("l"), "G", INS] + list("TMP") + [ENTER]), True)
     checks.check("Del prompts for a deletable category",
                  "Discard Category?" in picker(
-                     [alt("c"), "G", INS] + list("TMP") + [ENTER, DEL]), True)
+                     [alt("l"), "G", INS] + list("TMP") + [ENTER, DEL]), True)
     # Deleting the current section's head category, or a protected one, would
     # pull the view out from under the cursor, so Del is inert there.
     checks.check("Del inert on the section's head category",
-                 "Discard Category?" in picker([alt("c"), "G", DEL]), False)
+                 "Discard Category?" in picker([alt("l"), "G", DEL]), False)
     checks.check("Del inert on a protected category",
-                 "Discard Category?" in picker([alt("c"), "j", DEL]), False)
-    checks.check("Esc returns to the form, not out of the dialog",
-                 "Column Add" in picker([alt("c"), ESC]), True)
-    checks.check("F3 on the Position field opens the position chooser",
-                 "Right of current column" in picker([alt("c"), ESC, DOWN, F3]), True)
+                 "Discard Category?" in picker([alt("l"), "j", DEL]), False)
+    # Quick add has no form behind it, so Esc leaves outright. The full Column
+    # Add form, and its Position chooser, are reachable only from the F10 menu
+    # now that Alt+c is unbound, so they are not driven from here.
+    checks.check("Esc closes the quick add",
+                 "Add Column Right" in picker([alt("l"), ESC]), False)
 
     checks.section("View Manager -- reorder")
 

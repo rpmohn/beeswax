@@ -200,7 +200,8 @@ pub fn render_fkey_bar(frame: &mut Frame, area: Rect, app: &App) {
         &ITEM_PROPS_FKEYS
     } else if matches!(app.mode, Mode::ConfirmDeleteItem { .. } | Mode::ConfirmDiscardItem { .. }) {
         &MENU_FKEYS   // item delete/discard dialog is self-describing
-    } else if matches!(app.col_mode, ColMode::Choices { kind: ChoicesKind::Category, .. }) {
+    } else if matches!(app.col_mode,
+        ColMode::QuickAdd { .. } | ColMode::Choices { kind: ChoicesKind::Category, .. }) {
         &CAT_PICKER_FKEYS   // F2 renames, F6 opens properties, Ins adds, Del removes
     } else if matches!(app.col_mode, ColMode::ConfirmRemove { .. }) {
         &MENU_FKEYS

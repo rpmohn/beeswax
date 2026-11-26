@@ -113,21 +113,21 @@ It is built from [KEYS.tex](KEYS.tex) with `pdflatex KEYS.tex`.
 ### Alt commands (View screen)
 
 Bare `o`/`O` create an item; Alt lifts the same verb to the structure holding
-the items.
+the items. Alt plus a direction adds on that side, Ctrl plus a direction moves.
 
 | Key | Action |
 |-----|--------|
-| Alt+o | New section — opens the Section Add dialog with the category picker already open |
-| Alt+c | New column — opens the Column Add dialog with the column-head picker already open |
+| Alt+j / Alt+k | New section below / above |
+| Alt+h / Alt+l | New column to the left / right |
 | Ctrl+h / Ctrl+l or Ctrl+← / Ctrl+→ | Move the current column left / right |
 | Alt+s | Sort current section now |
 
-Alt+o and Alt+c reach the same dialogs as Menu › View › Section › Add and
-Menu › View › Column › Add, and open the picker for the choice that has to be
-made first. Neither has an "above" or "left" variant key: the direction is a
-field in the dialog. Press Down to reach the Insert field (Below / Above) or
-the Position field (Right / Left) and Left/Right to set it; F3 reopens a
-field's picker.
+All four are quick adds: a category picker opens, and the section or column
+appears as soon as you choose a category — no Insert, Width, Position or
+Format fields to confirm. Esc backs out without adding anything.
+
+The full forms are on Menu › View › Section › Add and
+Menu › View › Column › Add when you want those fields.
 
 ### Lists and pickers
 
@@ -144,8 +144,8 @@ Add, Section Select, and the sort and filter dialogs — takes the same keys:
 | i / o / x / u | Rename / create / delete / undo, where the list supports it |
 | Enter / Esc | Confirm / cancel |
 
-The category pickers inside the Section Add and Column Add dialogs manage
-categories in place: `/` searches (F7 / F8 step through the matches), Insert
+The category pickers — the quick adds, and F3 on the Section Add form —
+manage categories in place: `/` searches (F7 / F8 step through the matches), Insert
 adds, F2 renames, Delete discards, and F6 opens category properties. Esc there
 closes the picker and returns to the dialog rather than cancelling it. Delete
 is refused for a protected category, and for the current section's head

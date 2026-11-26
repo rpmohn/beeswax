@@ -684,13 +684,23 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // ── Column-head category picker: F3 on the Column form Head field ────────
-    if let ColMode::Choices { kind: ChoicesKind::Category, picker_cursor, picker_scroll,
-                              confirm_delete, .. } = &app.col_mode {
+    // Both pick a category from the same list, so they share one overlay and
+    // differ only in the title.
+    let cat_picker = match &app.col_mode {
+        ColMode::Choices { kind: ChoicesKind::Category, picker_cursor, picker_scroll,
+                           confirm_delete, .. } =>
+            Some((*picker_cursor, *picker_scroll, *confirm_delete, " Choices ")),
+        ColMode::QuickAdd { position, picker_cursor, picker_scroll, confirm_delete } =>
+            Some((*picker_cursor, *picker_scroll, *confirm_delete, match position {
+                ColPos::Right => " Add Column Right ",
+                ColPos::Left  => " Add Column Left ",
+            })),
+        _ => None,
+    };
+    if let Some((pc, stored_scroll, confirm_delete, box_title)) = cat_picker {
         let rev  = app.theme.item_selected_field;
         let dim  = Style::default().add_modifier(Modifier::DIM);
         let flat = flatten_cats(&app.categories);
-        let pc   = *picker_cursor;
-        let stored_scroll = *picker_scroll;
 
         // Header line: search or instruction
         let header_text = if let Some(buf) = &app.cat_search {
@@ -755,7 +765,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Clear, picker_rect);
 
         let block = Block::default().borders(Borders::ALL)
-            .title(" Choices ").style(app.theme.dialog_border);
+            .title(box_title).style(app.theme.dialog_border);
         frame.render_widget(block.clone(), picker_rect);
         let inner = block.inner(picker_rect);
 
@@ -774,7 +784,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         frame.render_widget(Paragraph::new(all_lines).style(app.theme.dialog), inner);
 
         // ── Delete confirmation overlay ───────────────────────────────────
-        if *confirm_delete {
+        if confirm_delete {
             let cat_name = flat.get(pc).map(|e| e.name.as_str()).unwrap_or("?");
             let rev = app.theme.item_selected_field;
             // Make the dialog wide enough to show the category name.
@@ -1496,18 +1506,20 @@ pub fn render(frame: &mut Frame, app: &App) {
     // (picker_cursor, picker_scroll, confirm_delete)
     let sec_add_state = match &app.sec_mode {
         SectionMode::Add { cat_idx, insert, active_field } =>
-            Some((*cat_idx, *insert, *active_field, None::<(usize, usize, bool)>)),
-        SectionMode::Choices { cat_idx, insert, active_field, picker_cursor, picker_scroll, confirm_delete } =>
-            Some((*cat_idx, *insert, *active_field, Some((*picker_cursor, *picker_scroll, *confirm_delete)))),
+            Some((*cat_idx, *insert, *active_field, None::<(usize, usize, bool)>, false)),
+        SectionMode::Choices { cat_idx, insert, active_field, picker_cursor, picker_scroll,
+                               confirm_delete, quick } =>
+            Some((*cat_idx, *insert, *active_field,
+                  Some((*picker_cursor, *picker_scroll, *confirm_delete)), *quick)),
         SectionMode::Normal | SectionMode::AutoRemoveError | SectionMode::ConfirmRemove { .. } | SectionMode::Props { .. } => None,
     };
-    if let Some((cat_idx, insert, active_field, picker_cursor)) = sec_add_state {
+    if let Some((cat_idx, insert, active_field, picker_cursor, quick)) = sec_add_state {
         let cats       = flatten_cats(&app.categories);
         let rev        = app.theme.item_selected_field;
         let dlabel     = app.theme.dialog_label;
         let dlabel_sel = app.theme.dialog_label_sel;
         let dlg_rect   = centered_rect(52, 9, area);
-        frame.render_widget(Clear, dlg_rect);
+        if !quick { frame.render_widget(Clear, dlg_rect); }
         let block = Block::default().borders(Borders::ALL)
             .border_type(BorderType::Double)
             .title(" Section Add ")
@@ -1516,7 +1528,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     .alignment(Alignment::Center),
             )
             .style(app.theme.dialog_border);
-        frame.render_widget(block.clone(), dlg_rect);
+        if !quick { frame.render_widget(block.clone(), dlg_rect); }
         let inner = block.inner(dlg_rect);
         let iw = inner.width as usize;
 
@@ -1568,21 +1580,34 @@ pub fn render(frame: &mut Frame, app: &App) {
             Line::from(""),
         ];
 
-        frame.render_widget(Paragraph::new(lines.clone()).style(app.theme.dialog), inner);
+        if !quick {
+            frame.render_widget(Paragraph::new(lines.clone()).style(app.theme.dialog), inner);
+        }
 
         // Choices picker overlay
         if let Some((picker_cur, scroll_stored, confirm_delete)) = picker_cursor {
             let in_edit_create = matches!(app.cat_state.mode, CatMode::Create { .. } | CatMode::Edit { .. });
             let visible = 10usize;
             let extra = if in_edit_create { 1 } else { 0 };
-            let picker_h = (visible.min(cats.len().max(1)) + extra + 2) as u16;
+            // The quick add names the direction in its title and carries a
+            // header line, the way the column quick add does.
+            let head = if quick { 1 } else { 0 };
+            let picker_h = (visible.min(cats.len().max(1)) + extra + head + 2) as u16;
             let picker_rect = centered_rect(36, picker_h, area);
             frame.render_widget(Clear, picker_rect);
+            let pb_title = if quick {
+                match insert {
+                    SectionInsert::Below => " Add Section Below ",
+                    SectionInsert::Above => " Add Section Above ",
+                }
+            } else {
+                " Choose Category "
+            };
             let pb = Block::default().borders(Borders::ALL)
-                .title(" Choose Category ").style(app.theme.dialog_border);
+                .title(pb_title).style(app.theme.dialog_border);
             frame.render_widget(pb.clone(), picker_rect);
             let pi = pb.inner(picker_rect);
-            let vis = pi.height as usize;
+            let vis = (pi.height as usize).saturating_sub(head);
             let bottom = if in_edit_create { picker_cur + 1 } else { picker_cur };
             let start = scroll_stored.min(picker_cur).max(bottom.saturating_sub(vis.saturating_sub(1)));
             app.list_view.publish(vis, start);
@@ -1628,6 +1653,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                     }
                 }
             }
+            let pick_lines = if quick {
+                let mut with_head = vec![Line::from(Span::raw(" Select category for section"))];
+                with_head.extend(pick_lines);
+                with_head
+            } else {
+                pick_lines
+            };
             frame.render_widget(Paragraph::new(pick_lines).style(app.theme.dialog), pi);
 
             // Delete confirmation overlay

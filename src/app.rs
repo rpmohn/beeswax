@@ -293,6 +293,13 @@ pub enum ColMode {
         confirm_delete: bool,
     },
     Move,
+    /// Alt-l / Alt-h quick-add: category picker that inserts a column immediately.
+    QuickAdd {
+        position:       ColPos,
+        picker_cursor:  usize,
+        picker_scroll:  usize,
+        confirm_delete: bool,   // true when "Discard this category?" dialog is shown
+    },
     Props {
         head_buf:      String,
         head_cur:      usize,
@@ -458,6 +465,10 @@ pub enum SectionMode {
         picker_cursor:  usize,
         picker_scroll:  usize,
         confirm_delete: bool,
+        /// True when the picker was opened on its own by Alt+j / Alt+k rather
+        /// than from the Section Add form: choosing a category is then the
+        /// whole interaction, and there is no form to show or return to.
+        quick:          bool,
     },
     ConfirmRemove { yes: bool },
     Props {
@@ -4366,6 +4377,191 @@ impl App {
         }
     }
 
+    // ── Quick-add column (Alt-l / Alt-h) ─────────────────────────────────────
+
+    pub fn col_quick_add(&mut self, position: ColPos) {
+        if !matches!(self.mode, Mode::Normal) { return; }
+        let flat = flatten_cats(&self.categories);
+        if flat.is_empty() { return; }
+        self.col_mode = ColMode::QuickAdd { position, picker_cursor: 0, picker_scroll: 0, confirm_delete: false };
+    }
+
+    pub fn col_quick_add_up(&mut self) {
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if *picker_cursor > 0 {
+                *picker_cursor -= 1;
+                if *picker_cursor < *picker_scroll { *picker_scroll = *picker_cursor; }
+            }
+        }
+    }
+
+    pub fn col_quick_add_down(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if *picker_cursor + 1 < len {
+                *picker_cursor += 1;
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
+            }
+        }
+    }
+
+    pub fn col_quick_add_pgup(&mut self, page: usize) {
+        // A page is a screenful, so never more than what is actually visible.
+        let page = page.min(self.list_view.rows());
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            *picker_cursor = picker_cursor.saturating_sub(page);
+            *picker_scroll = picker_scroll.saturating_sub(page);
+        }
+    }
+
+    pub fn col_quick_add_pgdn(&mut self, page: usize) {
+        let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
+        let page = page.min(vis);
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if len > 0 {
+                *picker_cursor = (*picker_cursor + page).min(len - 1);
+                if *picker_cursor >= *picker_scroll + vis { *picker_scroll = *picker_cursor + 1 - vis; }
+            }
+        }
+    }
+
+    pub fn col_quick_add_home(&mut self) {
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            *picker_cursor = 0;
+            *picker_scroll = 0;
+        }
+    }
+    pub fn col_quick_add_end(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            if len > 0 {
+                *picker_cursor = len - 1;
+                *picker_scroll = picker_cursor.saturating_sub(vis.saturating_sub(1));
+            }
+        }
+    }
+    pub fn col_quick_add_screen_top(&mut self) {
+        let vis = self.list_view.rows();
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            *picker_cursor = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+        }
+    }
+    pub fn col_quick_add_screen_mid(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis / 2).min(len.saturating_sub(1));
+        }
+    }
+    pub fn col_quick_add_screen_bot(&mut self) {
+        let len = flatten_cats(&self.categories).len();
+        let vis = self.list_view.rows();
+        if let ColMode::QuickAdd { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
+            let start = stored_scroll_start(*picker_scroll, *picker_cursor, vis);
+            *picker_cursor = (start + vis.saturating_sub(1)).min(len.saturating_sub(1));
+        }
+    }
+
+    pub fn col_quick_add_confirm(&mut self) {
+        if !matches!(self.cat_state.mode, CatMode::Normal) { return; } // don't confirm mid-create
+        self.push_undo();
+        let (position, picker_cursor) = match &self.col_mode {
+            ColMode::QuickAdd { position, picker_cursor, .. } => (*position, *picker_cursor),
+            _ => return,
+        };
+        self.col_mode = ColMode::Normal;
+        self.cat_search = None;
+        let flat = flatten_cats(&self.categories);
+        let Some(entry) = flat.get(picker_cursor) else { return };
+        let name   = entry.name.clone();
+        let cat_id = entry.id;
+        let kind   = entry.kind;
+        let width  = 12usize;
+        let id     = self.alloc_id();
+        let lc     = self.view.left_count;
+        let (pos, new_lc) = if self.view.columns.is_empty() {
+            (0, if position == ColPos::Left { 1 } else { 0 })
+        } else if self.col_cursor == 0 {
+            match position {
+                ColPos::Left  => (lc, lc + 1),
+                ColPos::Right => (lc, lc),
+            }
+        } else {
+            let cur    = (self.col_cursor - 1).min(self.view.columns.len() - 1);
+            let in_left = cur < lc;
+            let p = match position { ColPos::Right => cur + 1, ColPos::Left => cur };
+            (p, if in_left { lc + 1 } else { lc })
+        };
+        self.view.left_count = new_lc;
+        let date_fmt = if kind == CategoryKind::Date { Some(DateFmt::default()) } else { None };
+        self.view.columns.insert(pos, Column { id, name, cat_id, width, format: ColFormat::NameOnly, date_fmt });
+        self.col_cursor = pos + 1;
+    }
+
+    pub fn col_quick_add_cancel(&mut self) {
+        self.col_mode = ColMode::Normal;
+        self.cat_state.mode = CatMode::Normal;
+        self.cat_search = None;
+    }
+
+    pub fn col_quick_add_begin_delete(&mut self) {
+        let flat = flatten_cats(&self.categories);
+        if flat.is_empty() { return; }
+        let pc = match &self.col_mode {
+            ColMode::QuickAdd { picker_cursor, .. } => *picker_cursor,
+            _ => return,
+        };
+        let entry = match flat.get(pc) {
+            Some(e) => e,
+            None => return,
+        };
+        // Guard: protected system categories and top-level category.
+        if cat_is_protected(entry) { return; }
+        let candidate_id = entry.id;
+        // Guard: cannot delete the current section head or any of its ancestors.
+        let section_head_cat_id = match &self.cursor {
+            CursorPos::SectionHead(si) => self.view.sections.get(*si).map(|s| s.cat_id),
+            CursorPos::Item { section, .. } => self.view.sections.get(*section).map(|s| s.cat_id),
+        };
+        if let Some(head_id) = section_head_cat_id {
+            if cat_is_ancestor_or_equal(&flat, candidate_id, head_id) {
+                return;
+            }
+        }
+        if let ColMode::QuickAdd { confirm_delete, .. } = &mut self.col_mode {
+            *confirm_delete = true;
+        }
+    }
+
+    pub fn col_quick_add_delete_confirm(&mut self) {
+        let pc = match &mut self.col_mode {
+            ColMode::QuickAdd { confirm_delete, picker_cursor, .. } => {
+                if !*confirm_delete { return; }
+                *confirm_delete = false;
+                *picker_cursor
+            }
+            _ => return,
+        };
+        // Sync so cat_delete operates on the picker's position.
+        self.cat_state.cursor = pc;
+        self.cat_delete();
+        // Sync picker_cursor back (cat_delete may have clamped it).
+        let new_cur = self.cat_state.cursor;
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = new_cur;
+        }
+    }
+
+    pub fn col_quick_add_delete_cancel(&mut self) {
+        if let ColMode::QuickAdd { confirm_delete, .. } = &mut self.col_mode {
+            *confirm_delete = false;
+        }
+    }
+
     pub fn col_form_confirm(&mut self) {
         // Column head may not be blank.
         if matches!(&self.col_mode, ColMode::Form { head_cat_idx: None, .. }) { return; }
@@ -5062,6 +5258,7 @@ impl App {
     pub fn sync_list_scroll(&mut self) {
         let off = self.list_view.offset();
         match &mut self.col_mode {
+            ColMode::QuickAdd { picker_scroll, .. } => { *picker_scroll = off; return; }
             ColMode::Choices  { picker_scroll, .. } => { *picker_scroll = off; return; }
             ColMode::SubPick  { picker_scroll, .. } => { *picker_scroll = off; return; }
             _ => {}
@@ -5274,6 +5471,7 @@ impl App {
             return rows.get(*cursor).map(|&(cat_idx, _)| cat_idx).unwrap_or(0);
         }
         match &self.col_mode {
+            ColMode::QuickAdd { picker_cursor, .. } => return *picker_cursor,
             ColMode::SubPick  { picker_cursor, .. } => return *picker_cursor,
             _ => {}
         }
@@ -5292,6 +5490,9 @@ impl App {
                 }
             }
             return;
+        }
+        if let ColMode::QuickAdd { picker_cursor, .. } = &mut self.col_mode {
+            *picker_cursor = idx; return;
         }
         if let ColMode::SubPick { picker_cursor, picker_scroll, .. } = &mut self.col_mode {
             *picker_cursor = idx;
@@ -5508,6 +5709,22 @@ impl App {
         }
     }
 
+    /// Alt+j / Alt+k — add a section without the Section Add form: pick a
+    /// category and it is created, below or above the current one.
+    pub fn sec_quick_add(&mut self, insert: SectionInsert) {
+        if !matches!(self.sec_mode, SectionMode::Normal) { return; }
+        if flatten_cats(&self.categories).is_empty() { return; }
+        self.sec_mode = SectionMode::Choices {
+            cat_idx:        None,
+            insert,
+            active_field:   SectionFormField::Category,
+            picker_cursor:  0,
+            picker_scroll:  0,
+            confirm_delete: false,
+            quick:          true,
+        };
+    }
+
     pub fn sec_open_choices(&mut self) {
         if let SectionMode::Add { cat_idx, insert, active_field } = &self.sec_mode {
             if *active_field == SectionFormField::Category {
@@ -5519,6 +5736,7 @@ impl App {
                     picker_cursor:  cursor,
                     picker_scroll:  cursor.saturating_sub(9),
                     confirm_delete: false,
+                    quick:          false,
                 };
             }
         }
@@ -5599,24 +5817,33 @@ impl App {
     }
 
     pub fn sec_choices_confirm(&mut self) {
-        if let SectionMode::Choices { cat_idx: _, insert, active_field, picker_cursor, .. } = &self.sec_mode {
+        if let SectionMode::Choices { cat_idx: _, insert, active_field, picker_cursor, quick, .. }
+            = &self.sec_mode
+        {
             let insert       = *insert;
             let active_field = *active_field;
             let picked       = *picker_cursor;
+            let quick        = *quick;
             self.sec_mode = SectionMode::Add {
                 cat_idx:      Some(picked),
                 insert,
                 active_field,
             };
+            // No form to go back to, so the pick is the confirmation.
+            if quick { self.sec_form_confirm(); }
         }
     }
 
     pub fn sec_choices_cancel(&mut self) {
-        if let SectionMode::Choices { cat_idx, insert, active_field, .. } = &self.sec_mode {
+        if let SectionMode::Choices { cat_idx, insert, active_field, quick, .. } = &self.sec_mode {
             let cat_idx      = *cat_idx;
             let insert       = *insert;
             let active_field = *active_field;
-            self.sec_mode = SectionMode::Add { cat_idx, insert, active_field };
+            self.sec_mode = if *quick {
+                SectionMode::Normal
+            } else {
+                SectionMode::Add { cat_idx, insert, active_field }
+            };
         }
     }
 

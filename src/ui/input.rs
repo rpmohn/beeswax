@@ -1,5 +1,5 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
-use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, ChoicesKind, PAGE_FULL, CatInsert, CatMode, CatPropsField, ColMode, ColFormField, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
+use crate::app::{App, AppScreen, AskChoice, AssignMode, CalStep, ChoicesKind, PAGE_FULL, CatInsert, CatMode, CatPropsField, ColMode, ColFormField, ColPos, CursorPos, CustomizeSubMode, DateFilterField, FilePropsField, FilterState, FKeyMod, MenuState, Mode, PropsField, SaveState, SecPropsField, SectionInsert, SectionMode, SortState, ViewMgrMode, ViewPropsField};
 
 // ── Shared single-line text-field editor ─────────────────────────────────────
 
@@ -256,6 +256,12 @@ pub fn handle_event(app: &mut App, event: Event) {
         return;
     }
 
+    // Quick-add category picker takes priority
+    if matches!(app.col_mode, ColMode::QuickAdd { .. }) {
+        handle_col_quick_add(app, code, modifiers);
+        return;
+    }
+
     // Column Properties modal takes priority
     if matches!(app.col_mode, ColMode::Props { .. }) {
         handle_col_props(app, code, modifiers);
@@ -402,7 +408,7 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 app.cursor_pgup(app.body_height.get().max(1));
                 return;
             }
-            // Move the column under the cursor.
+            // Move the column under the cursor.  Alt+direction adds one instead.
             KeyCode::Char('h') | KeyCode::Left  => { app.col_move_left();  return; }
             KeyCode::Char('l') | KeyCode::Right => { app.col_move_right(); return; }
             _ => {}
@@ -410,19 +416,13 @@ fn handle_view_normal(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     }
     if modifiers.contains(KeyModifiers::ALT) {
         match code {
-            // Create.  Bare o/O create items; Alt lifts the verb to the container.
-            // Each opens the same Add dialog the F10 menu does, then opens its
-            // category picker straight away, so one keystroke reaches the choice
-            // that has to be made first.  Direction is a field in the dialog
-            // (Insert for sections, Position for columns) rather than a key.
-            KeyCode::Char('o') => {
-                app.sec_open_add(SectionInsert::Below);
-                app.sec_open_choices();
-            }
-            KeyCode::Char('c') => {
-                app.col_open_form(true, ColFormField::Head);
-                app.col_open_choices();
-            }
+            // Alt+direction adds the structure on that side: a column to the
+            // left or right, a section below or above.  Moving a column is
+            // Ctrl+direction, handled further up.
+            KeyCode::Char('h') => app.col_quick_add(ColPos::Left),
+            KeyCode::Char('l') => app.col_quick_add(ColPos::Right),
+            KeyCode::Char('j') => app.sec_quick_add(SectionInsert::Below),
+            KeyCode::Char('k') => app.sec_quick_add(SectionInsert::Above),
             KeyCode::Char('s') => app.sec_sort_now(),
             KeyCode::F(4)      => app.item_remove(),   // discard without confirmation
             _ => {}
@@ -1023,6 +1023,82 @@ fn handle_col_move(app: &mut App, code: KeyCode) {
         _ => {}
     }
 }
+
+// ── Quick-add handler ─────────────────────────────────────────────────────────
+
+fn handle_col_quick_add(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Delete confirmation takes priority.
+    if let ColMode::QuickAdd { confirm_delete, .. } = &app.col_mode {
+        if *confirm_delete {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => app.col_quick_add_delete_confirm(),
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc   => app.col_quick_add_delete_cancel(),
+                _ => {}
+            }
+            return;
+        }
+    }
+    // Props modal active: route to its handler.
+    if matches!(app.cat_state.mode, CatMode::Props { .. }) {
+        handle_catmgr_props(app, code, KeyModifiers::NONE);
+        return;
+    }
+    // While a create/edit buffer is active, route typing to the catmgr input handler.
+    if !matches!(app.cat_state.mode, CatMode::Normal) {
+        handle_catmgr_input(app, code, KeyModifiers::NONE);
+        return;
+    }
+    // Search mode: search keys here; any other key clears search and falls through.
+    if app.cat_search.is_some() {
+        match code {
+            KeyCode::Esc | KeyCode::Enter => { app.cat_search_clear(); return; }
+            KeyCode::Backspace => { app.cat_search_backspace(); return; }
+            KeyCode::F(7)      => { app.cat_search_prev(); return; }
+            KeyCode::F(8)      => { app.cat_search_next(); return; }
+            KeyCode::Char(ch) if ch != ' ' => { app.cat_search_char(ch); return; }
+            _ => { app.cat_search_clear(); }
+        }
+    }
+    if handle_vi_list(app, code, modifiers,
+        &|a| a.col_quick_add_down(),   &|a| a.col_quick_add_up(),
+        &|a| a.col_quick_add_end(),    &|a| a.col_quick_add_home(),
+        &|a| a.col_quick_add_screen_top(), &|a| a.col_quick_add_screen_mid(), &|a| a.col_quick_add_screen_bot()) { return; }
+    match code {
+        KeyCode::Up       => app.col_quick_add_up(),
+        KeyCode::Down     => app.col_quick_add_down(),
+        KeyCode::PageUp   => app.col_quick_add_pgup(PAGE_FULL),
+        KeyCode::PageDown => app.col_quick_add_pgdn(PAGE_FULL),
+        KeyCode::Home     => app.col_quick_add_home(),
+        KeyCode::End      => app.col_quick_add_end(),
+        KeyCode::Enter    => app.col_quick_add_confirm(),
+        KeyCode::Esc      => app.col_quick_add_cancel(),
+        KeyCode::Insert   => {
+            // Sync cat_state.cursor so cat_confirm inserts at picker position.
+            if let ColMode::QuickAdd { picker_cursor, .. } = &app.col_mode {
+                app.cat_state.cursor = *picker_cursor;
+            }
+            app.cat_begin_create(CatInsert::Below);
+        }
+        KeyCode::Delete   => app.col_quick_add_begin_delete(),
+        KeyCode::F(2)     => {
+            if let ColMode::QuickAdd { picker_cursor, .. } = &app.col_mode {
+                app.cat_state.cursor = *picker_cursor;
+            }
+            app.cat_begin_edit();
+        }
+        KeyCode::F(6)     => {
+            if let ColMode::QuickAdd { picker_cursor, .. } = &app.col_mode {
+                app.cat_state.cursor = *picker_cursor;
+            }
+            app.cat_open_props();
+        }
+        // Letters are reserved for movement, so search opens explicitly with /.
+        KeyCode::Char('/') => app.cat_search_open(),
+        KeyCode::Char(ch) if ch != ' ' => app.cat_search_char(ch),
+        _ => {}
+    }
+}
+
 
 // ── Calendar handler ──────────────────────────────────────────────────────────
 
