@@ -4829,25 +4829,33 @@ impl App {
     }
 
     pub fn col_move_left(&mut self) {
-        if self.col_cursor <= 1 { return; }  // already leftmost
+        if self.col_cursor == 0 { return; }  // not on a column
         let lc = self.view.left_count;
-        // Crossing main boundary: first right col → last left col
+        // Crossing main boundary: first right col → last left col.  Tested
+        // before "already leftmost", because with no left columns yet the
+        // first right column IS the leftmost one, and crossing the main
+        // section is the only move it has.
         if self.col_cursor == lc + 1 {
             self.view.left_count += 1;
             return; // col_cursor unchanged; column is now classified as left
         }
+        if self.col_cursor <= 1 { return; }  // already leftmost
         self.view.columns.swap(self.col_cursor - 1, self.col_cursor - 2);
         self.col_cursor -= 1;
     }
 
     pub fn col_move_right(&mut self) {
-        if self.col_cursor == 0 || self.col_cursor >= self.view.columns.len() { return; }
+        if self.col_cursor == 0 { return; }  // not on a column
         let lc = self.view.left_count;
-        // Crossing main boundary: last left col → first right col
+        // Crossing main boundary: last left col → first right col.  Tested
+        // before "already rightmost" for the mirror reason: with every column
+        // on the left, the last one is last in the vector and still has the
+        // main section to cross.
         if self.col_cursor == lc && lc > 0 {
             self.view.left_count -= 1;
             return; // col_cursor unchanged; column is now classified as right
         }
+        if self.col_cursor >= self.view.columns.len() { return; }  // already rightmost
         self.view.columns.swap(self.col_cursor - 1, self.col_cursor);
         self.col_cursor += 1;
     }

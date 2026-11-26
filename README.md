@@ -120,7 +120,7 @@ the items. Alt plus a direction adds on that side, Ctrl plus a direction moves.
 |-----|--------|
 | Alt+j / Alt+k or Alt+↓ / Alt+↑ | New section below / above |
 | Alt+h / Alt+l or Alt+← / Alt+→ | New column to the left / right |
-| Ctrl+h / Ctrl+l or Ctrl+← / Ctrl+→ | Move the current column left / right |
+| Ctrl+h / Ctrl+l or Ctrl+← / Ctrl+→ | Move the current column left / right, across the main section |
 | Alt+s | Sort current section now |
 
 All four are quick adds: a category picker opens, and the section or column
@@ -129,6 +129,11 @@ Format fields to confirm. Esc backs out without adding anything.
 
 The full forms are on Menu › View › Section › Add and
 Menu › View › Column › Add when you want those fields.
+
+Columns sit either side of the main section, and moving one far enough carries
+it across: the leftmost column on the right-hand side moves left onto the
+left-hand side, and the rightmost on the left-hand side moves right. A column
+only stops when it reaches the outer edge of the row, not at the main section.
 
 ### Lists and pickers
 

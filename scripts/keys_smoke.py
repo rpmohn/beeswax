@@ -383,6 +383,30 @@ def main():
     checks.check("Backspace is not Ctrl+h and moves nothing",
                  columns(["l", "l", "\x7f"]), ["Entry", "When"])
 
+    # A column has to cross the main section in both directions.  The split is
+    # view.left_count: columns[0..left_count] render left of the item column,
+    # so crossing changes that count and leaves the vector alone.
+    def layout(keys):
+        target = path("cols.bwx")
+        add = [alt("l"), "j", ENTER] + [alt("l"), "j", "j", ENTER]
+        app.run(target, add + keys)
+        v = read_save(target)["views"][0]
+        return (v["left_count"], [col["name"] for col in v["columns"]])
+
+    checks.check("both columns start right of the main section",
+                 layout([]), (0, ["Entry", "When"]))
+    # The leftmost column has no neighbour to swap with -- crossing is its only
+    # move left, and testing "already leftmost" first used to swallow it.
+    checks.check("the leftmost column crosses to the left",
+                 layout(["h", "\x08"]), (1, ["Entry", "When"]))
+    checks.check("and crosses back",
+                 layout(["h", "\x08", "\x0c"]), (0, ["Entry", "When"]))
+    checks.check("every column can end up on the left",
+                 layout(["\x08", "\x08", "l", "l", "\x08"]), (2, ["When", "Entry"]))
+    # The mirror: last in the vector and still with the main section to cross.
+    checks.check("the last of them crosses back right",
+                 layout(["\x08", "\x08", "l", "l", "\x08", "\x0c"]), (1, ["When", "Entry"]))
+
     # `O` anchors the cursor one row up so confirm() inserts before it. Backing
     # out of the create has to undo that anchor, on both exit paths, or the
     # cursor creeps upward every time.
